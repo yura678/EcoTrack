@@ -8,11 +8,32 @@
 
     <ItemGroup>
       <PackageReference Include="EFCore.NamingConventions" Version="9.0.0" />
+      <PackageReference Include="Elastic.Serilog.Sinks" Version="9.0.0" />
+      <PackageReference Include="MailKit" Version="4.15.0" />
+      <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="8.0.24" />
+      <PackageReference Include="Microsoft.AspNetCore.Identity.EntityFrameworkCore" Version="8.0.24" />
       <PackageReference Include="Microsoft.EntityFrameworkCore" Version="9.0.13" />
       <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="9.0.13">
         <PrivateAssets>all</PrivateAssets>
         <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
       </PackageReference>
+      <PackageReference Include="Microsoft.Extensions.Identity.Core" Version="8.0.24" />
+      <PackageReference Include="Microsoft.Extensions.Identity.Stores" Version="8.0.24" />
+      <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="9.0.4" />
+      <PackageReference Include="Serilog.Enrichers.Span" Version="3.1.0" />
+      <PackageReference Include="Serilog.Exceptions" Version="8.4.0" />
+      <PackageReference Include="Serilog.Sinks.Console" Version="6.1.1" />
+      <PackageReference Include="Serilog.Sinks.File" Version="7.0.0" />
+    </ItemGroup>
+
+    <ItemGroup>
+      <ProjectReference Include="..\Application\Application.csproj" />
+      <ProjectReference Include="..\Domain\Domain.csproj" />
+      <ProjectReference Include="..\Shared\Shared.csproj" />
+    </ItemGroup>
+
+    <ItemGroup>
+      <Folder Include="Persistence\Migrations\" />
     </ItemGroup>
 
 </Project>

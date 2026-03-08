@@ -2,10 +2,10 @@
 
 public class ApplicationSettings
 {
-    public ConectionStrings? ConnectionStrings { get; set; } 
+    public required ConectionStrings ConnectionStrings { get; set; }
 }
 
 public class ConectionStrings
 {
-    public string? DefaultConnection { get; set; }
+    public required string DefaultConnection { get; set; }
 }
