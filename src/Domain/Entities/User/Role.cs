@@ -1,4 +1,4 @@
-﻿using Domain.Common;
+using Domain.Common;
 using Domain.Entities.Enterprises;
 using Microsoft.AspNetCore.Identity;
 
@@ -13,8 +13,8 @@ public class Role : IdentityRole<Guid>, IEntity
 
     public string DisplayName { get; set; }
     public DateTime CreatedDate { get; set; }
-    
-    public Guid EnterpriseId { get; set; }
+
+    public Guid? EnterpriseId { get; set; }
     public Enterprise? Enterprise { get; set; }
     public ICollection<RoleClaim> Claims { get; set; }
     public ICollection<UserRole> Users { get; set; }

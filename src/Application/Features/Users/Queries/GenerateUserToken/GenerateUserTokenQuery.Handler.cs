@@ -28,7 +28,7 @@ internal class GenerateUserTokenQueryHandler(IJwtService jwtService, IAppUserMan
                     return new UserVerificationException(u.Id, result.Errors.StringifyIdentityResultErrors());
 
                 await userManager.UpdateUserAsync(u);
-                var token = await jwtService.GenerateAsync(u, cancellationToken);
+                var token = await jwtService.GenerateAsync(u, null, cancellationToken);
                 return token;
             },
             None: () => new UserNotFoundException(Guid.Empty)

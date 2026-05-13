@@ -33,7 +33,7 @@ public class PasswordUserTokenRequestQueryResult(
                     return new InvalidCredentialsException(u.Id);
                 }
 
-                var token = await jwtService.GenerateAsync(u, cancellationToken);
+                var token = await jwtService.GenerateAsync(u, null, cancellationToken);
 
                 return token;
             },

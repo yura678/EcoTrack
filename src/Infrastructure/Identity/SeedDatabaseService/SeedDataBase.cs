@@ -1,5 +1,4 @@
-﻿using Domain.Entities.User;
-using Domain.Entities.Enterprises;
+using Domain.Entities.User;
 using Infrastructure.Identity.Manager;
 using Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
@@ -29,41 +28,13 @@ public class SeedDataBase : ISeedDataBase
 
     public async Task Seed()
     {
-        var systemEnterpriseId = Guid.Parse("00000000-0000-0000-0000-000000000001");
-        var systemSectorId = Guid.Parse("00000000-0000-0000-0000-000000000002");
-
-        var systemEnterprise = await _db.Set<Enterprise>()
-            .FirstOrDefaultAsync(e => e.Id == systemEnterpriseId);
-
-        if (systemEnterprise is null)
-        {
-            systemEnterprise = Enterprise.New(
-                id: systemEnterpriseId,
-                name: "EcoTrack System Administration",
-                edrpou: "00000000", 
-                address: "System Address",
-                riskGroup: RiskGroup.None,
-                sectorId: systemSectorId
-            );
-
-            _db.Set<Enterprise>().Add(systemEnterprise);
-            
-            var systemSector = await _db.Set<Sector>().FindAsync(systemSectorId);
-            if (systemSector is null)
-            {
-                _db.Set<Sector>().Add(Sector.New(systemSectorId, "System Sector", ""));
-            }
-
-            await _db.SaveChangesAsync();
-        }
-
         if (!_roleManager.Roles.AsNoTracking().Any(r => r.Name.Equals("superAdmin")))
         {
             var role = new Role
             {
                 Name = "superAdmin",
                 DisplayName = "Super Admin",
-                EnterpriseId = systemEnterpriseId
+                EnterpriseId = null
             };
             await _roleManager.CreateAsync(role);
         }
@@ -75,7 +46,6 @@ public class SeedDataBase : ISeedDataBase
                 UserName = "superAdmin",
                 Email = "superAdmin@site.com",
                 PhoneNumberConfirmed = true,
-                EnterpriseId = systemEnterpriseId
             };
 
             await _userManager.CreateAsync(user, "qw123321");

@@ -110,7 +110,11 @@ public class AppUserManagerImplementation(AppUserManager userManager, ICurrentUs
     public async Task<List<User>> GetAllEnterpriseUsersAsync()
     {
         var enterpriseId = currentUserService.GetCurrentEnterpriseId();
-        return await userManager.Users.AsNoTracking().Where(x=> x.EnterpriseId == enterpriseId).ToListAsync();
+        if (!enterpriseId.HasValue) return [];
+
+        return await userManager.Users.AsNoTracking()
+            .Where(u => u.Memberships.Any(m => m.EnterpriseId == enterpriseId.Value && m.RevokedAt == null))
+            .ToListAsync();
     }
 
     public async Task<IdentityResult> CreateUserWithPasswordAsync(User user, string password)

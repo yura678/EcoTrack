@@ -40,7 +40,7 @@ public class AdminGetTokenQueryHandler(
         if (!await userManager.IsPasswordValidAsync(user, request.Password))
             return new InvalidCredentialsException(user.Id);
 
-        var token = await jwtService.GenerateAsync(user, cancellationToken);
+        var token = await jwtService.GenerateAsync(user, null, cancellationToken);
 
         return new AdminGetTokenQueryResult(token, userRoles);
     }

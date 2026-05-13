@@ -84,7 +84,6 @@ internal class RegisterEnterpriseAdminCommandHandler(
             FamilyName = request.FamilyName,
             PhoneNumber = request.PhoneNumber,
             Email = request.Email,
-            EnterpriseId = enterpriseId
         };
 
         var createResult = await userManager.CreateUser(user, request.Password);
@@ -103,13 +102,21 @@ internal class RegisterEnterpriseAdminCommandHandler(
 
         await roleManager.CreateRoleAsync(new CreateRoleDto
             { RoleName = role.Name, DisplayName = role.DisplayName, EnterpriseId = role.EnterpriseId });
-        
+
         var roleResult = await userManager.AddUserToRoleAsync(user, role);
 
         if (!roleResult.Succeeded)
         {
             return new UserRoleAssignmentException(Guid.Empty, "admin");
         }
+
+        var createdRole = await roleManager.GetRoleByNameAsync("admin");
+        var createdRoleId = createdRole.Match(r => r.Id, () => Guid.Empty);
+
+        await unitOfWork.UserEnterpriseMembershipRepository.AddAsync(
+            UserEnterpriseMembership.New(Guid.NewGuid(), user.Id, enterpriseId, createdRoleId),
+            cancellationToken);
+        await unitOfWork.SaveChangesAsync(cancellationToken);
 
         var code = await userManager.GenerateEmailConfirmationToken(user, user.PhoneNumber);
 

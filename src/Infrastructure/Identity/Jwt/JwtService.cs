@@ -1,4 +1,4 @@
-﻿using System.IdentityModel.Tokens.Jwt;
+using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Text;
 using Application.Common.Interfaces;
@@ -22,7 +22,6 @@ public class JwtService : IJwtService
     private IUserClaimsPrincipalFactory<User> _claimsPrincipal;
 
     private readonly IUnitOfWork _unitOfWork;
-    //private readonly AppUserClaimsPrincipleFactory claimsPrincipleFactory;
 
     public JwtService(IOptions<IdentitySettings> siteSetting, AppUserManager userManager,
         IUserClaimsPrincipalFactory<User> claimsPrincipal, IUnitOfWork unitOfWork)
@@ -33,18 +32,30 @@ public class JwtService : IJwtService
         _unitOfWork = unitOfWork;
     }
 
-    public async Task<AccessToken> GenerateAsync(User user, CancellationToken cancellationToken)
+    public async Task<AccessToken> GenerateAsync(User user, Guid? enterpriseId, CancellationToken cancellationToken)
     {
-        var secretKey = Encoding.UTF8.GetBytes(_siteSetting.SecretKey); // longer that 16 character
+        var secretKey = Encoding.UTF8.GetBytes(_siteSetting.SecretKey);
         var signingCredentials =
             new SigningCredentials(new SymmetricSecurityKey(secretKey), SecurityAlgorithms.HmacSha256Signature);
 
-        var encryptionkey = Encoding.UTF8.GetBytes(_siteSetting.EncryptKey); //must be 16 character
+        var encryptionkey = Encoding.UTF8.GetBytes(_siteSetting.EncryptKey);
         var encryptingCredentials = new EncryptingCredentials(new SymmetricSecurityKey(encryptionkey),
             SecurityAlgorithms.Aes128KW, SecurityAlgorithms.Aes128CbcHmacSha256);
 
+        var resolvedEnterpriseId = enterpriseId;
+        if (resolvedEnterpriseId is null && !await _userManager.IsInRoleAsync(user, "superAdmin"))
+        {
+            var memberships =
+                await _unitOfWork.UserEnterpriseMembershipRepository.GetActiveByUserIdAsync(user.Id, cancellationToken);
+            var first = memberships.FirstOrDefault();
+            if (first is not null) resolvedEnterpriseId = first.EnterpriseId;
+        }
 
-        var claims = await _getClaimsAsync(user);
+        var claims = (await _getClaimsAsync(user)).ToList();
+        if (resolvedEnterpriseId.HasValue)
+        {
+            claims.Add(new Claim("CompanyId", resolvedEnterpriseId.Value.ToString()));
+        }
 
         var now = DateTime.UtcNow;
 
@@ -75,12 +86,12 @@ public class JwtService : IJwtService
     {
         var tokenValidationParameters = new TokenValidationParameters
         {
-            ValidateAudience = false, //you might want to validate the audience and issuer depending on your use case
+            ValidateAudience = false,
             ValidateIssuer = false,
             ValidateIssuerSigningKey = true,
             IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_siteSetting.SecretKey)),
             ValidateLifetime = false,
-            TokenDecryptionKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_siteSetting.EncryptKey)) 
+            TokenDecryptionKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_siteSetting.EncryptKey))
         };
 
         var tokenHandler = new JwtSecurityTokenHandler();
@@ -96,8 +107,9 @@ public class JwtService : IJwtService
 
     public async Task<AccessToken> GenerateByPhoneNumberAsync(string phoneNumber, CancellationToken cancellationToken)
     {
-        var user = await _userManager.Users.AsNoTracking().FirstOrDefaultAsync(u => u.PhoneNumber == phoneNumber, cancellationToken);
-        var result = await this.GenerateAsync(user, cancellationToken);
+        var user = await _userManager.Users.AsNoTracking()
+            .FirstOrDefaultAsync(u => u.PhoneNumber == phoneNumber, cancellationToken);
+        var result = await this.GenerateAsync(user, null, cancellationToken);
         return result;
     }
 
@@ -116,7 +128,7 @@ public class JwtService : IJwtService
                 return await userOption.MatchAsync<User, Option<AccessToken>>(
                     Some: async unpackedUser =>
                     {
-                        var result = await this.GenerateAsync(unpackedUser, cancellationToken);
+                        var result = await this.GenerateAsync(unpackedUser, null, cancellationToken);
                         return Option<AccessToken>.Some(result);
                     },
                     None: () => Option<AccessToken>.None

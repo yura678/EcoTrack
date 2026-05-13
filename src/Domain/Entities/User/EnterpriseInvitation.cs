@@ -24,9 +24,9 @@ public class EnterpriseInvitation: BaseEntity
         RoleId = roleId;
     }
 
-    public static EnterpriseInvitation Create(Guid enterpriseId, string phoneNumber, Guid roleId, int expireDays = 7)
+    public static EnterpriseInvitation Create(Guid enterpriseId, string email, Guid roleId, int expireDays = 7)
     {
-        return new(enterpriseId, phoneNumber, roleId)
+        return new(enterpriseId, email, roleId)
         {
             ExpiresAt = DateTime.UtcNow.AddDays(expireDays)
 

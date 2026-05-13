@@ -26,7 +26,6 @@ public class AppUserClaimsPrincipleFactory : UserClaimsPrincipalFactory<User, Ro
         //claimsIdentity.AddClaim(new Claim(ClaimTypes.MobilePhone,user.PhoneNumber));
 
         claimsIdentity.AddClaim(new Claim(ClaimTypes.UserData, user.GeneratedCode));
-        claimsIdentity.AddClaim(new Claim("CompanyId", user.EnterpriseId.ToString()));
 
 
         // foreach (var roles in userRoles)

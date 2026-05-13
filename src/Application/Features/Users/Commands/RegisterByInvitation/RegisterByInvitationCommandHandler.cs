@@ -67,12 +67,16 @@ internal class RegisterByInvitationCommandHandler(
                     PhoneNumber = request.PhoneNumber,
                     Email = request.Email,
                     EmailConfirmed = true,
-                    EnterpriseId = i.EnterpriseId
                 };
 
                 var createResult = await userManager.CreateUser(user, request.Password);
                 if (!createResult.Succeeded)
                     return new UserCreationException(Guid.Empty, createResult.Errors.StringifyIdentityResultErrors());
+
+                await unitOfWork.UserEnterpriseMembershipRepository.AddAsync(
+                    UserEnterpriseMembership.New(Guid.NewGuid(), user.Id, i.EnterpriseId, i.RoleId),
+                    cancellationToken);
+
                 i.MarkAsUsed();
                 unitOfWork.InvitationRepository.Update(i);
 

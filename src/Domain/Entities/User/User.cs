@@ -1,5 +1,4 @@
-﻿using Domain.Common;
-using Domain.Entities.Enterprises;
+using Domain.Common;
 using Microsoft.AspNetCore.Identity;
 
 namespace Domain.Entities.User;
@@ -20,11 +19,5 @@ public class User : IdentityUser<Guid>, IEntity
     public ICollection<UserClaim> Claims { get; set; }
     public ICollection<UserToken> Tokens { get; set; }
     public ICollection<UserRefreshToken> UserRefreshTokens { get; set; }
-
-    #region Navigation Properties
-
-    public Enterprise? Enterprise { get; set; }
-    public Guid EnterpriseId { get; set; }
-
-    #endregion
+    public ICollection<UserEnterpriseMembership> Memberships { get; set; } = [];
 }

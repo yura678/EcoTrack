@@ -27,6 +27,7 @@ public interface IUnitOfWork
     IPermitRepository PermitRepository { get; }
     IEmissionLimitRepository EmissionLimitRepository { get; }
     IInvitationRepository InvitationRepository { get; }
+    IUserEnterpriseMembershipRepository UserEnterpriseMembershipRepository { get; }
 
     Task SaveChangesAsync(CancellationToken cancellationToken);
     Task<IDbTransaction> BeginTransactionAsync(CancellationToken cancellationToken);

@@ -7,7 +7,7 @@ namespace Application.Common.Interfaces;
 
 public interface IJwtService
 {
-    Task<AccessToken> GenerateAsync(User user, CancellationToken cancellationToken);
+    Task<AccessToken> GenerateAsync(User user, Guid? enterpriseId, CancellationToken cancellationToken);
     Task<ClaimsPrincipal> GetPrincipalFromExpiredToken(string token);
     Task<AccessToken> GenerateByPhoneNumberAsync(string phoneNumber, CancellationToken cancellationToken);
     Task<Option<AccessToken>> RefreshToken(Guid refreshTokenId, CancellationToken cancellationToken);

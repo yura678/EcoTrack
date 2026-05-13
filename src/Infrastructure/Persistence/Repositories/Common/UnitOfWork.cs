@@ -28,7 +28,8 @@ public class UnitOfWork(
     IMonitoringPlanRepository monitoringPlanRepository,
     IPermitRepository permitRepository,
     IEmissionLimitRepository emissionLimitRepository,
-    IInvitationRepository invitationRepository)
+    IInvitationRepository invitationRepository,
+    IUserEnterpriseMembershipRepository userEnterpriseMembershipRepository)
     : IUnitOfWork
 {
     public IUserRefreshTokenRepository UserRefreshTokenRepository { get; } = userRefreshTokenRepository;
@@ -50,6 +51,7 @@ public class UnitOfWork(
     public IPermitRepository PermitRepository { get; } = permitRepository;
     public IEmissionLimitRepository EmissionLimitRepository { get; } = emissionLimitRepository;
     public IInvitationRepository InvitationRepository { get; } = invitationRepository;
+    public IUserEnterpriseMembershipRepository UserEnterpriseMembershipRepository { get; } = userEnterpriseMembershipRepository;
 
 
     public Task SaveChangesAsync(CancellationToken cancellationToken)

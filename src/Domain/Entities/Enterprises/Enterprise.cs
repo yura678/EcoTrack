@@ -16,7 +16,7 @@ public class Enterprise : BaseEntity
     public DateTime? UpdatedAt { get; private set; }
 
     public ICollection<Site>? Sites { get; private set; } = [];
-    public ICollection<User.User>? Users { get; private set; } = [];
+    public ICollection<User.UserEnterpriseMembership>? Memberships { get; private set; } = [];
     public ICollection<EnterpriseInvitation>? Invitations { get; private set; } = [];
 
     private Enterprise(Guid id, string name, string edrpou, string address, RiskGroup riskGroup, Guid sectorId,

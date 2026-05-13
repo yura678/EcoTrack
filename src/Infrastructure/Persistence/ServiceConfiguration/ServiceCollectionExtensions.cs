@@ -1,4 +1,5 @@
 ﻿using Application.Common.Interfaces.Persistence;
+using Application.Common.Interfaces.Queries;
 using Application.Common.Interfaces.Queries.Emissions;
 using Application.Common.Interfaces.Queries.Enterprises;
 using Application.Common.Interfaces.Queries.Monitoring;
@@ -128,6 +129,10 @@ public static class ServiceCollectionExtensions
         
         services.AddScoped<InvitationRepository>();
         services.AddScoped<IInvitationRepository>(provider => provider.GetRequiredService<InvitationRepository>());
+
+        services.AddScoped<UserEnterpriseMembershipRepository>();
+        services.AddScoped<IUserEnterpriseMembershipRepository>(provider => provider.GetRequiredService<UserEnterpriseMembershipRepository>());
+        services.AddScoped<IUserEnterpriseMembershipQueries>(provider => provider.GetRequiredService<UserEnterpriseMembershipRepository>());
     }
      
 
