@@ -2,8 +2,8 @@ using Domain.Entities.Monitoring;
 
 namespace Application.Common.Interfaces.Queries.Monitoring;
 
-public interface IExceedanceEventQueries
+public interface IComplianceEventQueries
 {
-    Task<IReadOnlyList<ExceedanceEvent>> GetByMeasurementIdAsync(Guid measurementId,
+    Task<IReadOnlyList<ComplianceEvent>> GetByMeasurementIdAsync(Guid measurementId,
         CancellationToken cancellationToken);
 }

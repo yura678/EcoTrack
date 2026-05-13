@@ -84,9 +84,9 @@ internal class PermitRepository(ApplicationDbContext context, ICurrentUserServic
 
     public async Task<bool> HasDependenciesAsync(Guid permitId, CancellationToken cancellationToken)
     {
-        return await DbContext.Set<ExceedanceEvent>()
+        return await DbContext.Set<ComplianceEvent>()
             .AsNoTracking()
-            .AnyAsync(x => x.Limit.PermitId.Equals(permitId), cancellationToken);
+            .AnyAsync(x => x.Limit!.PermitId.Equals(permitId), cancellationToken);
     }
 
     public async Task<Option<Permit>> GetActiveByEmissionSourceAsync(

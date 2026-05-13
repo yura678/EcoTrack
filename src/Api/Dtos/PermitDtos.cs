@@ -1,4 +1,4 @@
-﻿using Domain.Entities.Enterprises;
+using Domain.Entities.Enterprises;
 using Domain.Entities.Monitoring;
 
 namespace Api.Dtos;
@@ -29,21 +29,25 @@ public record UpdatePermitDto(
 
 public record CreateEmissionLimitDto(
     decimal Value,
+    LimitType LimitType,
     AveragingWindow Period,
     Guid PollutantId,
-    Guid EmissionSourceId,
+    Guid? EmissionSourceId,
+    Guid? InstallationId,
     Guid UnitId,
-    DateTime? ValidFrom,
+    DateTime ValidFrom,
     DateTime? ValidTo);
 
 public record UpdateEmissionLimitDto(
     Guid? Id,
     decimal Value,
+    LimitType LimitType,
     AveragingWindow Period,
     Guid PollutantId,
-    Guid EmissionSourceId,
+    Guid? EmissionSourceId,
+    Guid? InstallationId,
     Guid UnitId,
-    DateTime? ValidFrom,
+    DateTime ValidFrom,
     DateTime? ValidTo);
 
 public record PermitDto(
@@ -82,15 +86,17 @@ public record PermitDto(
 public record EmissionLimitDto(
     Guid Id,
     decimal Value,
+    LimitType LimitType,
     AveragingWindow Period,
     Guid PermitId,
-    Guid UnitId, 
+    Guid UnitId,
     MeasureUnitDto? Unit,
     Guid PollutantId,
     PollutantDto? Pollutant,
-    Guid EmissionSourceId,
+    Guid? EmissionSourceId,
     EmissionSourceDto? EmissionSource,
-    DateTime? ValidFrom,
+    Guid? InstallationId,
+    DateTime ValidFrom,
     DateTime? ValidTo)
 {
     public static EmissionLimitDto FromDomainModel(EmissionLimit emissionLimit)
@@ -98,6 +104,7 @@ public record EmissionLimitDto(
         return new EmissionLimitDto(
             emissionLimit.Id,
             emissionLimit.Value,
+            emissionLimit.LimitType,
             emissionLimit.Period,
             emissionLimit.PermitId,
             emissionLimit.UnitId,
@@ -112,7 +119,7 @@ public record EmissionLimitDto(
             emissionLimit.EmissionSource is not null
                 ? EmissionSourceDto.FromDomainModel(emissionLimit.EmissionSource)
                 : null,
-          
+            emissionLimit.InstallationId,
             emissionLimit.ValidFrom,
             emissionLimit.ValidTo
         );

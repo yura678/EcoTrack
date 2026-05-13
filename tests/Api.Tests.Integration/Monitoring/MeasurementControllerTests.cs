@@ -128,7 +128,7 @@ public class MeasurementControllerTests : BaseIntegrationTest, IAsyncLifetime
         dto.DeviceId.Should().Be(_device.Id);
         dto.UnitId.Should().Be(_mg.Id);
         dto.Value.Should().Be(_seedMeasurement.Value);
-        dto.Period.Should().Be(_seedMeasurement.Period);
+        dto.Window.Should().Be(_seedMeasurement.Window);
     }
 
     [Fact]
@@ -157,7 +157,7 @@ public class MeasurementControllerTests : BaseIntegrationTest, IAsyncLifetime
             PollutantId: _pollutant.Id,
             DeviceId: _device.Id,
             UnitId: _mg.Id,
-            Period: AveragingWindow.OneHour,
+            Window: AveragingWindow.Hour1,
             Value: value
         );
 
@@ -175,11 +175,11 @@ public class MeasurementControllerTests : BaseIntegrationTest, IAsyncLifetime
             .FirstAsync(x => x.Id.Equals(dto.Id));
 
         dbMeasurement.Value.Should().Be(request.Value);
-        dbMeasurement.Status.Should().Be(MeasurementStatus.Valid);
+        dbMeasurement.Quality.Should().Be(Quality.Valid);
 
         // Перевіряємо, що перевищень нема
-        var exceedances = await Context.Set<ExceedanceEvent>()
-            .Where(e => e.MeasurementId.Equals(dto.Id))
+        var exceedances = await Context.Set<ComplianceEvent>()
+            .Where(e => e.MeasurementId == dto.Id)
             .ToListAsync();
 
         exceedances.Should().BeEmpty();
@@ -197,7 +197,7 @@ public class MeasurementControllerTests : BaseIntegrationTest, IAsyncLifetime
             PollutantId: _pollutant.Id,
             DeviceId: _device.Id,
             UnitId: _mg.Id,
-            Period: AveragingWindow.OneHour,
+            Window: AveragingWindow.Hour1,
             Value: value
         );
 
@@ -216,12 +216,12 @@ public class MeasurementControllerTests : BaseIntegrationTest, IAsyncLifetime
 
         dbMeasurement.Value.Should().Be(request.Value);
 
-        var exceedances = await Context.Set<ExceedanceEvent>()
-            .Where(e => e.MeasurementId.Equals(dto.Id))
+        var exceedances = await Context.Set<ComplianceEvent>()
+            .Where(e => e.MeasurementId == dto.Id)
             .ToListAsync();
 
         exceedances.Should().NotBeEmpty();
-        exceedances.Should().OnlyContain(e => e.Status == ExceedanceEventStatus.Open);
+        exceedances.Should().OnlyContain(e => e.Status == ComplianceEventStatus.Open);
     }
 
 
@@ -236,7 +236,7 @@ public class MeasurementControllerTests : BaseIntegrationTest, IAsyncLifetime
             PollutantId: _pollutant.Id,
             DeviceId: _device.Id,
             UnitId: _mg.Id,
-            Period: AveragingWindow.OneHour,
+            Window: AveragingWindow.Hour1,
             Value: 50m + 20m
         );
 
@@ -263,15 +263,15 @@ public class MeasurementControllerTests : BaseIntegrationTest, IAsyncLifetime
             .AsNoTracking()
             .FirstAsync(x => x.Id.Equals(createdDto.Id));
 
-        dbMeasurement.Status.Should().Be(MeasurementStatus.Rejected);
-        dbMeasurement.Reason.Should().Be(reason);
+        dbMeasurement.Quality.Should().Be(Quality.Invalid);
+        dbMeasurement.QualityNote.Should().Be(reason);
 
-        var exceedances = await Context.Set<ExceedanceEvent>()
-            .Where(e => e.MeasurementId.Equals(createdDto.Id))
+        var exceedances = await Context.Set<ComplianceEvent>()
+            .Where(e => e.MeasurementId == createdDto.Id)
             .ToListAsync();
 
         exceedances.Should().NotBeEmpty();
-        exceedances.Should().OnlyContain(e => e.Status == ExceedanceEventStatus.Closed);
+        exceedances.Should().OnlyContain(e => e.Status == ComplianceEventStatus.Closed);
     }
 
     [Fact]
@@ -305,7 +305,7 @@ public class MeasurementControllerTests : BaseIntegrationTest, IAsyncLifetime
             PollutantId: _pollutant.Id,
             DeviceId: _device.Id,
             UnitId: mg.Id,
-            Period: AveragingWindow.OneHour,
+            Window: AveragingWindow.Hour1,
             Value: measurementValue);
 
         // Act
@@ -317,43 +317,31 @@ public class MeasurementControllerTests : BaseIntegrationTest, IAsyncLifetime
 
         var dto = await response.ToResponseModel<MeasurementDto>();
 
-        var exceedances = await Context.Set<ExceedanceEvent>()
+        var exceedances = await Context.Set<ComplianceEvent>()
             .Include(e => e.Limit)
-            .ThenInclude(l => l.Unit)
+            .ThenInclude(l => l!.Unit)
             .Where(e => e.MeasurementId == dto.Id)
             .ToListAsync();
 
         exceedances = exceedances
-            .OrderBy(e => e.Limit.Unit.ToBaseFactor)
+            .OrderBy(e => e.Limit!.Unit!.ToBaseFactor)
             .ToList();
 
         exceedances.Should().HaveCount(3);
 
-        //  EXPECTED MAGNITUDES
-        //
-        // Limit1: mg (factor 1)
-        //   measurementInMg = 60 / 1     = 60 mg
-        //   magnitude = 60 - 50           = 10 mg
+        // Ratio = measured / limit (unit-independent)
+        // 60 mg / 50 mg = 1.2 — same ratio for all three limits after unit normalization
+        var mgEx = exceedances.Single(x => x.Limit!.UnitId.Equals(_mg.Id));
+        mgEx.Ratio.Should().BeApproximately(1.2m, 0.0001m);
 
-        // Limit2: g (factor 1000)
-        //   measurementInG  = 60 / 1000  = 0.06 g
-        //   magnitude = 0.06 - 0.05       = 0.01 g
+        var gEx = exceedances.Single(x => x.Limit!.UnitId.Equals(_g.Id));
+        gEx.Ratio.Should().BeApproximately(1.2m, 0.0001m);
 
-        // Limit3: µg (factor 0.001)
-        //   measurementInUg = 60 / 0.001 = 60000 µg
-        //   magnitude = 60000 - 50000    = 10000 µg
-
-        var mgEx = exceedances.Single(x => x.Limit.UnitId.Equals(_mg.Id));
-        mgEx.Magnitude.Should().BeApproximately(10m, 0.0001m);
-
-        var gEx = exceedances.Single(x => x.Limit.UnitId.Equals(_g.Id));
-        gEx.Magnitude.Should().BeApproximately(0.01m, 0.0001m);
-
-        var ugEx = exceedances.Single(x => x.Limit.UnitId.Equals(_ug.Id));
-        ugEx.Magnitude.Should().BeApproximately(10000m, 0.0001m);
+        var ugEx = exceedances.Single(x => x.Limit!.UnitId.Equals(_ug.Id));
+        ugEx.Ratio.Should().BeApproximately(1.2m, 0.0001m);
 
 
-        exceedances.Should().OnlyContain(e => e.Status == ExceedanceEventStatus.Open);
+        exceedances.Should().OnlyContain(e => e.Status == ComplianceEventStatus.Open);
     }
 
 
@@ -385,7 +373,7 @@ public class MeasurementControllerTests : BaseIntegrationTest, IAsyncLifetime
 
     public async Task DisposeAsync()
     {
-        Context.Set<ExceedanceEvent>().RemoveRange(Context.Set<ExceedanceEvent>());
+        Context.Set<ComplianceEvent>().RemoveRange(Context.Set<ComplianceEvent>());
         Context.Set<Measurement>().RemoveRange( Context.Set<Measurement>());
         Context.Set<EmissionLimit>().RemoveRange( Context.Set<EmissionLimit>());
         Context.Set<Permit>().RemoveRange( Context.Set<Permit>());

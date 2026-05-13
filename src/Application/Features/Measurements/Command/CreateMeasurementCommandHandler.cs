@@ -1,4 +1,4 @@
-﻿using Application.Common.Interfaces.Persistence;
+using Application.Common.Interfaces.Persistence;
 using Application.Features.Measurements.Exceptions;
 using Domain.Entities.EmissionSources;
 using Domain.Entities.Enterprises;
@@ -22,15 +22,8 @@ public class CreateMeasurementCommandHandler(
         try
         {
             var result = await HandleAsync(request, cancellationToken);
-            if (result.IsLeft)
-            {
-                transaction.Rollback();
-            }
-            else
-            {
-                transaction.Commit();
-            }
-
+            if (result.IsLeft) transaction.Rollback();
+            else transaction.Commit();
             return result;
         }
         catch (Exception exception)
@@ -47,7 +40,7 @@ public class CreateMeasurementCommandHandler(
         return await CheckEmissionSourceId(request.EmissionSourceId, cancellationToken)
             .BindAsync(r => CheckPollutantId(request.PollutantId, cancellationToken))
             .BindAsync(_ => CheckIfRequirementExist(request, cancellationToken))
-            .BindAsync(r => ValidateAveragingWindow(r, request.Period, request.EmissionSourceId, request.PollutantId))
+            .BindAsync(r => ValidateAveragingWindow(r, request.Window, request.EmissionSourceId, request.PollutantId))
             .BindAsync(_ => CheckMonitoringDeviceId(request.DeviceId, request.EmissionSourceId, cancellationToken))
             .BindAsync(_ => CheckMeasureUnitId(request.UnitId, cancellationToken))
             .BindAsync(u => CheckForDuplicateMeasurement(u, request.Timestamp, request.PollutantId,
@@ -143,12 +136,12 @@ public class CreateMeasurementCommandHandler(
     {
         return requirement.Frequency switch
         {
-            Frequency.Hourly when window != AveragingWindow.OneHour => new InvalidAveragingWindowException(
-                Guid.Empty, sourceId, pollutantId, expected: AveragingWindow.OneHour,
+            Frequency.Hourly when window != AveragingWindow.Hour1 => new InvalidAveragingWindowException(
+                Guid.Empty, sourceId, pollutantId, expected: AveragingWindow.Hour1,
                 actual: window),
-            Frequency.Daily when window != AveragingWindow.TwentyFourHours => new
+            Frequency.Daily when window != AveragingWindow.Hour24 => new
                 InvalidAveragingWindowException(Guid.Empty, sourceId, pollutantId,
-                    expected: AveragingWindow.TwentyFourHours, actual: window),
+                    expected: AveragingWindow.Hour24, actual: window),
             _ => Unit.Default
         };
     }
@@ -197,14 +190,31 @@ public class CreateMeasurementCommandHandler(
     {
         return permit.EmissionLimits!
             .Where(l =>
-                l.EmissionSourceId.Equals(request.EmissionSourceId) &&
+                (l.EmissionSourceId == request.EmissionSourceId) &&
                 l.PollutantId.Equals(request.PollutantId) &&
-                l.Period == request.Period &&
-                l.Unit.Dimension == measureUnit.Dimension &&
-                (l.ValidFrom == null || l.ValidFrom <= request.Timestamp) &&
+                l.Period == request.Window &&
+                l.Unit!.Dimension == measureUnit.Dimension &&
+                l.ValidFrom <= request.Timestamp &&
                 (l.ValidTo == null || l.ValidTo >= request.Timestamp)
             )
             .ToList();
+    }
+
+    private static (DateTime start, DateTime end) ComputeWindowBounds(DateTime timestamp,
+        AveragingWindow window)
+    {
+        TimeSpan duration = window switch
+        {
+            AveragingWindow.Minute1 => TimeSpan.FromMinutes(1),
+            AveragingWindow.Minute10 => TimeSpan.FromMinutes(10),
+            AveragingWindow.HalfHour => TimeSpan.FromMinutes(30),
+            AveragingWindow.Hour1 => TimeSpan.FromHours(1),
+            AveragingWindow.Hour24 => TimeSpan.FromHours(24),
+            AveragingWindow.Month1 => TimeSpan.FromDays(30),
+            AveragingWindow.Year1 => TimeSpan.FromDays(365),
+            _ => TimeSpan.FromHours(1)
+        };
+        return (timestamp - duration, timestamp);
     }
 
     private async Task<Either<MeasurementException, Measurement>> CreateEntity(
@@ -212,17 +222,21 @@ public class CreateMeasurementCommandHandler(
         CreateMeasurementCommand request,
         CancellationToken cancellationToken)
     {
+        var (windowStart, windowEnd) = ComputeWindowBounds(request.Timestamp, request.Window);
+
         var newMeasurement = Measurement.New(
-            Guid.NewGuid(),
-            request.Timestamp,
-            request.EmissionSourceId,
-            request.PollutantId,
-            request.DeviceId,
-            request.UnitId,
-            request.Period,
-            request.Value,
-            null
-        );
+            id: Guid.NewGuid(),
+            windowStart: windowStart,
+            windowEnd: windowEnd,
+            window: request.Window,
+            aggregation: Aggregation.Average,
+            emissionSourceId: request.EmissionSourceId,
+            pollutantId: request.PollutantId,
+            deviceId: request.DeviceId,
+            unitId: request.UnitId,
+            value: request.Value,
+            validPointsCount: 1,
+            expectedPointsCount: 1);
 
         var applicableLimits = await GetApplicableLimits(
             measureUnit,
@@ -232,20 +246,22 @@ public class CreateMeasurementCommandHandler(
 
         var measurementBaseValue = newMeasurement.Value * measureUnit.ToBaseFactor;
 
-        var exceedanceEvents =
+        var complianceEvents =
             applicableLimits
-                .Where(limit => measurementBaseValue > limit.Value * limit.Unit.ToBaseFactor)
+                .Where(limit => measurementBaseValue > limit.Value * limit.Unit!.ToBaseFactor)
                 .Select(limit =>
                 {
-                    var measurementInLimitUnits = measurementBaseValue / limit.Unit.ToBaseFactor;
-                    var magnitude = measurementInLimitUnits - limit.Value;
+                    var measurementInLimitUnits = measurementBaseValue / limit.Unit!.ToBaseFactor;
+                    var ratio = measurementInLimitUnits / limit.Value;
 
-                    return ExceedanceEvent.New(
-                        Guid.NewGuid(),
-                        newMeasurement.Id,
-                        limit.Id,
-                        magnitude,
-                        ExceedanceEventStatus.Open,
+                    return ComplianceEvent.ForLimitExceedance(
+                        id: Guid.NewGuid(),
+                        emissionSourceId: request.EmissionSourceId,
+                        measurementId: newMeasurement.Id,
+                        limitId: limit.Id,
+                        ratio: ratio,
+                        windowStart: windowStart,
+                        windowEnd: windowEnd,
                         notes:
                         $"Measured {measurementInLimitUnits} {limit.Unit.Symbol} > Limit {limit.Value} {limit.Unit.Symbol}"
                     );
@@ -253,7 +269,7 @@ public class CreateMeasurementCommandHandler(
                 .ToList();
 
         var addedMeasurement = await unitOfWork.MeasurementRepository.AddAsync(newMeasurement, cancellationToken);
-        await unitOfWork.ExceedanceEventRepository.AddRangeAsync(exceedanceEvents, cancellationToken);
+        await unitOfWork.ComplianceEventRepository.AddRangeAsync(complianceEvents, cancellationToken);
         await unitOfWork.SaveChangesAsync(cancellationToken);
 
 

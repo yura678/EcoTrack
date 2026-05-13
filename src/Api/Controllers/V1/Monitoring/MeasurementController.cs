@@ -64,7 +64,7 @@ public class MeasurementController(
             PollutantId = request.PollutantId,
             DeviceId = request.DeviceId,
             UnitId = request.UnitId,
-            Period = request.Period,
+            Window = request.Window,
             Value = request.Value,
         };
 

@@ -1,12 +1,10 @@
-﻿using Application.Common.Interfaces.Persistence;
+using Application.Common.Interfaces.Persistence;
 using Application.Features.Measurements.Exceptions;
 using Domain.Entities.Monitoring;
 using LanguageExt;
 using MediatR;
 
 namespace Application.Features.Measurements.Command;
-
-
 
 public class RejectMeasurementCommandHandler(
     IUnitOfWork unitOfWork)
@@ -20,15 +18,8 @@ public class RejectMeasurementCommandHandler(
         try
         {
             var result = await HandleAsync(request, cancellationToken);
-            if (result.IsLeft)
-            {
-                transaction.Rollback();
-            }
-            else
-            {
-                transaction.Commit();
-            }
-
+            if (result.IsLeft) transaction.Rollback();
+            else transaction.Commit();
             return result;
         }
         catch (Exception exception)
@@ -64,28 +55,28 @@ public class RejectMeasurementCommandHandler(
         RejectMeasurementCommand request,
         CancellationToken cancellationToken)
     {
-        entity.ChangeStatus(MeasurementStatus.Rejected, request.Reason);
+        entity.MarkQuality(Quality.Invalid, request.Reason);
         unitOfWork.MeasurementRepository.Update(entity);
         await unitOfWork.SaveChangesAsync(cancellationToken);
-        await InvalidateLinkedExceedanceEvent(entity.Id, cancellationToken);
+        await InvalidateLinkedComplianceEvents(entity.Id, cancellationToken);
 
         return entity;
     }
 
-    private async Task InvalidateLinkedExceedanceEvent(
+    private async Task InvalidateLinkedComplianceEvents(
         Guid measurementId,
         CancellationToken cancellationToken)
     {
-        var exceedanceEvents =
-            await unitOfWork.ExceedanceEventRepository.GetByMeasurementIdAsync(measurementId, cancellationToken);
+        var events =
+            await unitOfWork.ComplianceEventRepository.GetByMeasurementIdAsync(measurementId, cancellationToken);
 
-        foreach (var exceedanceEvent in exceedanceEvents)
+        foreach (var ev in events)
         {
-            if (exceedanceEvent.Status != ExceedanceEventStatus.Closed)
+            if (ev.Status != ComplianceEventStatus.Closed)
             {
-                exceedanceEvent.ChangeStatus(ExceedanceEventStatus.Closed);
+                ev.ChangeStatus(ComplianceEventStatus.Closed);
 
-                unitOfWork.ExceedanceEventRepository.Update(exceedanceEvent);
+                unitOfWork.ComplianceEventRepository.Update(ev);
                 await unitOfWork.SaveChangesAsync(cancellationToken);
             }
         }

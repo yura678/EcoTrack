@@ -28,7 +28,7 @@ public class UserEnterpriseMembershipConfiguration : IEntityTypeConfiguration<Us
         builder.HasOne(x => x.Enterprise)
             .WithMany(e => e.Memberships)
             .HasForeignKey(x => x.EnterpriseId)
-            .OnDelete(DeleteBehavior.Cascade);
+            .OnDelete(DeleteBehavior.Cascade);  
 
         builder.HasOne(x => x.Role)
             .WithMany()

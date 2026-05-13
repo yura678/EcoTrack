@@ -1,4 +1,4 @@
-﻿using Domain.Entities.Enterprises;
+using Domain.Entities.Enterprises;
 using Domain.Entities.Monitoring;
 
 namespace Tests.Data.Enterprises;
@@ -13,11 +13,13 @@ public static class EmissionLimitsData
         => EmissionLimit.New(
             id: Guid.NewGuid(),
             value: 50m,
-            period: AveragingWindow.OneHour,
+            limitType: LimitType.Concentration,
+            period: AveragingWindow.Hour1,
             permitId: permitId,
             unitId: unitId,
             pollutantId: pollutantId,
             emissionSourceId: emissionSourceId,
+            installationId: null,
             validFrom: DateTime.UtcNow.AddDays(-1),
             validTo: null);
 }

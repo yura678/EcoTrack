@@ -1,4 +1,4 @@
-﻿using Api.Dtos;
+using Api.Dtos;
 using FluentValidation;
 
 namespace Api.Modules.Validators.Permits;
@@ -7,7 +7,6 @@ public class CreatePermitDtoValidator : AbstractValidator<CreatePermitDto>
 {
     public CreatePermitDtoValidator()
     {
-
         RuleFor(x => x.Number)
             .NotEmpty()
             .MaximumLength(50);
@@ -32,7 +31,7 @@ public class CreatePermitDtoValidator : AbstractValidator<CreatePermitDto>
 
         RuleFor(x => x.EmissionLimits)
             .NotNull()
-            .Must(r => r.Any())
+            .Must(r => r!.Any())
             .WithMessage("Permit must contain at least one emission limit.");
 
         RuleForEach(x => x.EmissionLimits)
@@ -43,11 +42,13 @@ public class CreatePermitDtoValidator : AbstractValidator<CreatePermitDto>
             .WithMessage("The list contains overlapping limits for the same Source, Pollutant, and Period.");
     }
 
-    private bool NoOverlappingLimits(IReadOnlyList<CreateEmissionLimitDto> limits)
+    private bool NoOverlappingLimits(IReadOnlyList<CreateEmissionLimitDto>? limits)
     {
+        if (limits is null) return true;
         var groups = limits.GroupBy(x => new
         {
             x.EmissionSourceId,
+            x.InstallationId,
             x.PollutantId,
             x.Period
         });
@@ -55,20 +56,13 @@ public class CreatePermitDtoValidator : AbstractValidator<CreatePermitDto>
         foreach (var group in groups)
         {
             var groupList = group.ToList();
-
             if (groupList.Count > 1)
             {
                 for (var i = 0; i < groupList.Count; i++)
                 {
                     for (var j = i + 1; j < groupList.Count; j++)
                     {
-                        var limitA = groupList[i];
-                        var limitB = groupList[j];
-
-                        if (AreOverlapping(limitA, limitB))
-                        {
-                            return false;
-                        }
+                        if (AreOverlapping(groupList[i], groupList[j])) return false;
                     }
                 }
             }
@@ -79,15 +73,9 @@ public class CreatePermitDtoValidator : AbstractValidator<CreatePermitDto>
 
     private bool AreOverlapping(CreateEmissionLimitDto a, CreateEmissionLimitDto b)
     {
-        // Логіка: Перетин є, якщо (StartA <= EndB) І (EndA >= StartB)
-
-        DateTime startA = a.ValidFrom ?? DateTime.MinValue;
-        DateTime startB = b.ValidFrom ?? DateTime.MinValue;
-
         DateTime endA = a.ValidTo ?? DateTime.MaxValue;
         DateTime endB = b.ValidTo ?? DateTime.MaxValue;
-
-        return startA <= endB && endA >= startB;
+        return a.ValidFrom <= endB && endA >= b.ValidFrom;
     }
 }
 
@@ -95,11 +83,15 @@ public class CreateEmissionLimitDtoValidator : AbstractValidator<CreateEmissionL
 {
     public CreateEmissionLimitDtoValidator()
     {
-        RuleFor(x => x.EmissionSourceId).NotEmpty();
         RuleFor(x => x.PollutantId).NotEmpty();
         RuleFor(x => x.UnitId).NotEmpty();
-
+        RuleFor(x => x.LimitType).IsInEnum();
         RuleFor(x => x.Period).IsInEnum();
+        RuleFor(x => x.ValidFrom).NotEmpty();
+
+        RuleFor(x => x)
+            .Must(x => (x.EmissionSourceId is null) != (x.InstallationId is null))
+            .WithMessage("Exactly one of EmissionSourceId or InstallationId must be set.");
 
         RuleFor(x => x.Value)
             .GreaterThan(0)
@@ -108,11 +100,11 @@ public class CreateEmissionLimitDtoValidator : AbstractValidator<CreateEmissionL
         RuleFor(x => x)
             .Must(HaveValidDateRange)
             .WithMessage("ValidFrom cannot be later than ValidTo.")
-            .When(x => x.ValidFrom.HasValue && x.ValidTo.HasValue);
+            .When(x => x.ValidTo.HasValue);
     }
 
     private bool HaveValidDateRange(CreateEmissionLimitDto dto)
     {
-        return dto.ValidFrom!.Value <= dto.ValidTo!.Value;
+        return dto.ValidFrom <= dto.ValidTo!.Value;
     }
 }

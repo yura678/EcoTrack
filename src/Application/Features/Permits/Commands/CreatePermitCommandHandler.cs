@@ -22,7 +22,8 @@ public class CreatePermitCommandHandler(
             .Distinct().ToList();
 
         IReadOnlyList<Guid> emissionSourceIds = request.EmissionLimits
-            .Select(r => r.EmissionSourceId)
+            .Where(r => r.EmissionSourceId.HasValue)
+            .Select(r => r.EmissionSourceId!.Value)
             .Distinct().ToList();
 
         IReadOnlyList<Guid> unitIds = request.EmissionLimits
@@ -113,7 +114,7 @@ public class CreatePermitCommandHandler(
     {
         foreach (var limit in request.EmissionLimits)
         {
-            var effectiveFrom = limit.ValidFrom ?? request.IssuedAt;
+            var effectiveFrom = limit.ValidFrom;
             var effectiveTo = limit.ValidTo ?? request.ValidUntil;
 
             if (effectiveFrom > effectiveTo)
@@ -154,11 +155,13 @@ public class CreatePermitCommandHandler(
                 .Select(dto => EmissionLimit.New(
                     Guid.NewGuid(),
                     dto.Value,
+                    dto.LimitType,
                     dto.Period,
                     newPermitId,
                     dto.UnitId,
                     dto.PollutantId,
                     dto.EmissionSourceId,
+                    dto.InstallationId,
                     dto.ValidFrom,
                     dto.ValidTo
                 ))

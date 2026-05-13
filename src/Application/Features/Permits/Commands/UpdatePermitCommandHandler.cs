@@ -45,7 +45,8 @@ public class UpdatePermitCommandHandler(
             .Distinct().ToList();
 
         IReadOnlyList<Guid> emissionSourceIds = request.EmissionLimits
-            .Select(r => r.EmissionSourceId)
+            .Where(r => r.EmissionSourceId.HasValue)
+            .Select(r => r.EmissionSourceId!.Value)
             .Distinct().ToList();
 
         IReadOnlyList<Guid> unitIds = request.EmissionLimits
@@ -138,7 +139,7 @@ public class UpdatePermitCommandHandler(
     {
         foreach (var limit in request.EmissionLimits)
         {
-            var effectiveFrom = limit.ValidFrom ?? request.IssuedAt;
+            var effectiveFrom = limit.ValidFrom;
             var effectiveTo = limit.ValidTo ?? request.ValidUntil;
 
             if (effectiveFrom > effectiveTo)
@@ -190,11 +191,13 @@ public class UpdatePermitCommandHandler(
                 toAdd.Add(EmissionLimit.New(
                     Guid.NewGuid(),
                     dto.Value,
+                    dto.LimitType,
                     dto.Period,
                     permit.Id,
                     dto.UnitId,
                     dto.PollutantId,
                     dto.EmissionSourceId,
+                    dto.InstallationId,
                     dto.ValidFrom,
                     dto.ValidTo
                 ));
@@ -209,10 +212,12 @@ public class UpdatePermitCommandHandler(
 
             entity.UpdateDetails(
                 dto.Value,
+                dto.LimitType,
                 dto.Period,
                 dto.UnitId,
                 dto.PollutantId,
                 dto.EmissionSourceId,
+                dto.InstallationId,
                 dto.ValidFrom,
                 dto.ValidTo);
             toUpdate.Add(entity);

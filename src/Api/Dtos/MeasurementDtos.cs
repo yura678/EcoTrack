@@ -1,4 +1,4 @@
-﻿using Domain.Entities.Monitoring;
+using Domain.Entities.Monitoring;
 
 namespace Api.Dtos;
 
@@ -15,7 +15,7 @@ public record CreateMeasurementDto(
     Guid PollutantId,
     Guid DeviceId,
     Guid UnitId,
-    AveragingWindow Period,
+    AveragingWindow Window,
     decimal Value);
 
 public record RejectMeasurementDto(
@@ -23,7 +23,8 @@ public record RejectMeasurementDto(
 
 public record MeasurementDto(
     Guid Id,
-    DateTime Timestamp,
+    DateTime WindowStart,
+    DateTime WindowEnd,
     Guid EmissionSourceId,
     EmissionSourceDto? EmissionSourceDto,
     Guid PollutantId,
@@ -31,10 +32,17 @@ public record MeasurementDto(
     Guid DeviceId,
     Guid UnitId,
     MeasureUnitDto? MeasureUnitDto,
-    AveragingWindow Period,
+    AveragingWindow Window,
+    Aggregation Aggregation,
     decimal Value,
-    MeasurementStatus Status,
-    string? Reason,
+    decimal? NormalizedValue,
+    decimal? Uncertainty,
+    int ValidPointsCount,
+    int ExpectedPointsCount,
+    decimal DataAvailability,
+    bool IsRepresentative,
+    Quality Quality,
+    string? QualityNote,
     DateTime CreatedAt,
     DateTime? UpdatedAt)
 {
@@ -42,7 +50,8 @@ public record MeasurementDto(
     {
         return new MeasurementDto(
             measurement.Id,
-            measurement.Timestamp,
+            measurement.WindowStart,
+            measurement.WindowEnd,
             measurement.EmissionSourceId,
             measurement.EmissionSource is not null
                 ? EmissionSourceDto.FromDomainModel(measurement.EmissionSource)
@@ -56,10 +65,17 @@ public record MeasurementDto(
             measurement.Unit != null
                 ? MeasureUnitDto.FromDomainModel(measurement.Unit)
                 : null,
-            measurement.Period,
+            measurement.Window,
+            measurement.Aggregation,
             measurement.Value,
-            measurement.Status,
-            measurement.Reason,
+            measurement.NormalizedValue,
+            measurement.Uncertainty,
+            measurement.ValidPointsCount,
+            measurement.ExpectedPointsCount,
+            measurement.DataAvailability,
+            measurement.IsRepresentative,
+            measurement.Quality,
+            measurement.QualityNote,
             measurement.CreatedAt,
             measurement.UpdatedAt
         );

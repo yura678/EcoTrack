@@ -119,9 +119,11 @@ public class PermitControllerTests : BaseIntegrationTest, IAsyncLifetime
             [
                 new CreateEmissionLimitDto(
                     Value: 50,
-                    Period: AveragingWindow.TwentyFourHours,
+                    LimitType: LimitType.Concentration,
+                    Period: AveragingWindow.Hour24,
                     PollutantId: limit.PollutantId,
                     EmissionSourceId: limit.EmissionSourceId,
+                    InstallationId: null,
                     UnitId: limit.UnitId,
                     ValidFrom: DateTime.UtcNow.AddDays(-3),
                     ValidTo: DateTime.UtcNow.AddYears(1))
@@ -149,12 +151,12 @@ public class PermitControllerTests : BaseIntegrationTest, IAsyncLifetime
 
         var dbLimit = db.EmissionLimits.First();
         dbLimit.Value.Should().Be(50);
-        dbLimit.Period.Should().Be(AveragingWindow.TwentyFourHours);
+        dbLimit.Period.Should().Be(AveragingWindow.Hour24);
         dbLimit.PollutantId.Should().Be(limit.PollutantId);
         dbLimit.EmissionSourceId.Should().Be(limit.EmissionSourceId);
         dbLimit.UnitId.Should().Be(limit.UnitId);
 
-        dbLimit.ValidFrom.Should().BeCloseTo(request.EmissionLimits![0].ValidFrom!.Value, TimeSpan.FromSeconds(1));
+        dbLimit.ValidFrom.Should().BeCloseTo(request.EmissionLimits![0].ValidFrom, TimeSpan.FromSeconds(1));
         dbLimit.ValidTo.Should().BeCloseTo(request.EmissionLimits![0].ValidTo!.Value, TimeSpan.FromSeconds(1));
     }
 
@@ -195,9 +197,11 @@ public class PermitControllerTests : BaseIntegrationTest, IAsyncLifetime
                 new UpdateEmissionLimitDto(
                     Id: limit.Id,
                     Value: 999,
-                    Period: AveragingWindow.OneHour,
+                    LimitType: LimitType.Concentration,
+                    Period: AveragingWindow.Hour1,
                     PollutantId: limit.PollutantId,
                     EmissionSourceId: limit.EmissionSourceId,
+                    InstallationId: null,
                     UnitId: limit.UnitId,
                     ValidFrom: limit.ValidFrom,
                     ValidTo: limit.ValidTo

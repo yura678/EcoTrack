@@ -17,7 +17,7 @@ public class CreateMeasurementCommand : IRequest<Either<MeasurementException, Me
     public required Guid PollutantId { get; init; }
     public required Guid DeviceId { get; init; }
     public required Guid UnitId { get; init; }
-    public required AveragingWindow Period { get; init; }
+    public required AveragingWindow Window { get; init; }
     public required decimal Value { get; init; }
 
     public IValidator<CreateMeasurementCommand> ValidateApplicationModel(
@@ -39,7 +39,7 @@ public class CreateMeasurementCommand : IRequest<Either<MeasurementException, Me
         validator.RuleFor(x => x.UnitId)
             .NotEmpty();
 
-        validator.RuleFor(x => x.Period)
+        validator.RuleFor(x => x.Window)
             .IsInEnum();
 
         validator.RuleFor(x => x.Value)

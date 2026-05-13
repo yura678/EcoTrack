@@ -12,11 +12,13 @@ namespace Application.Features.Permits.Commands;
 
 public record EmissionLimitCommandDto(
     decimal Value,
+    LimitType LimitType,
     AveragingWindow Period,
     Guid UnitId,
     Guid PollutantId,
-    Guid EmissionSourceId,
-    DateTime? ValidFrom,
+    Guid? EmissionSourceId,
+    Guid? InstallationId,
+    DateTime ValidFrom,
     DateTime? ValidTo);
 
 public class CreatePermitCommand : IRequest<Either<PermitException, Permit>>,
@@ -111,24 +113,25 @@ public class CreatePermitCommand : IRequest<Either<PermitException, Permit>>,
 
     private bool AreOverlapping(EmissionLimitCommandDto a, EmissionLimitCommandDto b)
     {
-        DateTime startA = a.ValidFrom ?? DateTime.MinValue;
-        DateTime startB = b.ValidFrom ?? DateTime.MinValue;
-
         DateTime endA = a.ValidTo ?? DateTime.MaxValue;
         DateTime endB = b.ValidTo ?? DateTime.MaxValue;
 
-        return startA <= endB && endA >= startB;
+        return a.ValidFrom <= endB && endA >= b.ValidFrom;
     }
 
     private class EmissionLimitDtoValidator : AbstractValidator<EmissionLimitCommandDto>
     {
         public EmissionLimitDtoValidator()
         {
-            RuleFor(x => x.EmissionSourceId).NotEmpty();
             RuleFor(x => x.PollutantId).NotEmpty();
             RuleFor(x => x.UnitId).NotEmpty();
-
+            RuleFor(x => x.LimitType).IsInEnum();
             RuleFor(x => x.Period).IsInEnum();
+            RuleFor(x => x.ValidFrom).NotEmpty();
+
+            RuleFor(x => x)
+                .Must(x => (x.EmissionSourceId is null) != (x.InstallationId is null))
+                .WithMessage("Exactly one of EmissionSourceId or InstallationId must be set.");
 
             RuleFor(x => x.Value)
                 .GreaterThan(0)
@@ -137,12 +140,12 @@ public class CreatePermitCommand : IRequest<Either<PermitException, Permit>>,
             RuleFor(x => x)
                 .Must(HaveValidDateRange)
                 .WithMessage("ValidFrom cannot be later than ValidTo.")
-                .When(x => x.ValidFrom.HasValue && x.ValidTo.HasValue);
+                .When(x => x.ValidTo.HasValue);
         }
 
         private bool HaveValidDateRange(EmissionLimitCommandDto dto)
         {
-            return dto.ValidFrom!.Value <= dto.ValidTo!.Value;
+            return dto.ValidFrom <= dto.ValidTo!.Value;
         }
     }
 }

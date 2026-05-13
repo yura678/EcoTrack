@@ -1,4 +1,4 @@
-﻿using Domain.Entities.Monitoring;
+using Domain.Entities.Monitoring;
 using Infrastructure.Persistence.Converters;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
@@ -10,24 +10,60 @@ public class MeasurementConfiguration : IEntityTypeConfiguration<Measurement>
     public void Configure(EntityTypeBuilder<Measurement> builder)
     {
         builder.HasKey(x => x.Id);
-        
-        builder.Property(x => x.Timestamp)
+
+        builder.Property(x => x.WindowStart)
+            .HasConversion(new DateTimeUtcConverter())
             .IsRequired();
 
-        builder.Property(x => x.Value)
+        builder.Property(x => x.WindowEnd)
+            .HasConversion(new DateTimeUtcConverter())
             .IsRequired();
 
-        builder.Property(x => x.Status)
+        builder.Property(x => x.Window)
             .HasConversion<int>()
             .IsRequired();
 
-        builder.Property(x => x.Period)
+        builder.Property(x => x.Aggregation)
+            .HasConversion<int>()
             .IsRequired();
 
-        builder.Property(x => x.Reason)
-            .IsRequired(false)
-            .HasMaxLength(1000);
-        
+        builder.Property(x => x.Value)
+            .HasPrecision(18, 6)
+            .IsRequired();
+
+        builder.Property(x => x.NormalizedValue)
+            .HasPrecision(18, 6)
+            .IsRequired(false);
+
+        builder.Property(x => x.Uncertainty)
+            .HasPrecision(18, 6)
+            .IsRequired(false);
+
+        builder.Property(x => x.ValidPointsCount).IsRequired();
+        builder.Property(x => x.ExpectedPointsCount).IsRequired();
+        builder.Ignore(x => x.DataAvailability);
+        builder.Ignore(x => x.IsRepresentative);
+
+        builder.Property(x => x.Quality)
+            .HasConversion<int>()
+            .IsRequired();
+
+        builder.Property(x => x.QualityNote)
+            .HasMaxLength(1000)
+            .IsRequired(false);
+
+        builder.Property(x => x.SubstitutedBy)
+            .HasConversion<int>()
+            .IsRequired(false);
+
+        builder.Property(x => x.SubstitutionReason)
+            .HasMaxLength(1000)
+            .IsRequired(false);
+
+        builder.Property(x => x.SubstitutedAt)
+            .HasConversion(new DateTimeUtcConverter())
+            .IsRequired(false);
+
         builder.Property(x => x.CreatedAt)
             .IsRequired()
             .HasConversion(new DateTimeUtcConverter())
@@ -37,7 +73,7 @@ public class MeasurementConfiguration : IEntityTypeConfiguration<Measurement>
             .IsRequired(false)
             .HasConversion(new DateTimeUtcConverter());
 
-        builder.HasIndex(x => new { x.EmissionSourceId, x.PollutantId, x.Timestamp })
+        builder.HasIndex(x => new { x.EmissionSourceId, x.PollutantId, x.WindowEnd, x.Window, x.Aggregation })
             .IsUnique();
 
         builder.HasOne(x => x.EmissionSource)

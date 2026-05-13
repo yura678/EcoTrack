@@ -16,7 +16,7 @@ public class CreateMeasurementDtoValidator : AbstractValidator<CreateMeasurement
         RuleFor(x => x.DeviceId).NotEmpty();
         RuleFor(x => x.UnitId).NotEmpty();
 
-        RuleFor(x => x.Period).IsInEnum();
+        RuleFor(x => x.Window).IsInEnum();
 
         RuleFor(x => x.Value)
             .GreaterThanOrEqualTo(0);

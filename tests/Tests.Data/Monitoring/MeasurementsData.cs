@@ -1,22 +1,29 @@
-﻿using Domain.Entities.Monitoring;
+using Domain.Entities.Monitoring;
 
 namespace Tests.Data.Monitoring;
 
 public static class MeasurementsData
 {
     public static Measurement FirstSeedMeasurement(
-       Guid emissionSourceId,
-       Guid pollutantId,
-       Guid deviceId,
-       Guid unitId)
-        => Measurement.New(
-            id: Guid.NewGuid(), 
-            timestamp: DateTime.UtcNow.AddHours(-2),
+        Guid emissionSourceId,
+        Guid pollutantId,
+        Guid deviceId,
+        Guid unitId)
+    {
+        var end = DateTime.UtcNow.AddHours(-1);
+        var start = end.AddHours(-1);
+        return Measurement.New(
+            id: Guid.NewGuid(),
+            windowStart: start,
+            windowEnd: end,
+            window: AveragingWindow.Hour1,
+            aggregation: Aggregation.Average,
             emissionSourceId: emissionSourceId,
             pollutantId: pollutantId,
             deviceId: deviceId,
             unitId: unitId,
-            period: AveragingWindow.OneHour,
             value: 10m,
-            reason: null);
+            validPointsCount: 60,
+            expectedPointsCount: 60);
+    }
 }

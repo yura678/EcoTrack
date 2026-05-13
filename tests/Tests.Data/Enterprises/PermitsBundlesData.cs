@@ -1,4 +1,4 @@
-﻿using Domain.Entities.Enterprises;
+using Domain.Entities.Enterprises;
 using Domain.Entities.Monitoring;
 
 namespace Tests.Data.Enterprises;
@@ -19,33 +19,39 @@ public static class PermitsBundlesData
         var limit1 = EmissionLimit.New(
             Guid.NewGuid(),
             50m,
-            AveragingWindow.OneHour,
+            LimitType.Concentration,
+            AveragingWindow.Hour1,
             permitId,
             mg.Id,
             pollutantId,
             sourceId,
+            installationId: null,
             DateTime.UtcNow.AddDays(-1),
             null);
 
         var limit2 = EmissionLimit.New(
             Guid.NewGuid(),
             0.05m,
-            AveragingWindow.OneHour,
+            LimitType.Concentration,
+            AveragingWindow.Hour1,
             permitId,
             g.Id,
             pollutantId,
             sourceId,
+            installationId: null,
             DateTime.UtcNow.AddDays(-1),
             null);
 
         var limit3 = EmissionLimit.New(
             Guid.NewGuid(),
             50_000m,
-            AveragingWindow.OneHour,
+            LimitType.Concentration,
+            AveragingWindow.Hour1,
             permitId,
             ug.Id,
             pollutantId,
             sourceId,
+            installationId: null,
             DateTime.UtcNow.AddDays(-1),
             null);
 
@@ -87,11 +93,13 @@ public static class PermitsBundlesData
         var limit = EmissionLimit.New(
             Guid.NewGuid(),
             100,
-            AveragingWindow.TwentyFourHours,
+            LimitType.Concentration,
+            AveragingWindow.Hour24,
             permit.Id,
             unitId,
             pollutantId,
             sourceId,
+            installationId: null,
             validFrom: DateTime.UtcNow.AddYears(-1),
             validTo: DateTime.UtcNow.AddYears(1));
 
@@ -123,11 +131,13 @@ public static class PermitsBundlesData
         var limit = EmissionLimit.New(
             Guid.NewGuid(),
             100,
-            AveragingWindow.TwentyFourHours,
+            LimitType.Concentration,
+            AveragingWindow.Hour24,
             permit.Id,
             unitId,
             pollutantId,
             sourceId,
+            installationId: null,
             validFrom: DateTime.UtcNow.AddYears(-1),
             validTo: DateTime.UtcNow.AddYears(1));
 
@@ -159,11 +169,13 @@ public static class PermitsBundlesData
         var limit = EmissionLimit.New(
             Guid.NewGuid(),
             100,
-            AveragingWindow.TwentyFourHours,
+            LimitType.Concentration,
+            AveragingWindow.Hour24,
             permit.Id,
             unitId,
             pollutantId,
             sourceId,
+            installationId: null,
             validFrom: DateTime.UtcNow.AddYears(-1),
             validTo: DateTime.UtcNow.AddYears(1));
 

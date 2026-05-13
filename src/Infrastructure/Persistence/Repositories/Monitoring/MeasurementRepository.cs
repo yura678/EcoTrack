@@ -1,4 +1,4 @@
-﻿using Application.Common.Interfaces.Identity;
+using Application.Common.Interfaces.Identity;
 using Application.Common.Interfaces.Queries.Monitoring;
 using Application.Common.Interfaces.Repositories.Monitoring;
 using Application.Common.Models;
@@ -34,7 +34,7 @@ internal class MeasurementRepository(ApplicationDbContext context, ICurrentUserS
         bool isSuperAdmin = currentUserService.IsSuperAdmin();
 
         var entity = await base.TableNoTracking
-            .FirstOrDefaultAsync(x => x.Timestamp == timestamp
+            .FirstOrDefaultAsync(x => x.WindowEnd == timestamp
                                       && x.PollutantId == pollutantId
                                       && x.EmissionSourceId == emissionSourceId
                                       && (isSuperAdmin || x.EmissionSource!.Installation!.Site!.EnterpriseId ==
@@ -56,18 +56,18 @@ internal class MeasurementRepository(ApplicationDbContext context, ICurrentUserS
 
         if (from.HasValue)
         {
-            query = query.Where(x => x.Timestamp >= from.Value);
+            query = query.Where(x => x.WindowEnd >= from.Value);
         }
 
         if (to.HasValue)
         {
-            query = query.Where(x => x.Timestamp <= to.Value);
+            query = query.Where(x => x.WindowEnd <= to.Value);
         }
 
         var total = await query.CountAsync(cancellationToken);
 
         var items = await query
-            .OrderByDescending(x => x.Timestamp)
+            .OrderByDescending(x => x.WindowEnd)
             .Skip((page - 1) * pageSize)
             .Take(pageSize)
             .ToListAsync(cancellationToken);

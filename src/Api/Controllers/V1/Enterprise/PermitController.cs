@@ -74,10 +74,12 @@ public class PermitController(
             EmissionLimits = request.EmissionLimits!
                 .Select(x => new EmissionLimitCommandDto(
                     x.Value,
+                    x.LimitType,
                     x.Period,
                     x.UnitId,
                     x.PollutantId,
                     x.EmissionSourceId,
+                    x.InstallationId,
                     x.ValidFrom,
                     x.ValidTo
                 ))
@@ -111,10 +113,12 @@ public class PermitController(
                 .Select(x => new UpdateEmissionLimitCommandDto(
                     x.Id,
                     x.Value,
+                    x.LimitType,
                     x.Period,
                     x.UnitId,
                     x.PollutantId,
                     x.EmissionSourceId,
+                    x.InstallationId,
                     x.ValidFrom,
                     x.ValidTo
                 ))

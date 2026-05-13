@@ -101,9 +101,9 @@ public static class ServiceCollectionExtensions
         services.AddScoped<MonitoringRequirementRepository>();
         services.AddScoped<IMonitoringRequirementRepository>(provider => provider.GetRequiredService<MonitoringRequirementRepository>());
         
-        services.AddScoped<ExceedanceEventRepository>();
-        services.AddScoped<IExceedanceEventRepository>(provider => provider.GetRequiredService<ExceedanceEventRepository>());
-        services.AddScoped<IExceedanceEventQueries>(provider => provider.GetRequiredService<ExceedanceEventRepository>());
+        services.AddScoped<ComplianceEventRepository>();
+        services.AddScoped<IComplianceEventRepository>(provider => provider.GetRequiredService<ComplianceEventRepository>());
+        services.AddScoped<IComplianceEventQueries>(provider => provider.GetRequiredService<ComplianceEventRepository>());
 
         services.AddScoped<DevicePollutantCapabilityRepository>();
         services.AddScoped<IDevicePollutantCapabilityRepository>(provider => provider.GetRequiredService<DevicePollutantCapabilityRepository>());

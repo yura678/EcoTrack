@@ -1,4 +1,3 @@
-﻿using Domain.Entities.Enterprises;
 using Domain.Entities.Monitoring;
 using Infrastructure.Persistence.Converters;
 using Microsoft.EntityFrameworkCore;
@@ -6,23 +5,40 @@ using Microsoft.EntityFrameworkCore.Metadata.Builders;
 
 namespace Infrastructure.Persistence.Configuration.Monitoring;
 
-public class ExceedanceEventConfiguration : IEntityTypeConfiguration<ExceedanceEvent>
+public class ComplianceEventConfiguration : IEntityTypeConfiguration<ComplianceEvent>
 {
-    public void Configure(EntityTypeBuilder<ExceedanceEvent> builder)
+    public void Configure(EntityTypeBuilder<ComplianceEvent> builder)
     {
         builder.HasKey(x => x.Id);
-        
-        builder.Property(x => x.Magnitude)
+
+        builder.Property(x => x.EventType)
+            .HasConversion<int>()
             .IsRequired();
+
+        builder.Property(x => x.Ratio)
+            .HasPrecision(18, 4)
+            .IsRequired(false);
 
         builder.Property(x => x.Status)
             .HasConversion<int>()
+            .IsRequired();
+
+        builder.Property(x => x.WindowStart)
+            .HasConversion(new DateTimeUtcConverter())
+            .IsRequired();
+
+        builder.Property(x => x.WindowEnd)
+            .HasConversion(new DateTimeUtcConverter())
             .IsRequired();
 
         builder.Property(x => x.DetectedAt)
             .IsRequired()
             .HasConversion(new DateTimeUtcConverter())
             .HasDefaultValueSql("timezone('utc', now())");
+
+        builder.Property(x => x.ClosedAt)
+            .IsRequired(false)
+            .HasConversion(new DateTimeUtcConverter());
 
         builder.Property(x => x.UpdatedAt)
             .IsRequired(false)
@@ -31,6 +47,11 @@ public class ExceedanceEventConfiguration : IEntityTypeConfiguration<ExceedanceE
         builder.Property(x => x.Notes)
             .HasMaxLength(1000)
             .IsRequired(false);
+
+        builder.HasOne(x => x.EmissionSource)
+            .WithMany()
+            .HasForeignKey(x => x.EmissionSourceId)
+            .OnDelete(DeleteBehavior.Restrict);
 
         builder.HasOne(x => x.Measurement)
             .WithMany()
@@ -41,5 +62,12 @@ public class ExceedanceEventConfiguration : IEntityTypeConfiguration<ExceedanceE
             .WithMany()
             .HasForeignKey(x => x.LimitId)
             .OnDelete(DeleteBehavior.Restrict);
+
+        builder.HasOne(x => x.Device)
+            .WithMany()
+            .HasForeignKey(x => x.DeviceId)
+            .OnDelete(DeleteBehavior.SetNull);
+
+        builder.HasIndex(x => new { x.EmissionSourceId, x.DetectedAt });
     }
 }

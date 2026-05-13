@@ -20,7 +20,7 @@ public interface IUnitOfWork
     IMeasurementRepository MeasurementRepository { get; }
     IMonitoringDeviceRepository MonitoringDeviceRepository { get; }
     IMonitoringRequirementRepository MonitoringRequirementRepository { get; }
-    IExceedanceEventRepository ExceedanceEventRepository { get; }
+    IComplianceEventRepository ComplianceEventRepository { get; }
     IDevicePollutantCapabilityRepository DevicePollutantCapabilityRepository { get; }
     ICalibrationRecordRepository CalibrationRecordRepository { get; }
     IMonitoringPlanRepository MonitoringPlanRepository { get; }

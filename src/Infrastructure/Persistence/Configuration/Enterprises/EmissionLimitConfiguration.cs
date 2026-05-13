@@ -1,4 +1,4 @@
-﻿using Domain.Entities.Enterprises;
+using Domain.Entities.Enterprises;
 using Infrastructure.Persistence.Converters;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
@@ -12,13 +12,19 @@ public class EmissionLimitConfiguration : IEntityTypeConfiguration<EmissionLimit
         builder.HasKey(x => x.Id);
 
         builder.Property(x => x.Value)
+            .HasPrecision(18, 4)
+            .IsRequired();
+
+        builder.Property(x => x.LimitType)
+            .HasConversion<int>()
             .IsRequired();
 
         builder.Property(x => x.Period)
+            .HasConversion<int>()
             .IsRequired();
 
         builder.Property(x => x.ValidFrom)
-            .IsRequired(false)
+            .IsRequired()
             .HasConversion(new DateTimeUtcConverter());
 
         builder.Property(x => x.ValidTo)
@@ -39,6 +45,11 @@ public class EmissionLimitConfiguration : IEntityTypeConfiguration<EmissionLimit
         builder.HasOne(x => x.EmissionSource)
             .WithMany(x => x.EmissionLimits)
             .HasForeignKey(x => x.EmissionSourceId)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        builder.HasOne(x => x.Installation)
+            .WithMany()
+            .HasForeignKey(x => x.InstallationId)
             .OnDelete(DeleteBehavior.Restrict);
 
         builder.HasOne(x => x.Permit)
