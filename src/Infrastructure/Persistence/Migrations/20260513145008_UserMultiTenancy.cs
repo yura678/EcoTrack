@@ -73,13 +73,14 @@ namespace Infrastructure.Persistence.Migrations
                 columns: new[] { "user_id", "enterprise_id" },
                 unique: true);
 
-            // Backfill memberships from existing users.enterprise_id + their first user_role
+            // Backfill memberships from existing users.enterprise_id + their first user-roles entry.
             // For each user with an EnterpriseId and at least one role, create one active membership.
+            // Note: the Identity user-roles join table is named "user-roles" (with a hyphen).
             migrationBuilder.Sql(@"
                 INSERT INTO user_enterprise_membership (id, user_id, enterprise_id, role_id, joined_at)
                 SELECT gen_random_uuid(), u.""UserId"", u.enterprise_id, ur.role_id, timezone('utc', now())
                 FROM usr.users u
-                JOIN usr.user_role ur ON ur.user_id = u.""UserId""
+                JOIN usr.""user-roles"" ur ON ur.user_id = u.""UserId""
                 WHERE u.enterprise_id IS NOT NULL
                   AND u.enterprise_id <> '00000000-0000-0000-0000-000000000000'
                 ON CONFLICT DO NOTHING;");

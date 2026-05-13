@@ -1,4 +1,5 @@
-﻿using Application.Common.Interfaces.Persistence;
+﻿using Application.Common.Interfaces.Ingestion;
+using Application.Common.Interfaces.Persistence;
 using Application.Common.Interfaces.Queries;
 using Application.Common.Interfaces.Queries.Emissions;
 using Application.Common.Interfaces.Queries.Enterprises;
@@ -12,6 +13,7 @@ using Infrastructure.Persistence.Repositories;
 using Infrastructure.Persistence.Repositories.Common;
 using Infrastructure.Persistence.Repositories.EmissionSources;
 using Infrastructure.Persistence.Repositories.Enterprises;
+using Infrastructure.Persistence.Ingestion;
 using Infrastructure.Persistence.Repositories.Monitoring;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.EntityFrameworkCore;
@@ -30,15 +32,19 @@ public static class ServiceCollectionExtensions
     {
         services.AddScoped<IUnitOfWork, UnitOfWork>();
 
-        services.AddDbContext<ApplicationDbContext>((provider, options) =>
+        services.AddSingleton<NpgsqlDataSource>(provider =>
         {
             var settings = provider.GetRequiredService<ApplicationSettings>();
             var connectionString = settings.ConnectionStrings?.DefaultConnection;
             var dataSourceBuilder = new NpgsqlDataSourceBuilder(connectionString);
             dataSourceBuilder.EnableDynamicJson();
             dataSourceBuilder.UseNetTopologySuite();
-            var dataSource = dataSourceBuilder.Build();
+            return dataSourceBuilder.Build();
+        });
 
+        services.AddDbContext<ApplicationDbContext>((provider, options) =>
+        {
+            var dataSource = provider.GetRequiredService<NpgsqlDataSource>();
             options
                 .UseNpgsql(dataSource,
                     builder =>
@@ -50,11 +56,11 @@ public static class ServiceCollectionExtensions
                 .ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
         });
         services.AddScoped<ApplicationDbContextInitializer>();
-        // services.AddScoped<IApplicationDbContext>(provider => provider.GetRequiredService<ApplicationDbContext>());
         services.AddRepositories();
+        services.AddScoped<IRawMeasurementWriter, RawMeasurementWriter>();
+        services.AddScoped<IRawProcessParameterWriter, RawProcessParameterWriter>();
 
         return services;
-        
     }
      private static void AddRepositories(this IServiceCollection services)
     {

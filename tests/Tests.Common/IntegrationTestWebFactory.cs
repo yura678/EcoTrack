@@ -16,7 +16,7 @@ namespace Tests.Common;
 public class IntegrationTestWebFactory: WebApplicationFactory<Program>, IAsyncLifetime
 {
   private readonly PostgreSqlContainer _dbContainer = new PostgreSqlBuilder()
-        .WithImage("postgis/postgis:16-3.4")
+        .WithImage("timescale/timescaledb-ha:pg16")
         .WithDatabase("test-ecoTrack-database")
         .WithUsername("postgres")
         .WithPassword("postgres")

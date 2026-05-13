@@ -13,6 +13,7 @@ using Infrastructure.Identity.SeedDatabaseService;
 using Infrastructure.Identity.Store;
 using Infrastructure.Identity.UserManager;
 using Infrastructure.Identity.validator;
+using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Builder;
@@ -101,7 +102,10 @@ public static class ServiceCollectionExtension
             options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
             options.DefaultChallengeScheme = JwtBearerDefaults.AuthenticationScheme;
             options.DefaultScheme = JwtBearerDefaults.AuthenticationScheme;
-        }).AddJwtBearer(options =>
+        })
+        .AddScheme<AuthenticationSchemeOptions, Infrastructure.Identity.Ingestion.DeviceHmacAuthenticationHandler>(
+            Infrastructure.Identity.Ingestion.DeviceHmacAuthDefaults.Scheme, _ => { })
+        .AddJwtBearer(options =>
         {
             var secretkey = Encoding.UTF8.GetBytes(identitySettings.SecretKey);
             var encryptionkey = Encoding.UTF8.GetBytes(identitySettings.EncryptKey);

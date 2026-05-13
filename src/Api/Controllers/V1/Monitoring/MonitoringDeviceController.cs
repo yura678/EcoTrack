@@ -119,4 +119,17 @@ public class MonitoringDevicesController(
             d => Ok(MonitoringDeviceDto.FromDomainModel(d)),
             e => e.ToObjectResult());
     }
+
+    [HttpPost("monitoring-devices/{id:guid}/rotate-ingestion-secret")]
+    [ProducesOkApiResponseType<RotateIngestionSecretResult>]
+    public async Task<IActionResult> RotateIngestionSecret(
+        [FromRoute] Guid id,
+        CancellationToken cancellationToken)
+    {
+        var result = await sender.Send(new RotateIngestionSecretCommand { DeviceId = id },
+            cancellationToken);
+        return result.Match(
+            r => Ok(r),
+            e => e.ToObjectResult());
+    }
 }

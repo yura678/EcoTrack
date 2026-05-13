@@ -17,6 +17,7 @@ public class MonitoringDevice : BaseEntity
     public DateTime? InstalledAt { get; private set; }
     public DeviceStatus Status { get; private set; }
     public string? Notes { get; private set; }
+    public string? IngestionSecret { get; private set; }
 
     public DateTime CreatedAt { get; }
     public DateTime? UpdatedAt { get; private set; }
@@ -62,6 +63,12 @@ public class MonitoringDevice : BaseEntity
         Status = status;
         Notes = notes;
 
+        UpdatedAt = DateTime.UtcNow;
+    }
+
+    public void RotateIngestionSecret(string newSecret)
+    {
+        IngestionSecret = newSecret;
         UpdatedAt = DateTime.UtcNow;
     }
 }

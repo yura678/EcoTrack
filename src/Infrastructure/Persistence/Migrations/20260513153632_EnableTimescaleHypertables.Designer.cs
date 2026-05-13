@@ -3,6 +3,7 @@ using System;
 using Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using NetTopologySuite.Geometries;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
@@ -12,9 +13,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace Infrastructure.Persistence.Migrations
 {
     [DbContext(typeof(ApplicationDbContext))]
-    partial class ApplicationDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260513153632_EnableTimescaleHypertables")]
+    partial class EnableTimescaleHypertables
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -862,11 +865,6 @@ namespace Infrastructure.Persistence.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("emission_source_id");
 
-                    b.Property<string>("IngestionSecret")
-                        .HasMaxLength(128)
-                        .HasColumnType("character varying(128)")
-                        .HasColumnName("ingestion_secret");
-
                     b.Property<Guid>("InstallationId")
                         .HasColumnType("uuid")
                         .HasColumnName("installation_id");
@@ -1013,10 +1011,6 @@ namespace Infrastructure.Persistence.Migrations
 
                     NpgsqlPropertyBuilderExtensions.UseIdentityAlwaysColumn(b.Property<long>("Id"));
 
-                    b.Property<DateTime>("Time")
-                        .HasColumnType("timestamp with time zone")
-                        .HasColumnName("time");
-
                     b.Property<Guid>("DeviceId")
                         .HasColumnType("uuid")
                         .HasColumnName("device_id");
@@ -1044,11 +1038,15 @@ namespace Infrastructure.Persistence.Migrations
                         .HasColumnType("numeric(18,6)")
                         .HasColumnName("raw_value");
 
+                    b.Property<DateTime>("Time")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("time");
+
                     b.Property<Guid>("UnitId")
                         .HasColumnType("uuid")
                         .HasColumnName("unit_id");
 
-                    b.HasKey("Id", "Time")
+                    b.HasKey("Id")
                         .HasName("pk_raw_measurement");
 
                     b.HasIndex("Time")
@@ -1068,10 +1066,6 @@ namespace Infrastructure.Persistence.Migrations
                         .HasColumnName("id");
 
                     NpgsqlPropertyBuilderExtensions.UseIdentityAlwaysColumn(b.Property<long>("Id"));
-
-                    b.Property<DateTime>("Time")
-                        .HasColumnType("timestamp with time zone")
-                        .HasColumnName("time");
 
                     b.Property<Guid>("DeviceId")
                         .HasColumnType("uuid")
@@ -1095,6 +1089,10 @@ namespace Infrastructure.Persistence.Migrations
                         .HasColumnType("integer")
                         .HasColumnName("quality");
 
+                    b.Property<DateTime>("Time")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("time");
+
                     b.Property<Guid>("UnitId")
                         .HasColumnType("uuid")
                         .HasColumnName("unit_id");
@@ -1104,7 +1102,7 @@ namespace Infrastructure.Persistence.Migrations
                         .HasColumnType("numeric(18,6)")
                         .HasColumnName("value");
 
-                    b.HasKey("Id", "Time")
+                    b.HasKey("Id")
                         .HasName("pk_raw_process_parameter");
 
                     b.HasIndex("Time")

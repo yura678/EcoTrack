@@ -49,6 +49,10 @@ public class MonitoringDeviceConfiguration : IEntityTypeConfiguration<Monitoring
             .HasMaxLength(500)
             .IsRequired(false);
 
+        builder.Property(x => x.IngestionSecret)
+            .HasMaxLength(128)
+            .IsRequired(false);
+
         builder.Property(x => x.EmissionSourceId)
             .IsRequired(false);
         

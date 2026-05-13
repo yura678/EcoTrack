@@ -9,7 +9,9 @@ public class RawProcessParameterConfiguration : IEntityTypeConfiguration<RawProc
 {
     public void Configure(EntityTypeBuilder<RawProcessParameter> builder)
     {
-        builder.HasKey(x => x.Id);
+        // Composite PK (Id, Time) — required by TimescaleDB hypertables:
+        // every unique index must include the partitioning column.
+        builder.HasKey(x => new { x.Id, x.Time });
         builder.Property(x => x.Id).UseIdentityAlwaysColumn();
 
         builder.Property(x => x.Time)
