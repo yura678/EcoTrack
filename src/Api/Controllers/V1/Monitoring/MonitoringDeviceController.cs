@@ -71,7 +71,7 @@ public class MonitoringDevicesController(
             Model = request.Model,
             SerialNumber = request.SerialNumber,
             Type = request.Type,
-            IsOnline = request.IsOnline,
+            Status = request.Status,
             Notes = request.Notes
         };
 
@@ -93,7 +93,7 @@ public class MonitoringDevicesController(
         {
             Id = id,
             EmissionSourceId = request.EmissionSourceId,
-            IsOnline = request.IsOnline,
+            Status = request.Status,
             Notes = request.Notes
         };
         var updatedEntity = await sender.Send(input, cancellationToken);

@@ -311,7 +311,7 @@ public class ApplicationDbContextInitializer(
                 model: $"Model-{deviceType}-{i}",
                 serialNumber: $"SN-{Guid.NewGuid().ToString()[..8]}",
                 type: deviceType,
-                isOnline: rnd.NextDouble() > 0.3,
+                status: rnd.NextDouble() > 0.3 ? DeviceStatus.Operational : DeviceStatus.Offline,
                 notes: sourceId is null
                     ? "Device installed at installation level"
                     : "Device installed on emission source"
@@ -331,16 +331,45 @@ public class ApplicationDbContextInitializer(
 
         var pollutants = new List<Pollutant>
         {
-            Pollutant.New(Guid.NewGuid(), "CO", "Чадний газ"),
-            Pollutant.New(Guid.NewGuid(), "CO₂", "Вуглекислий газ"),
-            Pollutant.New(Guid.NewGuid(), "NO", "Оксид азоту"),
-            Pollutant.New(Guid.NewGuid(), "NO₂", "Діоксид азоту"),
-            Pollutant.New(Guid.NewGuid(), "SO₂", "Діоксид сірки"),
-            Pollutant.New(Guid.NewGuid(), "H₂S", "Сірководень"),
-            Pollutant.New(Guid.NewGuid(), "PM10", "Тверді частинки PM10"),
-            Pollutant.New(Guid.NewGuid(), "PM2.5", "Тверді частинки PM2.5"),
-            Pollutant.New(Guid.NewGuid(), "NH₃", "Аміак"),
-            Pollutant.New(Guid.NewGuid(), "CH₄", "Метан")
+            Pollutant.New(Guid.NewGuid(), "CO", "Чадний газ",
+                PollutantCategory.Gas, PollutantMedia.Air, MeasureUnitDimension.MassConcentration,
+                casNumber: "630-08-0", defaultO2Reference: 6m, eprtrThresholdKgYear: 500_000m),
+
+            Pollutant.New(Guid.NewGuid(), "CO₂", "Вуглекислий газ",
+                PollutantCategory.Gas, PollutantMedia.Air, MeasureUnitDimension.MassConcentration,
+                casNumber: "124-38-9", eprtrThresholdKgYear: 100_000_000m),
+
+            Pollutant.New(Guid.NewGuid(), "NO", "Оксид азоту",
+                PollutantCategory.Gas, PollutantMedia.Air, MeasureUnitDimension.MassConcentration,
+                casNumber: "10102-43-9", defaultO2Reference: 6m),
+
+            Pollutant.New(Guid.NewGuid(), "NO₂", "Діоксид азоту",
+                PollutantCategory.Gas, PollutantMedia.Air, MeasureUnitDimension.MassConcentration,
+                casNumber: "10102-44-0", defaultO2Reference: 6m, eprtrThresholdKgYear: 100_000m),
+
+            Pollutant.New(Guid.NewGuid(), "SO₂", "Діоксид сірки",
+                PollutantCategory.Acid, PollutantMedia.Air, MeasureUnitDimension.MassConcentration,
+                casNumber: "7446-09-5", defaultO2Reference: 6m, eprtrThresholdKgYear: 150_000m),
+
+            Pollutant.New(Guid.NewGuid(), "H₂S", "Сірководень",
+                PollutantCategory.Acid, PollutantMedia.Air, MeasureUnitDimension.MassConcentration,
+                casNumber: "7783-06-4"),
+
+            Pollutant.New(Guid.NewGuid(), "PM10", "Тверді частинки PM10",
+                PollutantCategory.ParticulateMatter, PollutantMedia.Air, MeasureUnitDimension.MassConcentration,
+                defaultO2Reference: 6m, eprtrThresholdKgYear: 50_000m),
+
+            Pollutant.New(Guid.NewGuid(), "PM2.5", "Тверді частинки PM2.5",
+                PollutantCategory.ParticulateMatter, PollutantMedia.Air, MeasureUnitDimension.MassConcentration,
+                defaultO2Reference: 6m),
+
+            Pollutant.New(Guid.NewGuid(), "NH₃", "Аміак",
+                PollutantCategory.Inorganic, PollutantMedia.Both, MeasureUnitDimension.MassConcentration,
+                casNumber: "7664-41-7", eprtrThresholdKgYear: 10_000m),
+
+            Pollutant.New(Guid.NewGuid(), "CH₄", "Метан",
+                PollutantCategory.Voc, PollutantMedia.Air, MeasureUnitDimension.MassConcentration,
+                casNumber: "74-82-8", eprtrThresholdKgYear: 100_000m)
         };
 
         await dbContext.Set<Pollutant>().AddRangeAsync(pollutants);

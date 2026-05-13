@@ -79,7 +79,7 @@ public class MonitoringDeviceControllerTests : BaseIntegrationTest, IAsyncLifeti
         dto.Model.Should().Be(_firstDevice.Model);
         dto.SerialNumber.Should().Be(_firstDevice.SerialNumber);
         dto.Type.Should().Be(_firstDevice.Type);
-        dto.IsOnline.Should().Be(_firstDevice.IsOnline);
+        dto.Status.Should().Be(_firstDevice.Status);
     }
 
     [Fact]
@@ -107,7 +107,7 @@ public class MonitoringDeviceControllerTests : BaseIntegrationTest, IAsyncLifeti
             Model: model.Model,
             SerialNumber: model.SerialNumber,
             Type: model.Type,
-            IsOnline: model.IsOnline,
+            Status: model.Status,
             Notes: model.Notes
         );
 
@@ -139,7 +139,7 @@ public class MonitoringDeviceControllerTests : BaseIntegrationTest, IAsyncLifeti
             Model: "",
             SerialNumber: "SN-1",
             Type: MonitoringDeviceType.CEMS,
-            IsOnline: true,
+            Status: DeviceStatus.Operational,
             Notes: null
         );
 
@@ -161,7 +161,7 @@ public class MonitoringDeviceControllerTests : BaseIntegrationTest, IAsyncLifeti
             Model: "CEMS-200",
             SerialNumber: "S-999",
             Type: MonitoringDeviceType.CEMS,
-            IsOnline: true,
+            Status: DeviceStatus.Operational,
             Notes: null
         );
 
@@ -179,7 +179,7 @@ public class MonitoringDeviceControllerTests : BaseIntegrationTest, IAsyncLifeti
         // Arrange
         var update = new UpdateMonitoringDeviceDto(
             EmissionSourceId: _emissionSource.Id,
-            IsOnline: false,
+            Status: DeviceStatus.Offline,
             Notes: "updated"
         );
 
@@ -194,7 +194,7 @@ public class MonitoringDeviceControllerTests : BaseIntegrationTest, IAsyncLifeti
         var db = await Context.Set<MonitoringDevice>().AsNoTracking()
             .FirstAsync(x => x.Id.Equals(_firstDevice.Id));
 
-        db.IsOnline.Should().BeFalse();
+        db.Status.Should().Be(DeviceStatus.Offline);
         db.Notes.Should().Be("updated");
     }
 
@@ -206,7 +206,7 @@ public class MonitoringDeviceControllerTests : BaseIntegrationTest, IAsyncLifeti
 
         var update = new UpdateMonitoringDeviceDto(
             EmissionSourceId: _emissionSource.Id,
-            IsOnline: true,
+            Status: DeviceStatus.Operational,
             Notes: "abc"
         );
 
@@ -223,7 +223,7 @@ public class MonitoringDeviceControllerTests : BaseIntegrationTest, IAsyncLifeti
         // Arrange
         var update = new UpdateMonitoringDeviceDto(
             EmissionSourceId: _emissionSource.Id,
-            IsOnline: true,
+            Status: DeviceStatus.Operational,
             Notes: new string('x', 2000)
         );
 

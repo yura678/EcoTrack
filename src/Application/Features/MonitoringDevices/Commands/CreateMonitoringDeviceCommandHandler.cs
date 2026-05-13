@@ -103,7 +103,7 @@ public class CreateMonitoringDeviceCommandHandler(
                     request.Model,
                     request.SerialNumber,
                     request.Type,
-                    request.IsOnline,
+                    request.Status,
                     request.Notes), cancellationToken);
 
             await unitOfWork.SaveChangesAsync(cancellationToken);

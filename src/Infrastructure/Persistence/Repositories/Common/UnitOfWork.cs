@@ -23,6 +23,8 @@ public class UnitOfWork(
     IMonitoringDeviceRepository monitoringDeviceRepository,
     IMonitoringRequirementRepository monitoringRequirementRepository,
     IExceedanceEventRepository exceedanceEventRepository,
+    IDevicePollutantCapabilityRepository devicePollutantCapabilityRepository,
+    ICalibrationRecordRepository calibrationRecordRepository,
     IMonitoringPlanRepository monitoringPlanRepository,
     IPermitRepository permitRepository,
     IEmissionLimitRepository emissionLimitRepository,
@@ -42,6 +44,8 @@ public class UnitOfWork(
     public IMonitoringDeviceRepository MonitoringDeviceRepository { get; } = monitoringDeviceRepository;
     public IMonitoringRequirementRepository MonitoringRequirementRepository { get; } = monitoringRequirementRepository;
     public IExceedanceEventRepository ExceedanceEventRepository { get; } = exceedanceEventRepository;
+    public IDevicePollutantCapabilityRepository DevicePollutantCapabilityRepository { get; } = devicePollutantCapabilityRepository;
+    public ICalibrationRecordRepository CalibrationRecordRepository { get; } = calibrationRecordRepository;
     public IMonitoringPlanRepository MonitoringPlanRepository { get; } = monitoringPlanRepository;
     public IPermitRepository PermitRepository { get; } = permitRepository;
     public IEmissionLimitRepository EmissionLimitRepository { get; } = emissionLimitRepository;

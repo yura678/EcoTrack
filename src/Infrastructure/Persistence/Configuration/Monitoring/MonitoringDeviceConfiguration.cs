@@ -28,7 +28,8 @@ public class MonitoringDeviceConfiguration : IEntityTypeConfiguration<Monitoring
             .HasConversion<int>()
             .IsRequired();
 
-        builder.Property(x => x.IsOnline)
+        builder.Property(x => x.Status)
+            .HasConversion<int>()
             .IsRequired();
 
         builder.Property(x => x.InstalledAt)

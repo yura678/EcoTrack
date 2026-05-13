@@ -70,7 +70,7 @@ public class UpdateMonitoringDeviceCommandHandler(
         {
             entity.UpdateDetails(
                 request.EmissionSourceId,
-                request.IsOnline,
+                request.Status,
                 request.Notes);
 
             var updatedMonitoringDevice = unitOfWork.MonitoringDeviceRepository.Update(entity);

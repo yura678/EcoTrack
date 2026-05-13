@@ -1,4 +1,4 @@
-﻿using Domain.Entities.Monitoring;
+using Domain.Entities.Monitoring;
 
 namespace Api.Dtos;
 
@@ -11,12 +11,12 @@ public record CreateMonitoringDeviceDto(
     string Model,
     string SerialNumber,
     MonitoringDeviceType Type,
-    bool IsOnline,
+    DeviceStatus Status,
     string? Notes);
 
 public record UpdateMonitoringDeviceDto(
     Guid? EmissionSourceId,
-    bool IsOnline,
+    DeviceStatus Status,
     string? Notes);
 
 public record MonitoringDeviceDto(
@@ -29,7 +29,7 @@ public record MonitoringDeviceDto(
     string SerialNumber,
     MonitoringDeviceType Type,
     DateTime? InstalledAt,
-    bool IsOnline,
+    DeviceStatus Status,
     DateTime CreatedAt,
     DateTime? UpdatedAt,
     string? Notes)
@@ -50,7 +50,7 @@ public record MonitoringDeviceDto(
             SerialNumber: monitoringDevice.SerialNumber,
             Type: monitoringDevice.Type,
             InstalledAt: monitoringDevice.InstalledAt,
-            IsOnline: monitoringDevice.IsOnline,
+            Status: monitoringDevice.Status,
             CreatedAt: monitoringDevice.CreatedAt,
             UpdatedAt: monitoringDevice.UpdatedAt,
             Notes: monitoringDevice.Notes

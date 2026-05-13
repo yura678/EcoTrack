@@ -1,4 +1,4 @@
-﻿using Domain.Entities.Monitoring;
+using Domain.Entities.Monitoring;
 
 namespace Tests.Data.Monitoring;
 
@@ -13,7 +13,7 @@ public static class MonitoringDevicesData
             model: "CEMS-1000",
             serialNumber: "SN-001",
             type: MonitoringDeviceType.CEMS,
-            isOnline: true,
+            status: DeviceStatus.Operational,
             notes: "First device for testing"
         );
 
@@ -27,7 +27,7 @@ public static class MonitoringDevicesData
             model: "CEMS-2000",
             serialNumber: "SN-002",
             type: MonitoringDeviceType.CEMS,
-            isOnline: false,
+            status: DeviceStatus.Offline,
             notes: "Second device for testing"
         );
 
@@ -41,7 +41,7 @@ public static class MonitoringDevicesData
             model: "CEMS-NEW",
             serialNumber: "SN-NEW",
             type: MonitoringDeviceType.CEMS,
-            isOnline: true,
+            status: DeviceStatus.Operational,
             notes: "Created from test"
         );
 
@@ -55,7 +55,7 @@ public static class MonitoringDevicesData
             model: "UPDATED-MODEL",
             serialNumber: "UPDATED-SN",
             type: MonitoringDeviceType.CEMS,
-            isOnline: false,
+            status: DeviceStatus.Offline,
             notes: "Updated in test"
         );
 }

@@ -17,7 +17,7 @@ public class CreateMonitoringDeviceCommand : IRequest<Either<MonitoringDeviceExc
     public required string Model { get; init; }
     public required string SerialNumber { get; init; }
     public required MonitoringDeviceType Type { get; init; }
-    public required bool IsOnline { get; init; }
+    public required DeviceStatus Status { get; init; }
     public required string? Notes { get; init; }
 
     public IValidator<CreateMonitoringDeviceCommand> ValidateApplicationModel(
@@ -37,8 +37,8 @@ public class CreateMonitoringDeviceCommand : IRequest<Either<MonitoringDeviceExc
         validator.RuleFor(x => x.Type)
             .IsInEnum();
 
-        validator.RuleFor(x => x.IsOnline)
-            .NotNull();
+        validator.RuleFor(x => x.Status)
+            .IsInEnum();
 
         validator.RuleFor(x => x.Notes)
             .MaximumLength(1000)

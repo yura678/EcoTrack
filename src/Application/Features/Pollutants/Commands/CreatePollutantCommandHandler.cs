@@ -1,4 +1,4 @@
-﻿using Application.Common.Interfaces.Persistence;
+using Application.Common.Interfaces.Persistence;
 using Application.Features.Pollutants.Exceptions;
 using Domain.Entities.EmissionSources;
 using LanguageExt;
@@ -6,8 +6,6 @@ using MediatR;
 using Unit = LanguageExt.Unit;
 
 namespace Application.Features.Pollutants.Commands;
-
-
 
 public class CreatePollutantCommandHandler(
     IUnitOfWork unitOfWork)
@@ -53,7 +51,10 @@ public class CreatePollutantCommandHandler(
         try
         {
             var newPollutant = await unitOfWork.PollutantRepository.AddAsync(
-                Pollutant.New(Guid.NewGuid(), request.Name, request.Code), cancellationToken);
+                Pollutant.New(Guid.NewGuid(), request.Code, request.Name,
+                    request.Category, request.Media, request.DefaultDimension,
+                    request.CasNumber, request.DefaultO2Reference, request.EprtrThresholdKgYear),
+                cancellationToken);
             await unitOfWork.SaveChangesAsync(cancellationToken);
 
             return newPollutant;

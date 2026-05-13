@@ -19,8 +19,8 @@ public class CreateMonitoringDeviceDtoValidator : AbstractValidator<CreateMonito
         RuleFor(x => x.Type)
             .IsInEnum();
 
-        RuleFor(x => x.IsOnline)
-            .NotNull();
+        RuleFor(x => x.Status)
+            .IsInEnum();
 
         RuleFor(x => x.Notes)
             .MaximumLength(1000)

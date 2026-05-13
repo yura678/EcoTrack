@@ -15,17 +15,20 @@ public class MonitoringDevice : BaseEntity
     public string SerialNumber { get; private set; }
     public MonitoringDeviceType Type { get; private set; }
     public DateTime? InstalledAt { get; private set; }
-    public bool IsOnline { get; private set; }
+    public DeviceStatus Status { get; private set; }
     public string? Notes { get; private set; }
 
     public DateTime CreatedAt { get; }
     public DateTime? UpdatedAt { get; private set; }
 
+    public ICollection<DevicePollutantCapability>? Capabilities { get; private set; } = [];
+    public ICollection<CalibrationRecord>? Calibrations { get; private set; } = [];
+
 
     private MonitoringDevice(Guid id, Guid installationId,
         Guid? emissionSourceId, string model,
         string serialNumber, MonitoringDeviceType type, DateTime? installedAt, DateTime createdAt, DateTime? updatedAt,
-        bool isOnline, string? notes)
+        DeviceStatus status, string? notes)
     {
         Id = id;
         EmissionSourceId = emissionSourceId;
@@ -37,26 +40,26 @@ public class MonitoringDevice : BaseEntity
         InstalledAt = installedAt;
         CreatedAt = createdAt;
         UpdatedAt = updatedAt;
-        IsOnline = isOnline;
+        Status = status;
         Notes = notes;
     }
 
     public static MonitoringDevice New(Guid id, Guid installationId,
         Guid? emissionSourceId,
-        string model, string serialNumber, MonitoringDeviceType type, bool isOnline, string? notes)
+        string model, string serialNumber, MonitoringDeviceType type, DeviceStatus status, string? notes)
     {
         DateTime? installedAt = emissionSourceId is null ? null : DateTime.UtcNow;
 
         return new MonitoringDevice(id, installationId, emissionSourceId, model, serialNumber, type, installedAt,
-            DateTime.UtcNow, null, isOnline,
+            DateTime.UtcNow, null, status,
             notes);
     }
 
-    public void UpdateDetails(Guid? emissionSourceId, bool isOnline, string? notes)
+    public void UpdateDetails(Guid? emissionSourceId, DeviceStatus status, string? notes)
     {
         EmissionSourceId = emissionSourceId;
         InstalledAt = emissionSourceId is null ? null : DateTime.UtcNow;
-        IsOnline = isOnline;
+        Status = status;
         Notes = notes;
 
         UpdatedAt = DateTime.UtcNow;
@@ -68,4 +71,12 @@ public enum MonitoringDeviceType
     CEMS = 0,
     Sampler = 1,
     FlowMeter = 2
+}
+
+public enum DeviceStatus
+{
+    Operational = 0,
+    Offline = 1,
+    Maintenance = 2,
+    Decommissioned = 3
 }

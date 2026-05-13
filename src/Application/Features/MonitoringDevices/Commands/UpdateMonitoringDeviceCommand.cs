@@ -14,7 +14,7 @@ public class UpdateMonitoringDeviceCommand : IRequest<Either<MonitoringDeviceExc
 {
     public required Guid Id { get; init; }
     public required Guid? EmissionSourceId { get; init; }
-    public required bool IsOnline { get; init; }
+    public required DeviceStatus Status { get; init; }
     public required string? Notes { get; init; }
 
     public IValidator<UpdateMonitoringDeviceCommand> ValidateApplicationModel(
@@ -22,9 +22,9 @@ public class UpdateMonitoringDeviceCommand : IRequest<Either<MonitoringDeviceExc
     {
         validator.RuleFor(x => x.Id)
             .NotEmpty();
-        
-        validator.RuleFor(x => x.IsOnline)
-            .NotNull();
+
+        validator.RuleFor(x => x.Status)
+            .IsInEnum();
 
         validator.RuleFor(x => x.Notes)
             .MaximumLength(1000)

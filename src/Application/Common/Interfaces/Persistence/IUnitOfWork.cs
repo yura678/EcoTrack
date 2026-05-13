@@ -21,6 +21,8 @@ public interface IUnitOfWork
     IMonitoringDeviceRepository MonitoringDeviceRepository { get; }
     IMonitoringRequirementRepository MonitoringRequirementRepository { get; }
     IExceedanceEventRepository ExceedanceEventRepository { get; }
+    IDevicePollutantCapabilityRepository DevicePollutantCapabilityRepository { get; }
+    ICalibrationRecordRepository CalibrationRecordRepository { get; }
     IMonitoringPlanRepository MonitoringPlanRepository { get; }
     IPermitRepository PermitRepository { get; }
     IEmissionLimitRepository EmissionLimitRepository { get; }

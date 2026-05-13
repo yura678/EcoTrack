@@ -7,8 +7,8 @@ public class UpdateMonitoringDeviceDtoValidator : AbstractValidator<UpdateMonito
 {
     public UpdateMonitoringDeviceDtoValidator()
     {
-        RuleFor(x => x.IsOnline)
-            .NotNull();
+        RuleFor(x => x.Status)
+            .IsInEnum();
 
         RuleFor(x => x.Notes)
             .MaximumLength(1000)

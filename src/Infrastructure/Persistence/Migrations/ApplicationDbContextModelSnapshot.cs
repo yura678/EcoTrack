@@ -79,6 +79,15 @@ namespace Infrastructure.Persistence.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("id");
 
+                    b.Property<string>("CasNumber")
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasColumnName("cas_number");
+
+                    b.Property<int>("Category")
+                        .HasColumnType("integer")
+                        .HasColumnName("category");
+
                     b.Property<string>("Code")
                         .IsRequired()
                         .HasMaxLength(50)
@@ -90,6 +99,24 @@ namespace Infrastructure.Persistence.Migrations
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("created_at")
                         .HasDefaultValueSql("timezone('utc', now())");
+
+                    b.Property<int>("DefaultDimension")
+                        .HasColumnType("integer")
+                        .HasColumnName("default_dimension");
+
+                    b.Property<decimal?>("DefaultO2Reference")
+                        .HasPrecision(5, 2)
+                        .HasColumnType("numeric(5,2)")
+                        .HasColumnName("default_o2reference");
+
+                    b.Property<decimal?>("EprtrThresholdKgYear")
+                        .HasPrecision(18, 4)
+                        .HasColumnType("numeric(18,4)")
+                        .HasColumnName("eprtr_threshold_kg_year");
+
+                    b.Property<int>("Media")
+                        .HasColumnType("integer")
+                        .HasColumnName("media");
 
                     b.Property<string>("Name")
                         .IsRequired()
@@ -103,6 +130,11 @@ namespace Infrastructure.Persistence.Migrations
 
                     b.HasKey("Id")
                         .HasName("pk_pollutant");
+
+                    b.HasIndex("CasNumber")
+                        .IsUnique()
+                        .HasDatabaseName("ix_pollutant_cas_number")
+                        .HasFilter("cas_number IS NOT NULL");
 
                     b.HasIndex("Code")
                         .IsUnique()
@@ -458,6 +490,118 @@ namespace Infrastructure.Persistence.Migrations
                     b.ToTable("site", (string)null);
                 });
 
+            modelBuilder.Entity("Domain.Entities.Monitoring.CalibrationRecord", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<string>("CertificateNumber")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)")
+                        .HasColumnName("certificate_number");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at")
+                        .HasDefaultValueSql("timezone('utc', now())");
+
+                    b.Property<Guid>("DeviceId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("device_id");
+
+                    b.Property<DateTime>("NextDueAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("next_due_at");
+
+                    b.Property<string>("Notes")
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)")
+                        .HasColumnName("notes");
+
+                    b.Property<DateTime>("PerformedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("performed_at");
+
+                    b.Property<string>("PerformedBy")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("character varying(255)")
+                        .HasColumnName("performed_by");
+
+                    b.Property<int>("Result")
+                        .HasColumnType("integer")
+                        .HasColumnName("result");
+
+                    b.Property<int>("Type")
+                        .HasColumnType("integer")
+                        .HasColumnName("type");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.HasKey("Id")
+                        .HasName("pk_calibration_record");
+
+                    b.HasIndex("DeviceId", "PerformedAt")
+                        .HasDatabaseName("ix_calibration_record_device_id_performed_at");
+
+                    b.ToTable("calibration_record", (string)null);
+                });
+
+            modelBuilder.Entity("Domain.Entities.Monitoring.DevicePollutantCapability", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<string>("AccuracyClass")
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)")
+                        .HasColumnName("accuracy_class");
+
+                    b.Property<Guid>("DeviceId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("device_id");
+
+                    b.Property<Guid>("PollutantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("pollutant_id");
+
+                    b.Property<decimal>("RangeMax")
+                        .HasPrecision(18, 4)
+                        .HasColumnType("numeric(18,4)")
+                        .HasColumnName("range_max");
+
+                    b.Property<decimal>("RangeMin")
+                        .HasPrecision(18, 4)
+                        .HasColumnType("numeric(18,4)")
+                        .HasColumnName("range_min");
+
+                    b.Property<Guid>("RangeUnitId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("range_unit_id");
+
+                    b.HasKey("Id")
+                        .HasName("pk_device_pollutant_capability");
+
+                    b.HasIndex("PollutantId")
+                        .HasDatabaseName("ix_device_pollutant_capability_pollutant_id");
+
+                    b.HasIndex("RangeUnitId")
+                        .HasDatabaseName("ix_device_pollutant_capability_range_unit_id");
+
+                    b.HasIndex("DeviceId", "PollutantId")
+                        .IsUnique()
+                        .HasDatabaseName("ix_device_pollutant_capability_device_id_pollutant_id");
+
+                    b.ToTable("device_pollutant_capability", (string)null);
+                });
+
             modelBuilder.Entity("Domain.Entities.Monitoring.ExceedanceEvent", b =>
                 {
                     b.Property<Guid>("Id")
@@ -643,10 +787,6 @@ namespace Infrastructure.Persistence.Migrations
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("installed_at");
 
-                    b.Property<bool>("IsOnline")
-                        .HasColumnType("boolean")
-                        .HasColumnName("is_online");
-
                     b.Property<string>("Model")
                         .IsRequired()
                         .HasMaxLength(100)
@@ -663,6 +803,10 @@ namespace Infrastructure.Persistence.Migrations
                         .HasMaxLength(100)
                         .HasColumnType("character varying(100)")
                         .HasColumnName("serial_number");
+
+                    b.Property<int>("Status")
+                        .HasColumnType("integer")
+                        .HasColumnName("status");
 
                     b.Property<int>("Type")
                         .HasColumnType("integer")
@@ -1283,6 +1427,48 @@ namespace Infrastructure.Persistence.Migrations
                     b.Navigation("Enterprise");
                 });
 
+            modelBuilder.Entity("Domain.Entities.Monitoring.CalibrationRecord", b =>
+                {
+                    b.HasOne("Domain.Entities.Monitoring.MonitoringDevice", "Device")
+                        .WithMany("Calibrations")
+                        .HasForeignKey("DeviceId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_calibration_record_monitoring_device_device_id");
+
+                    b.Navigation("Device");
+                });
+
+            modelBuilder.Entity("Domain.Entities.Monitoring.DevicePollutantCapability", b =>
+                {
+                    b.HasOne("Domain.Entities.Monitoring.MonitoringDevice", "Device")
+                        .WithMany("Capabilities")
+                        .HasForeignKey("DeviceId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_device_pollutant_capability_monitoring_device_device_id");
+
+                    b.HasOne("Domain.Entities.EmissionSources.Pollutant", "Pollutant")
+                        .WithMany()
+                        .HasForeignKey("PollutantId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_device_pollutant_capability_pollutant_pollutant_id");
+
+                    b.HasOne("Domain.Entities.Monitoring.MeasureUnit", "RangeUnit")
+                        .WithMany()
+                        .HasForeignKey("RangeUnitId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_device_pollutant_capability_measure_unit_range_unit_id");
+
+                    b.Navigation("Device");
+
+                    b.Navigation("Pollutant");
+
+                    b.Navigation("RangeUnit");
+                });
+
             modelBuilder.Entity("Domain.Entities.Monitoring.ExceedanceEvent", b =>
                 {
                     b.HasOne("Domain.Entities.Enterprises.EmissionLimit", "Limit")
@@ -1603,6 +1789,13 @@ namespace Infrastructure.Persistence.Migrations
                     b.Navigation("EmissionLimits");
 
                     b.Navigation("Measurements");
+                });
+
+            modelBuilder.Entity("Domain.Entities.Monitoring.MonitoringDevice", b =>
+                {
+                    b.Navigation("Calibrations");
+
+                    b.Navigation("Capabilities");
                 });
 
             modelBuilder.Entity("Domain.Entities.Monitoring.MonitoringPlan", b =>
