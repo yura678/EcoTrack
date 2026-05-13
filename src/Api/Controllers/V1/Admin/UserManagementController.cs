@@ -36,7 +36,7 @@ namespace Api.Controllers.V1.Admin
             return Ok(queryResult);
         }
         
-        [Authorize(Roles = "admin")]
+        [Authorize(Roles = "admin,superAdmin")]
         [HttpPost("invite-user")]
         [ProducesOkApiResponseType<string>]
         public async Task<IActionResult> InviteUser(SendInvitationCommand model)

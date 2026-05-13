@@ -181,21 +181,29 @@ public class ApplicationDbContextInitializer(
         await dbContext.SaveChangesAsync();
     }
 
-    private List<Site> GenerateSitesForEnterprise(
+    private static List<Site> GenerateSitesForEnterprise(
         Guid enterpriseId,
         string enterpriseName,
+        double centerLatitude,
+        double centerLongitude,
+        Random random,
         int count = 2)
     {
         var sites = new List<Site>();
 
         for (int i = 1; i <= count; i++)
         {
+            var latitude = centerLatitude + (random.NextDouble() - 0.5) * 0.01;
+            var longitude = centerLongitude + (random.NextDouble() - 0.5) * 0.01;
+
             sites.Add(Site.New(
                 Guid.NewGuid(),
                 $"{enterpriseName} — майданчик {i}",
                 $"Адреса майданчика {i} підприємства «{enterpriseName}»",
                 1000,
-                enterpriseId
+                enterpriseId,
+                latitude,
+                longitude
             ));
         }
 
@@ -224,13 +232,15 @@ public class ApplicationDbContextInitializer(
         return installations;
     }
 
-    private List<EmissionSource> GenerateEmissionSourcesForInstallation(
+    private static List<EmissionSource> GenerateEmissionSourcesForInstallation(
         Guid installationId,
         string installationName,
+        double centerLatitude,
+        double centerLongitude,
+        Random rnd,
         int count = 5)
     {
         var sources = new List<EmissionSource>();
-        var rnd = new Random();
 
         for (int i = 1; i <= count; i++)
         {
@@ -240,12 +250,17 @@ public class ApplicationDbContextInitializer(
                 ? $"SRC_A_{i}"
                 : $"SRC_W_{i}";
 
+            var latitude = centerLatitude + (rnd.NextDouble() - 0.5) * 0.01;
+            var longitude = centerLongitude + (rnd.NextDouble() - 0.5) * 0.01;
+
             if (isAir)
             {
                 sources.Add(AirEmissionSource.New(
                     Guid.NewGuid(),
                     installationId,
                     code,
+                    latitude,
+                    longitude,
                     height: rnd.Next(30, 250),
                     diameter: rnd.Next(2, 10),
                     designFlowRate: rnd.Next(100000, 5000000)
@@ -257,6 +272,8 @@ public class ApplicationDbContextInitializer(
                     Guid.NewGuid(),
                     installationId,
                     code,
+                    latitude,
+                    longitude,
                     receiver: "Dnipro",
                     designFlowRate: rnd.Next(20000, 100000)
                 ));
@@ -400,6 +417,16 @@ public class ApplicationDbContextInitializer(
 
         await dbContext.Set<Enterprise>().AddRangeAsync(enterprises);
 
+        // City centers keyed by Edrpou (WGS84, lat/lng)
+        var cityCenters = new Dictionary<string, (double Latitude, double Longitude)>
+        {
+            ["30101010"] = (47.0950, 37.5430), // Маріуполь
+            ["30202020"] = (50.4501, 30.5234), // Київ (ДТЕК)
+            ["30303030"] = (47.9000, 33.3833), // Кривий Ріг
+            ["30404040"] = (48.1396, 37.7444), // Авдіївка
+            ["30505050"] = (50.4501, 30.5234), // Київ (Київводоканал)
+        };
+
         // SITES + INSTALLATIONS + EMISSION SOURCES
         var allSites = new List<Site>();
         var allInstallations = new List<Installation>();
@@ -410,10 +437,15 @@ public class ApplicationDbContextInitializer(
 
         foreach (var enterprise in enterprises)
         {
+            var (centerLat, centerLng) = cityCenters[enterprise.Edrpou];
+
             // 2 SITES
             var generatedSites = GenerateSitesForEnterprise(
                 enterprise.Id,
                 enterprise.Name,
+                centerLat,
+                centerLng,
+                random,
                 count: 2
             );
 
@@ -437,11 +469,17 @@ public class ApplicationDbContextInitializer(
 
                 allInstallations.AddRange(generatedInst);
 
+                var siteLat = site.Location!.Y;
+                var siteLng = site.Location!.X;
+
                 foreach (var inst in generatedInst)
                 {
                     var sources = GenerateEmissionSourcesForInstallation(
                         inst.Id,
                         inst.Name,
+                        siteLat,
+                        siteLng,
+                        random,
                         count: 5
                     );
 

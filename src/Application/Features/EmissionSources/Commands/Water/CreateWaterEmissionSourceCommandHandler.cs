@@ -51,8 +51,9 @@ public class CreateWaterEmissionSourceCommandHandler(
         try
         {
             var newEmission = await unitOfWork.EmissionSourceRepository.AddAsync(
-                WaterEmissionSource.New(Guid.NewGuid(), request.InstallationId, request.Code, request.Receiver,
-                    request.DesignFlowRate), cancellationToken);
+                WaterEmissionSource.New(Guid.NewGuid(), request.InstallationId, request.Code,
+                    request.Latitude, request.Longitude,
+                    request.Receiver, request.DesignFlowRate), cancellationToken);
             await unitOfWork.SaveChangesAsync(cancellationToken);
             return newEmission;
         }

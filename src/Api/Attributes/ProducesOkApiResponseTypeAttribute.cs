@@ -36,3 +36,19 @@ public class ProducesOkApiResponseType:ProducesResponseTypeAttribute
     {
     }
 }
+
+public class ProducesBadRequestApiResponseType : ProducesResponseTypeAttribute
+{
+    public ProducesBadRequestApiResponseType() : base(typeof(ApiResult), StatusCodes.Status400BadRequest)
+    {
+    }
+}
+
+public class ProducesNotFoundApiResponseType : ProducesResponseTypeAttribute
+{
+    private ProducesNotFoundApiResponseType(int statusCode) : base(statusCode) { }
+
+    public ProducesNotFoundApiResponseType() : base(typeof(ApiResult), StatusCodes.Status404NotFound)
+    {
+    }
+}

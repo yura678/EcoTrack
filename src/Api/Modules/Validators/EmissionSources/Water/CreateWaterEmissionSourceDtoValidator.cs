@@ -18,5 +18,11 @@ public class CreateWaterEmissionSourceDtoValidator : AbstractValidator<CreateWat
 
         RuleFor(x => x.DesignFlowRate)
             .NotEmpty();
+
+        RuleFor(x => x.Latitude)
+            .InclusiveBetween(-90, 90);
+
+        RuleFor(x => x.Longitude)
+            .InclusiveBetween(-180, 180);
     }
 }

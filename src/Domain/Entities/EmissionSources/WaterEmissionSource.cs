@@ -1,13 +1,15 @@
-﻿namespace Domain.Entities.EmissionSources;
+﻿using NetTopologySuite.Geometries;
+
+namespace Domain.Entities.EmissionSources;
 
 public class WaterEmissionSource : EmissionSource
 {
     public string Receiver { get; private set; }
     public double DesignFlowRate { get; private set; }
 
-    private WaterEmissionSource(Guid id, Guid installationId, string code,
+    private WaterEmissionSource(Guid id, Guid installationId, string code, Point location,
         string receiver, double designFlowRate,
-        DateTime createdAt, DateTime? updatedAt) : base(id, installationId, code, createdAt,
+        DateTime createdAt, DateTime? updatedAt) : base(id, installationId, code, location, createdAt,
         updatedAt)
     {
         Receiver = receiver;
@@ -15,8 +17,10 @@ public class WaterEmissionSource : EmissionSource
     }
 
     public static WaterEmissionSource New(Guid id, Guid installationId, string code,
-        string receiver,
-        double designFlowRate) => new(id, installationId, code, receiver, designFlowRate, DateTime.UtcNow, null);
+        double latitude, double longitude,
+        string receiver, double designFlowRate) =>
+        new(id, installationId, code, BuildPoint(latitude, longitude),
+            receiver, designFlowRate, DateTime.UtcNow, null);
 
     public void UpdateDetails(string receiver, double designFlowRate)
     {

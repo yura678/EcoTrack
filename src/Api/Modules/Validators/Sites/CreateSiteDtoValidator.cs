@@ -21,5 +21,17 @@ public class CreateSiteDtoValidator : AbstractValidator<CreateSiteDto>
 
         RuleFor(x => x.EnterpriseId)
             .NotEmpty();
+
+        When(x => x.Latitude.HasValue, () =>
+        {
+            RuleFor(x => x.Latitude!.Value)
+                .InclusiveBetween(-90, 90);
+        });
+
+        When(x => x.Longitude.HasValue, () =>
+        {
+            RuleFor(x => x.Longitude!.Value)
+                .InclusiveBetween(-180, 180);
+        });
     }
 }

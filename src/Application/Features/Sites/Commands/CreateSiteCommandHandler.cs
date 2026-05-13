@@ -53,7 +53,8 @@ public class CreateSiteCommandHandler(
         {
             var newSite = await unitOfWork.SiteRepository.AddAsync(
                 Site.New(Guid.NewGuid(), request.Name, request.Address, request.SanitaryZoneRadius,
-                    request.EnterpriseId), cancellationToken);
+                    request.EnterpriseId, request.Latitude, request.Longitude, request.Elevation),
+                cancellationToken);
             await unitOfWork.SaveChangesAsync(cancellationToken);
 
             return newSite;

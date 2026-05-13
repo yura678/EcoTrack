@@ -17,7 +17,7 @@ namespace Api.Controllers.V1.Admin
     [Route("api/v{version:apiVersion}/role-manager")]
     public class RoleManagerController(ISender sender) : BaseController
     {
-        [Authorize(Roles = "SuperAdmin")]
+        [Authorize(Roles = "superAdmin")]
         [HttpGet("roles")]
         [ProducesOkApiResponseType<List<GetAllRolesQueryResponse>>]
         public async Task<IActionResult> GetRoles()

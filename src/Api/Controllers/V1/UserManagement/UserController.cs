@@ -2,13 +2,11 @@
 using Api.Controllers.Common;
 using Api.Modules.Errors;
 using Api.Swagger;
-using Application.Features.Admin.Commands.AddAdminCommand;
 using Application.Features.Users.Commands.Create;
 using Application.Features.Users.Commands.RefreshUserTokenCommand;
 using Application.Features.Users.Commands.RegisterByInvitation;
 using Application.Features.Users.Commands.RegisterEnterpriseAdmin;
 using Application.Features.Users.Commands.RequestLogout;
-using Application.Features.Users.Commands.SendInvitation;
 using Application.Features.Users.Queries.GenerateUserToken;
 using Application.Features.Users.Queries.TokenRequest;
 using Application.Models.Jwt;

@@ -1,4 +1,6 @@
-﻿namespace Domain.Entities.EmissionSources;
+﻿using NetTopologySuite.Geometries;
+
+namespace Domain.Entities.EmissionSources;
 
 public class AirEmissionSource : EmissionSource
 {
@@ -6,9 +8,9 @@ public class AirEmissionSource : EmissionSource
     public double Diameter { get; private set; }
     public double DesignFlowRate { get; private set; }
 
-    private AirEmissionSource(Guid id, Guid installationId, string code, double height,
-        double diameter, double designFlowRate,
-        DateTime createdAt, DateTime? updatedAt) : base(id, installationId, code,
+    private AirEmissionSource(Guid id, Guid installationId, string code, Point location,
+        double height, double diameter, double designFlowRate,
+        DateTime createdAt, DateTime? updatedAt) : base(id, installationId, code, location,
         createdAt,
         updatedAt)
     {
@@ -17,10 +19,11 @@ public class AirEmissionSource : EmissionSource
         DesignFlowRate = designFlowRate;
     }
 
-    public static AirEmissionSource New(Guid id, Guid installationId, string code, double height,
-        double diameter,
-        double designFlowRate) =>
-        new(id, installationId, code, height, diameter, designFlowRate, DateTime.UtcNow, null);
+    public static AirEmissionSource New(Guid id, Guid installationId, string code,
+        double latitude, double longitude,
+        double height, double diameter, double designFlowRate) =>
+        new(id, installationId, code, BuildPoint(latitude, longitude),
+            height, diameter, designFlowRate, DateTime.UtcNow, null);
 
     public void UpdateDetails(double height, double diameter, double designFlowRate)
     {

@@ -16,6 +16,8 @@ public class CreateAirEmissionSourceCommand : IRequest<Either<EmissionSourceExce
     public required double DesignFlowRate { get; init; }
     public required string Code { get; init; }
     public required Guid InstallationId { get; init; }
+    public required double Latitude { get; init; }
+    public required double Longitude { get; init; }
 
     public IValidator<CreateAirEmissionSourceCommand> ValidateApplicationModel(
         ApplicationBaseValidationModelProvider<CreateAirEmissionSourceCommand> validator)
@@ -26,7 +28,7 @@ public class CreateAirEmissionSourceCommand : IRequest<Either<EmissionSourceExce
 
         validator.RuleFor(x => x.InstallationId)
             .NotEmpty();
-        
+
         validator.RuleFor(x => x.Height)
             .NotEmpty();
 
@@ -35,6 +37,12 @@ public class CreateAirEmissionSourceCommand : IRequest<Either<EmissionSourceExce
 
         validator.RuleFor(x => x.DesignFlowRate)
             .NotEmpty();
+
+        validator.RuleFor(x => x.Latitude)
+            .InclusiveBetween(-90, 90);
+
+        validator.RuleFor(x => x.Longitude)
+            .InclusiveBetween(-180, 180);
 
         return validator;
     }

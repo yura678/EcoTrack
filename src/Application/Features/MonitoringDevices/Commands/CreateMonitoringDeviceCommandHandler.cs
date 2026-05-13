@@ -15,10 +15,39 @@ public class CreateMonitoringDeviceCommandHandler(
         CreateMonitoringDeviceCommand request,
         CancellationToken cancellationToken)
     {
-        return await CheckEmissionSourceId(request.EmissionSourceId, cancellationToken)
+        return await CheckEmissionSourceId(request.EmissionSourceId, request.InstallationId, cancellationToken)
             .BindAsync(_ => CheckInstallationId(request.InstallationId, cancellationToken))
             .BindAsync(_ => CheckMonitoringDeviceSerialNumber(request.SerialNumber, cancellationToken))
             .BindAsync(_ => CreateEntity(request, cancellationToken));
+    }
+
+
+    private async Task<Either<MonitoringDeviceException, Unit>> CheckEmissionSourceId(
+        Guid? emissionSourceId,
+        Guid requestInstallationId,
+        CancellationToken cancellationToken)
+    {
+        if (emissionSourceId is null) return Unit.Default;
+
+        var entityOption =
+            await unitOfWork.EmissionSourceRepository.GetByIdAsync(emissionSourceId.Value, cancellationToken);
+
+        return entityOption.Match<Either<MonitoringDeviceException, Unit>>(
+            source =>
+            {
+                if (source.InstallationId != requestInstallationId)
+                {
+                    return new InvalidEmissionSourceInstallationException(
+                        Guid.Empty,
+                        source.Id,
+                        requestInstallationId,
+                        source.InstallationId);
+                }
+
+                return Unit.Default;
+            },
+            () => new EmissionSourceNotFoundException(requestInstallationId, emissionSourceId.Value)
+        );
     }
 
     private async Task<Either<MonitoringDeviceException, Unit>> CheckEmissionSourceId(

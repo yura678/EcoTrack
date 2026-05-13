@@ -95,7 +95,10 @@ public class SiteControllerTests : BaseIntegrationTest, IAsyncLifetime
             Name: _secondSite.Name,
             Address: _secondSite.Address,
             SanitaryZoneRadius: _secondSite.SanitaryZoneRadius!.Value,
-            EnterpriseId: _testEnterprise.Id);
+            EnterpriseId: _testEnterprise.Id,
+            Latitude: null,
+            Longitude: null,
+            Elevation: null);
 
         // Act
         var response = await Client.PostAsJsonAsync(BaseRoute, request);
@@ -122,7 +125,10 @@ public class SiteControllerTests : BaseIntegrationTest, IAsyncLifetime
             Name: invalid,
             Address: _firstSite.Address,
             SanitaryZoneRadius: _firstSite.SanitaryZoneRadius!.Value,
-            EnterpriseId: _testEnterprise.Id);
+            EnterpriseId: _testEnterprise.Id,
+            Latitude: null,
+            Longitude: null,
+            Elevation: null);
 
         // Act
         var response = await Client.PostAsJsonAsync(BaseRoute, request);
@@ -141,7 +147,10 @@ public class SiteControllerTests : BaseIntegrationTest, IAsyncLifetime
             Name: _firstSite.Name,
             Address: invalid!,
             SanitaryZoneRadius: _firstSite.SanitaryZoneRadius!.Value,
-            EnterpriseId: _testEnterprise.Id);
+            EnterpriseId: _testEnterprise.Id,
+            Latitude: null,
+            Longitude: null,
+            Elevation: null);
 
         // Act
         var response = await Client.PostAsJsonAsync(BaseRoute, request);
@@ -158,7 +167,10 @@ public class SiteControllerTests : BaseIntegrationTest, IAsyncLifetime
             Name: _firstSite.Name,
             Address: _firstSite.Address,
             SanitaryZoneRadius: 0,
-            EnterpriseId: _testEnterprise.Id);
+            EnterpriseId: _testEnterprise.Id,
+            Latitude: null,
+            Longitude: null,
+            Elevation: null);
 
         // Act
         var response = await Client.PostAsJsonAsync(BaseRoute, request);
@@ -175,7 +187,10 @@ public class SiteControllerTests : BaseIntegrationTest, IAsyncLifetime
             Name: _firstSite.Name,
             Address: _firstSite.Address,
             SanitaryZoneRadius: _firstSite.SanitaryZoneRadius!.Value,
-            EnterpriseId: Guid.NewGuid());
+            EnterpriseId: Guid.NewGuid(),
+            Latitude: null,
+            Longitude: null,
+            Elevation: null);
 
         // Act
         var response = await Client.PostAsJsonAsync(BaseRoute, request);
@@ -192,7 +207,10 @@ public class SiteControllerTests : BaseIntegrationTest, IAsyncLifetime
         var request = new UpdateSiteDto(
             Name: _secondSite.Name,
             Address: _secondSite.Address,
-            SanitaryZoneRadius: _secondSite.SanitaryZoneRadius!.Value);
+            SanitaryZoneRadius: _secondSite.SanitaryZoneRadius!.Value,
+            Latitude: null,
+            Longitude: null,
+            Elevation: null);
 
         var url = $"{BaseRoute}/{_firstSite.Id}";
 
@@ -217,7 +235,10 @@ public class SiteControllerTests : BaseIntegrationTest, IAsyncLifetime
         var request = new UpdateSiteDto(
             Name: _firstSite.Name,
             Address: _firstSite.Address,
-            SanitaryZoneRadius: _firstSite.SanitaryZoneRadius!.Value);
+            SanitaryZoneRadius: _firstSite.SanitaryZoneRadius!.Value,
+            Latitude: null,
+            Longitude: null,
+            Elevation: null);
 
         // Act
         var response = await Client.PutAsJsonAsync($"{BaseRoute}/{id}", request);
@@ -233,7 +254,10 @@ public class SiteControllerTests : BaseIntegrationTest, IAsyncLifetime
         var request = new UpdateSiteDto(
             Name: "",
             Address: _firstSite.Address,
-            SanitaryZoneRadius: _firstSite.SanitaryZoneRadius!.Value);
+            SanitaryZoneRadius: _firstSite.SanitaryZoneRadius!.Value,
+            Latitude: null,
+            Longitude: null,
+            Elevation: null);
 
         // Act
         var response = await Client.PutAsJsonAsync($"{BaseRoute}/{_firstSite.Id}", request);

@@ -61,6 +61,9 @@ public class SiteController(
             Address = request.Address,
             SanitaryZoneRadius = request.SanitaryZoneRadius,
             EnterpriseId = request.EnterpriseId,
+            Latitude = request.Latitude,
+            Longitude = request.Longitude,
+            Elevation = request.Elevation,
         };
 
         var newEntity = await sender.Send(input, cancellationToken);
@@ -82,6 +85,9 @@ public class SiteController(
             Name = request.Name,
             Address = request.Address,
             SanitaryZoneRadius = request.SanitaryZoneRadius,
+            Latitude = request.Latitude,
+            Longitude = request.Longitude,
+            Elevation = request.Elevation,
         };
         var updatedEntity = await sender.Send(input, cancellationToken);
 

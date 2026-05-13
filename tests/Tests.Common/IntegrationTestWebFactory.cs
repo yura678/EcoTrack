@@ -16,7 +16,7 @@ namespace Tests.Common;
 public class IntegrationTestWebFactory: WebApplicationFactory<Program>, IAsyncLifetime
 {
   private readonly PostgreSqlContainer _dbContainer = new PostgreSqlBuilder()
-        .WithImage("postgres:latest")
+        .WithImage("postgis/postgis:16-3.4")
         .WithDatabase("test-ecoTrack-database")
         .WithUsername("postgres")
         .WithPassword("postgres")
@@ -44,12 +44,17 @@ public class IntegrationTestWebFactory: WebApplicationFactory<Program>, IAsyncLi
 
         var dataSourceBuilder = new NpgsqlDataSourceBuilder(_dbContainer.GetConnectionString());
         dataSourceBuilder.EnableDynamicJson();
+        dataSourceBuilder.UseNetTopologySuite();
         var dataSource = dataSourceBuilder.Build();
 
         services.AddDbContext<ApplicationDbContext>(options => options
             .UseNpgsql(
                 dataSource,
-                builder => builder.MigrationsAssembly(typeof(ApplicationDbContext).Assembly.FullName))
+                builder =>
+                {
+                    builder.MigrationsAssembly(typeof(ApplicationDbContext).Assembly.FullName);
+                    builder.UseNetTopologySuite();
+                })
             .UseSnakeCaseNamingConvention()
             .ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning)));
     }

@@ -22,6 +22,16 @@ public class SiteConfiguration : IEntityTypeConfiguration<Site>
         builder.Property(x => x.SanitaryZoneRadius)
             .IsRequired(false);
 
+        builder.Property(x => x.Location)
+            .HasColumnType("geometry(Point, 4326)")
+            .IsRequired(false);
+
+        builder.HasIndex(x => x.Location)
+            .HasMethod("gist");
+
+        builder.Property(x => x.Elevation)
+            .IsRequired(false);
+
 
         builder.Property(x => x.CreatedAt)
             .HasConversion(new DateTimeUtcConverter())

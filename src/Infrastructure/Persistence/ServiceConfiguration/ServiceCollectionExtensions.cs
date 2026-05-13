@@ -33,13 +33,18 @@ public static class ServiceCollectionExtensions
         {
             var settings = provider.GetRequiredService<ApplicationSettings>();
             var connectionString = settings.ConnectionStrings?.DefaultConnection;
-            var dataSource = new NpgsqlDataSourceBuilder(connectionString)
-                .EnableDynamicJson()
-                .Build();
+            var dataSourceBuilder = new NpgsqlDataSourceBuilder(connectionString);
+            dataSourceBuilder.EnableDynamicJson();
+            dataSourceBuilder.UseNetTopologySuite();
+            var dataSource = dataSourceBuilder.Build();
 
             options
                 .UseNpgsql(dataSource,
-                    builder => { builder.MigrationsAssembly(typeof(ApplicationDbContext).Assembly.FullName); })
+                    builder =>
+                    {
+                        builder.MigrationsAssembly(typeof(ApplicationDbContext).Assembly.FullName);
+                        builder.UseNetTopologySuite();
+                    })
                 .UseSnakeCaseNamingConvention()
                 .ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
         });

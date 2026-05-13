@@ -34,6 +34,14 @@ public class MonitoringDeviceHasDependenciesException(
     : MonitoringDeviceException(monitoringDeviceId,
         $"Monitoring device with ID '{monitoringDeviceId}' has dependencies and cannot be deleted.");
 
+public class InvalidEmissionSourceInstallationException(
+    Guid monitoringDeviceId,
+    Guid sourceId,
+    Guid expectedInstallationId,
+    Guid actualInstallationId)
+    : MonitoringDeviceException(monitoringDeviceId,
+        $"Emission source {sourceId} (Installation: {actualInstallationId}) cannot be linked to device {monitoringDeviceId} because the device belongs to another installation ({expectedInstallationId}).");
+
 public class UnhandledMonitoringDeviceException(
     Guid monitoringDeviceId,
     Exception? innerException = null)

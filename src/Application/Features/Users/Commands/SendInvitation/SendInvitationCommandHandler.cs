@@ -20,7 +20,7 @@ internal class SendInvitationCommandHandler(
         CancellationToken cancellationToken)
     {
         return await CheckRoleId(request.RoleId)
-            .BindAsync(_ => Handle(request, cancellationToken));
+            .BindAsync(_ => HandleAsync(request, cancellationToken));
     }
 
     private async Task<Either<UserException, string>> HandleAsync(SendInvitationCommand request,

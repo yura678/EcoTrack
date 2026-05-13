@@ -18,6 +18,17 @@ public class UpdateSiteDtoValidator : AbstractValidator<UpdateSiteDto>
 
         RuleFor(x => x.SanitaryZoneRadius)
             .GreaterThan(0);
-        
+
+        When(x => x.Latitude.HasValue, () =>
+        {
+            RuleFor(x => x.Latitude!.Value)
+                .InclusiveBetween(-90, 90);
+        });
+
+        When(x => x.Longitude.HasValue, () =>
+        {
+            RuleFor(x => x.Longitude!.Value)
+                .InclusiveBetween(-180, 180);
+        });
     }
 }

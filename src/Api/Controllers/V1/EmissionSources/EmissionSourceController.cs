@@ -75,6 +75,8 @@ public class EmissionSourceController(
             Diameter = request.Diameter,
             DesignFlowRate = request.DesignFlowRate,
             InstallationId = installationId,
+            Latitude = request.Latitude,
+            Longitude = request.Longitude,
         };
 
         var entity = await sender.Send(command, cancellationToken);
@@ -96,7 +98,9 @@ public class EmissionSourceController(
             Code = request.Code,
             Receiver = request.Receiver,
             DesignFlowRate = request.DesignFlowRate,
-            InstallationId = installationId
+            InstallationId = installationId,
+            Latitude = request.Latitude,
+            Longitude = request.Longitude,
         };
 
         var entity = await sender.Send(command, cancellationToken);

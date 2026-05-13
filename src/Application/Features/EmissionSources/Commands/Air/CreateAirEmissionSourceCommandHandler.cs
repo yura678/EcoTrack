@@ -54,8 +54,9 @@ public class CreateAirEmissionSourceCommandHandler(
         try
         {
             var newEmissionSource = await unitOfWork.EmissionSourceRepository.AddAsync(
-                AirEmissionSource.New(Guid.NewGuid(), request.InstallationId, request.Code, request.Height,
-                    request.Diameter, request.DesignFlowRate), cancellationToken);
+                AirEmissionSource.New(Guid.NewGuid(), request.InstallationId, request.Code,
+                    request.Latitude, request.Longitude,
+                    request.Height, request.Diameter, request.DesignFlowRate), cancellationToken);
             await unitOfWork.SaveChangesAsync(cancellationToken);
 
             return newEmissionSource;

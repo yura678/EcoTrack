@@ -19,7 +19,14 @@ public class EmissionSourceConfiguration : IEntityTypeConfiguration<EmissionSour
         
         builder.HasIndex(e => new { e.InstallationId, e.Code })
             .IsUnique();
-            
+
+        builder.Property(x => x.Location)
+            .HasColumnType("geometry(Point, 4326)")
+            .IsRequired();
+
+        builder.HasIndex(x => x.Location)
+            .HasMethod("gist");
+
         builder.Property(x => x.CreatedAt)
             .HasConversion(new DateTimeUtcConverter())
             .HasDefaultValueSql("timezone('utc', now())")

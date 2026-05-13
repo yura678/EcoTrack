@@ -1,4 +1,4 @@
-﻿using System.Text.Json.Serialization;
+using System.Text.Json.Serialization;
 using Application.Models.EmissionSources;
 using Domain.Entities.EmissionSources;
 
@@ -15,6 +15,8 @@ public abstract record EmissionSourceDto(
     Guid Id,
     Guid InstallationId,
     string Code,
+    double Latitude,
+    double Longitude,
     DateTime CreatedAt,
     DateTime? UpdatedAt)
 {
@@ -33,6 +35,8 @@ public abstract record EmissionSourceDto(
 
 public record CreateAirEmissionSourceDto(
     string Code,
+    double Latitude,
+    double Longitude,
     double Height,
     double Diameter,
     double DesignFlowRate);
@@ -46,11 +50,13 @@ public record AirEmissionSourceDto(
     Guid Id,
     Guid InstallationId,
     string Code,
+    double Latitude,
+    double Longitude,
     double Height,
     double Diameter,
     double DesignFlowRate,
     DateTime CreatedAt,
-    DateTime? UpdatedAt) : EmissionSourceDto(Id, InstallationId, Code, CreatedAt, UpdatedAt)
+    DateTime? UpdatedAt) : EmissionSourceDto(Id, InstallationId, Code, Latitude, Longitude, CreatedAt, UpdatedAt)
 {
     public static AirEmissionSourceDto FromDomainModel(AirEmissionSource airEmissionSource)
     {
@@ -58,6 +64,8 @@ public record AirEmissionSourceDto(
             airEmissionSource.Id,
             airEmissionSource.InstallationId,
             airEmissionSource.Code,
+            airEmissionSource.Location.Y,
+            airEmissionSource.Location.X,
             airEmissionSource.Height,
             airEmissionSource.Diameter,
             airEmissionSource.DesignFlowRate,
@@ -69,6 +77,8 @@ public record AirEmissionSourceDto(
 
 public record CreateWaterEmissionSourceDto(
     string Code,
+    double Latitude,
+    double Longitude,
     string Receiver,
     double DesignFlowRate);
 
@@ -80,10 +90,12 @@ public record WaterEmissionSourceDto(
     Guid Id,
     Guid InstallationId,
     string Code,
+    double Latitude,
+    double Longitude,
     string Receiver,
     double DesignFlowRate,
     DateTime CreatedAt,
-    DateTime? UpdatedAt) : EmissionSourceDto(Id, InstallationId, Code, CreatedAt, UpdatedAt)
+    DateTime? UpdatedAt) : EmissionSourceDto(Id, InstallationId, Code, Latitude, Longitude, CreatedAt, UpdatedAt)
 {
     public static WaterEmissionSourceDto FromDomainModel(WaterEmissionSource waterEmissionSource)
     {
@@ -91,6 +103,8 @@ public record WaterEmissionSourceDto(
             waterEmissionSource.Id,
             waterEmissionSource.InstallationId,
             waterEmissionSource.Code,
+            waterEmissionSource.Location.Y,
+            waterEmissionSource.Location.X,
             waterEmissionSource.Receiver,
             waterEmissionSource.DesignFlowRate,
             waterEmissionSource.CreatedAt,

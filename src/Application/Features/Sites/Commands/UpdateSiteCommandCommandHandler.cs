@@ -55,7 +55,8 @@ public class UpdateSiteCommandCommandHandler(
     {
         try
         {
-            site.UpdateDetail(request.Name, request.Address, request.SanitaryZoneRadius);
+            site.UpdateDetails(request.Name, request.Address, request.SanitaryZoneRadius,
+                request.Latitude, request.Longitude, request.Elevation);
             var updatedSite = unitOfWork.SiteRepository.Update(site);
             await unitOfWork.SaveChangesAsync(cancellationToken);
             return updatedSite;

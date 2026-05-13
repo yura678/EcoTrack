@@ -16,6 +16,7 @@ public class PollutantController(
 {
     [HttpGet("{id:guid}")]
     [ProducesOkApiResponseType<PollutantDto>]
+    [ProducesNotFoundApiResponseType]
     public async Task<IActionResult> GetPollutantById(
         [FromRoute] Guid id,
         CancellationToken cancellationToken)

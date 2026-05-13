@@ -16,6 +16,9 @@ public class UpdateSiteCommand : IRequest<Either<SiteException, Site>>,
     public required string Name { get; init; }
     public required string Address { get; init; }
     public required int? SanitaryZoneRadius { get; init; }
+    public double? Latitude { get; init; }
+    public double? Longitude { get; init; }
+    public double? Elevation { get; init; }
 
     public IValidator<UpdateSiteCommand> ValidateApplicationModel(
         ApplicationBaseValidationModelProvider<UpdateSiteCommand> validator)
@@ -33,6 +36,14 @@ public class UpdateSiteCommand : IRequest<Either<SiteException, Site>>,
 
         validator.RuleFor(x => x.SanitaryZoneRadius)
             .GreaterThan(0);
+
+        validator.RuleFor(x => x.Latitude!.Value)
+            .InclusiveBetween(-90, 90)
+            .When(x => x.Latitude.HasValue);
+
+        validator.RuleFor(x => x.Longitude!.Value)
+            .InclusiveBetween(-180, 180)
+            .When(x => x.Longitude.HasValue);
 
         return validator;
     }

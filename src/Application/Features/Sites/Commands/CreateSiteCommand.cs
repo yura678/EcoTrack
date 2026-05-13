@@ -16,6 +16,9 @@ public class CreateSiteCommand : IRequest<Either<SiteException, Site>>,
     public required string Address { get; init; }
     public required int? SanitaryZoneRadius { get; init; }
     public required Guid EnterpriseId { get; init; }
+    public double? Latitude { get; init; }
+    public double? Longitude { get; init; }
+    public double? Elevation { get; init; }
 
     public IValidator<CreateSiteCommand> ValidateApplicationModel(
         ApplicationBaseValidationModelProvider<CreateSiteCommand> validator)
@@ -33,6 +36,14 @@ public class CreateSiteCommand : IRequest<Either<SiteException, Site>>,
 
         validator.RuleFor(x => x.EnterpriseId)
             .NotEmpty();
+
+        validator.RuleFor(x => x.Latitude!.Value)
+            .InclusiveBetween(-90, 90)
+            .When(x => x.Latitude.HasValue);
+
+        validator.RuleFor(x => x.Longitude!.Value)
+            .InclusiveBetween(-180, 180)
+            .When(x => x.Longitude.HasValue);
 
         return validator;
     }

@@ -1,4 +1,4 @@
-﻿using Domain.Entities.Monitoring;
+using Domain.Entities.Monitoring;
 using LanguageExt;
 
 namespace Application.Common.Interfaces.Repositories.Monitoring;
@@ -13,4 +13,6 @@ public interface IExceedanceEventRepository
 
     Task<IReadOnlyList<ExceedanceEvent>> GetByMeasurementIdAsync(Guid measurementId,
         CancellationToken cancellationToken);
+
+    Task<Option<ExceedanceEvent>> GetByIdAsync(Guid id, CancellationToken cancellationToken);
 }

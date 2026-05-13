@@ -108,6 +108,8 @@ public class EmissionSourceControllerTests : BaseIntegrationTest, IAsyncLifetime
         // Arrange
         var request = new CreateAirEmissionSourceDto(
             Code: _airSourceToCreate.Code,
+            Latitude: 50.0,
+            Longitude: 30.0,
             Height: _airSourceToCreate.Height,
             Diameter: _airSourceToCreate.Diameter,
             DesignFlowRate: _airSourceToCreate.DesignFlowRate
@@ -136,6 +138,8 @@ public class EmissionSourceControllerTests : BaseIntegrationTest, IAsyncLifetime
         // Arrange
         var request = new CreateAirEmissionSourceDto(
             Code: _airSource.Code,
+            Latitude: 50.0,
+            Longitude: 30.0,
             Height: _airSource.Height,
             Diameter: _airSource.Diameter,
             DesignFlowRate: _airSource.DesignFlowRate
@@ -156,6 +160,8 @@ public class EmissionSourceControllerTests : BaseIntegrationTest, IAsyncLifetime
         // Arrange
         var request = new CreateAirEmissionSourceDto(
             Code: "",
+            Latitude: 50.0,
+            Longitude: 30.0,
             Height: 0,
             Diameter: 0,
             DesignFlowRate: 0
@@ -177,6 +183,8 @@ public class EmissionSourceControllerTests : BaseIntegrationTest, IAsyncLifetime
         // Arrange
         var request = new CreateWaterEmissionSourceDto(
             Code: _waterSourceToCreate.Code,
+            Latitude: 50.0,
+            Longitude: 30.0,
             Receiver: _waterSourceToCreate.Receiver,
             DesignFlowRate: _waterSourceToCreate.DesignFlowRate
         );
@@ -203,6 +211,8 @@ public class EmissionSourceControllerTests : BaseIntegrationTest, IAsyncLifetime
         // Arrange
         var request = new CreateWaterEmissionSourceDto(
             Code: _waterSource.Code,
+            Latitude: 50.0,
+            Longitude: 30.0,
             Receiver: _waterSource.Receiver,
             DesignFlowRate: _waterSource.DesignFlowRate
         );
@@ -222,6 +232,8 @@ public class EmissionSourceControllerTests : BaseIntegrationTest, IAsyncLifetime
         // Arrange
         var request = new CreateWaterEmissionSourceDto(
             Code: "",
+            Latitude: 50.0,
+            Longitude: 30.0,
             Receiver: "",
             DesignFlowRate: 0
         );

@@ -15,6 +15,8 @@ public class CreateWaterEmissionSourceCommand : IRequest<Either<EmissionSourceEx
     public required double DesignFlowRate { get; init; }
     public required string Code { get; init; }
     public required Guid InstallationId { get; init; }
+    public required double Latitude { get; init; }
+    public required double Longitude { get; init; }
 
     public IValidator<CreateWaterEmissionSourceCommand> ValidateApplicationModel(
         ApplicationBaseValidationModelProvider<CreateWaterEmissionSourceCommand> validator)
@@ -32,6 +34,12 @@ public class CreateWaterEmissionSourceCommand : IRequest<Either<EmissionSourceEx
 
         validator.RuleFor(x => x.DesignFlowRate)
             .NotEmpty();
+
+        validator.RuleFor(x => x.Latitude)
+            .InclusiveBetween(-90, 90);
+
+        validator.RuleFor(x => x.Longitude)
+            .InclusiveBetween(-180, 180);
 
         return validator;
     }

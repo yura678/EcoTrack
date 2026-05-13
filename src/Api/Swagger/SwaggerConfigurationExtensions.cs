@@ -69,7 +69,7 @@ public static class SwaggerConfigurationExtensions
         app.UseReDoc(settings =>
         {
             settings.Path = "/api-docs/{documentName}";
-            settings.DocumentTitle = "Clean Architecture API doc sample";
+            settings.DocumentTitle = "EcoTrack API doc sample";
         });
     }
 }

@@ -13,6 +13,7 @@ public static class MonitoringDeviceErrorFactory
             {
                 MonitoringDeviceNumberAlreadyExistsException
                     or MonitoringDeviceHasDependenciesException => StatusCodes.Status409Conflict,
+                InvalidEmissionSourceInstallationException => StatusCodes.Status400BadRequest,
                 EmissionSourceNotFoundException
                     or MonitoringDeviceNotFoundException
                     or InstallationNotFoundException => StatusCodes.Status404NotFound,
