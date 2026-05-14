@@ -662,6 +662,11 @@ public class ApplicationDbContextInitializer(
             totalInserted += await rawMeasurementWriter.WriteBatchAsync(batch, CancellationToken.None);
         }
 
+        // Force-materialise the continuous aggregate so heatmap/timeseries queries
+        // return data immediately. The scheduled policy alone won't backfill historical seed.
+        await dbContext.Database.ExecuteSqlRawAsync(
+            "CALL refresh_continuous_aggregate('measurement_1m', NULL, NULL);");
+
         logger.LogInformation(
             "Seeded raw_measurement: {Rows} rows across {Sources} sources × {Pollutants} pollutants over {Days} days.",
             totalInserted, sources.Count, pollutants.Count, days);
