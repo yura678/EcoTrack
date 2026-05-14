@@ -1,57 +1,58 @@
-﻿using Application.Common.Interfaces;
+using Application.Common.Interfaces;
 using Application.Common.Interfaces.Identity;
 using Application.Features.Admin.Exceptions;
 using Domain.Entities.User;
 using LanguageExt;
 using MediatR;
+using Microsoft.Extensions.Logging;
 
 namespace Application.Features.Admin.Queries.GetToken;
 
 public class AdminGetTokenQueryHandler(
     IAppUserManager userManager,
-    IJwtService jwtService)
+    IJwtService jwtService,
+    ILogger<AdminGetTokenQueryHandler> logger)
     : IRequestHandler<AdminGetTokenQuery, Either<AdminException, AdminGetTokenQueryResult>>
 {
     public async Task<Either<AdminException, AdminGetTokenQueryResult>> Handle(
         AdminGetTokenQuery request,
         CancellationToken cancellationToken)
     {
-        return await CheckUserName(request.UserName)
-            .BindAsync(user => GetTokenQuery(request, user, cancellationToken));
-    }
+        var userOption = await userManager.GetByUserName(request.UserName);
 
+        return await userOption.MatchAsync<User, Either<AdminException, AdminGetTokenQueryResult>>(
+            Some: async user =>
+            {
+                if (await userManager.IsUserLockedOutAsync(user))
+                {
+                    logger.LogWarning("Admin login attempt on locked user {UserId}", user.Id);
+                    return new InvalidCredentialsException(Guid.Empty);
+                }
 
-    public async Task<Either<AdminException, AdminGetTokenQueryResult>> GetTokenQuery(
-        AdminGetTokenQuery request,
-        User user,
-        CancellationToken cancellationToken)
-    {
-        var isUserLockedOut = await userManager.IsUserLockedOutAsync(user);
+                if (!await userManager.IsPasswordValidAsync(user, request.Password))
+                {
+                    await userManager.IncrementAccessFailedCountAsync(user);
+                    logger.LogWarning("Failed admin login for user {UserId}", user.Id);
+                    return new InvalidCredentialsException(Guid.Empty);
+                }
 
-        if (isUserLockedOut)
-            if (user.LockoutEnd != null)
-                return new UserIsLockedException(user.Id, user.LockoutEnd.Value);
+                var userRoles = await userManager.GetRoleAsync(user);
+                if (userRoles.Length == 0)
+                {
+                    logger.LogWarning("Admin login by user {UserId} without roles", user.Id);
+                    return new InvalidCredentialsException(Guid.Empty);
+                }
 
-        var userRoles = await userManager.GetRoleAsync(user);
+                await userManager.ResetUserLockoutAsync(user);
 
-        if (userRoles.Length == 0)
-            return new UserHasNoRolesException(user.Id);
-
-        if (!await userManager.IsPasswordValidAsync(user, request.Password))
-            return new InvalidCredentialsException(user.Id);
-
-        var token = await jwtService.GenerateAsync(user, null, cancellationToken);
-
-        return new AdminGetTokenQueryResult(token, userRoles);
-    }
-
-    private async Task<Either<AdminException, User>> CheckUserName(string userName)
-    {
-        var user = await userManager.GetByUserName(userName);
-
-        return user.Match<Either<AdminException, User>>(
-            u => u,
-            () => new UserNotFoundException(Guid.Empty, userName)
+                var token = await jwtService.GenerateAsync(user, null, cancellationToken);
+                return new AdminGetTokenQueryResult(token, userRoles);
+            },
+            None: () =>
+            {
+                logger.LogWarning("Admin login attempt with unknown username");
+                return new InvalidCredentialsException(Guid.Empty);
+            }
         );
     }
 }

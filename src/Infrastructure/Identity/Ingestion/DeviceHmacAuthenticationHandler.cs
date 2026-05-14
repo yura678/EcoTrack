@@ -7,6 +7,7 @@ using Domain.Entities.Monitoring;
 using LanguageExt;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -19,7 +20,10 @@ public static class DeviceHmacAuthDefaults
     public const string SerialHeader = "X-Device-Serial";
     public const string SignatureHeader = "X-Signature";
     public const string TimestampHeader = "X-Timestamp";
+    public const string NonceHeader = "X-Nonce";
     public static readonly TimeSpan MaxClockSkew = TimeSpan.FromMinutes(5);
+    public const int MinNonceLength = 16;
+    public const int MaxNonceLength = 128;
 }
 
 public class DeviceHmacAuthenticationHandler(
@@ -34,10 +38,18 @@ public class DeviceHmacAuthenticationHandler(
         var serial = Context.Request.Headers[DeviceHmacAuthDefaults.SerialHeader].FirstOrDefault();
         var signature = Context.Request.Headers[DeviceHmacAuthDefaults.SignatureHeader].FirstOrDefault();
         var timestamp = Context.Request.Headers[DeviceHmacAuthDefaults.TimestampHeader].FirstOrDefault();
+        var nonce = Context.Request.Headers[DeviceHmacAuthDefaults.NonceHeader].FirstOrDefault();
 
-        if (string.IsNullOrEmpty(serial) || string.IsNullOrEmpty(signature) || string.IsNullOrEmpty(timestamp))
+        if (string.IsNullOrEmpty(serial) || string.IsNullOrEmpty(signature) ||
+            string.IsNullOrEmpty(timestamp) || string.IsNullOrEmpty(nonce))
         {
             return AuthenticateResult.NoResult();
+        }
+
+        if (nonce.Length < DeviceHmacAuthDefaults.MinNonceLength ||
+            nonce.Length > DeviceHmacAuthDefaults.MaxNonceLength)
+        {
+            return AuthenticateResult.Fail("X-Nonce length out of bounds.");
         }
 
         if (!DateTime.TryParse(timestamp, null, System.Globalization.DateTimeStyles.RoundtripKind, out var ts))
@@ -53,6 +65,7 @@ public class DeviceHmacAuthenticationHandler(
 
         using var scope = serviceProvider.CreateScope();
         var unitOfWork = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+        var memoryCache = scope.ServiceProvider.GetRequiredService<IMemoryCache>();
 
         var deviceOption = await unitOfWork.MonitoringDeviceRepository.GetBySerialNumberAsync(
             serial, Context.RequestAborted);
@@ -64,13 +77,19 @@ public class DeviceHmacAuthenticationHandler(
         if (string.IsNullOrEmpty(device.IngestionSecret))
             return AuthenticateResult.Fail("Device has no ingestion secret configured.");
 
+        var nonceKey = $"hmac-nonce:{device.Id}:{nonce}";
+        if (memoryCache.TryGetValue(nonceKey, out _))
+        {
+            return AuthenticateResult.Fail("Nonce reused.");
+        }
+
         Context.Request.EnableBuffering();
         Context.Request.Body.Position = 0;
         using var reader = new StreamReader(Context.Request.Body, Encoding.UTF8, leaveOpen: true);
         var body = await reader.ReadToEndAsync(Context.RequestAborted);
         Context.Request.Body.Position = 0;
 
-        var payload = $"{timestamp}.{body}";
+        var payload = $"{timestamp}.{nonce}.{body}";
         byte[] secretBytes;
         try
         {
@@ -88,6 +107,8 @@ public class DeviceHmacAuthenticationHandler(
         {
             return AuthenticateResult.Fail("Signature mismatch.");
         }
+
+        memoryCache.Set(nonceKey, true, DeviceHmacAuthDefaults.MaxClockSkew.Add(TimeSpan.FromMinutes(1)));
 
         var claims = new[]
         {

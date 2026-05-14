@@ -54,8 +54,7 @@ internal class UserCreateCommandHandler(
 
         var code = await userManager.GenerateEmailConfirmationToken(user, user.Email);
 
-
-        logger.LogWarning($"Generated Code for User ID {user.Id} is {code}");
+        logger.LogInformation("Issued email confirmation token for user {UserId}", user.Id);
 
         var emailBody = EmailTemplates.EmailConfirmation(code);
 

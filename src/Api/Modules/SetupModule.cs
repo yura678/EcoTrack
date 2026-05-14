@@ -8,10 +8,12 @@ namespace Api.Modules;
 
 public static class SetupModule
 {
+    public const string CorsPolicyName = "EcoTrackCors";
+
     public static IServiceCollection SetupServices(this IServiceCollection services, IConfiguration configuration)
     {
         services.AddSwaggerGen(c => { c.SwaggerDoc("v1", new() { Title = "API", Version = "v1" }); });
-        
+
         services.AddControllers(options =>
         {
             options.Filters.Add(typeof(OkResultAttribute));
@@ -31,22 +33,32 @@ public static class SetupModule
             options.SuppressModelStateInvalidFilter = true;
             options.SuppressMapClientErrors = true;
         });
-        services.AddCors();
+        services.AddCors(configuration);
         services.AddApplicationSettings(configuration);
 
         return services;
     }
 
-    private static void AddCors(this IServiceCollection services)
+    private static void AddCors(this IServiceCollection services, IConfiguration configuration)
     {
+        var corsSettings = configuration.GetSection("Cors").Get<CorsSettings>() ?? new CorsSettings();
+        services.AddSingleton(corsSettings);
+
         services.AddCors(options =>
-            options.AddDefaultPolicy(policy =>
-                policy.SetIsOriginAllowed(_ => true)
+            options.AddPolicy(CorsPolicyName, policy =>
+            {
+                if (corsSettings.AllowedOrigins.Length == 0)
+                {
+                    return;
+                }
+
+                policy.WithOrigins(corsSettings.AllowedOrigins)
                     .AllowAnyHeader()
                     .AllowAnyMethod()
-                    .AllowCredentials()));
+                    .AllowCredentials();
+            }));
     }
-    
+
 
     private static void AddApplicationSettings(this IServiceCollection services, IConfiguration configuration)
     {

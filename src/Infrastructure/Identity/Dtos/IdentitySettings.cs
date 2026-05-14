@@ -1,4 +1,4 @@
-﻿namespace Infrastructure.Identity.Dtos;
+namespace Infrastructure.Identity.Dtos;
 
 public class IdentitySettings
 {
@@ -8,4 +8,6 @@ public class IdentitySettings
     public string Audience { get; set; }
     public int NotBeforeMinutes { get; set; }
     public int ExpirationMinutes { get; set; }
+    public int RefreshExpirationDays { get; set; } = 14;
+    public bool AllowInsecureHttp { get; set; }
 }

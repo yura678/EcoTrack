@@ -120,7 +120,7 @@ internal class RegisterEnterpriseAdminCommandHandler(
 
         var code = await userManager.GenerateEmailConfirmationToken(user, user.PhoneNumber);
 
-        logger.LogWarning($"Generated Code for User ID {user.Id} is {code}");
+        logger.LogInformation("Issued email confirmation token for enterprise admin {UserId}", user.Id);
 
         var emailBody = EmailTemplates.EmailConfirmation(code);
 

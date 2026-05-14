@@ -112,7 +112,7 @@ public static class ServiceCollectionExtension
 
             var validationParameters = new TokenValidationParameters
             {
-                ClockSkew = TimeSpan.Zero, // default: 5 min
+                ClockSkew = TimeSpan.FromSeconds(30),
                 RequireSignedTokens = true,
 
                 ValidateIssuerSigningKey = true,
@@ -130,7 +130,7 @@ public static class ServiceCollectionExtension
                 TokenDecryptionKey = new SymmetricSecurityKey(encryptionkey),
             };
 
-            options.RequireHttpsMetadata = false;
+            options.RequireHttpsMetadata = !identitySettings.AllowInsecureHttp;
             options.SaveToken = true;
             options.TokenValidationParameters = validationParameters;
             options.Events = new JwtBearerEvents

@@ -7,6 +7,7 @@ using Application.Models.Jwt;
 using Asp.Versioning;
 using MediatR;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 
 namespace Api.Controllers.V1.Admin
 {
@@ -16,6 +17,7 @@ namespace Api.Controllers.V1.Admin
     public class AdminManagerController(ISender sender) : BaseController
     {
         [HttpPost("Login")]
+        [EnableRateLimiting("auth")]
         [ProducesOkApiResponseType<AccessToken>]
         public async Task<IActionResult> AdminLogin(AdminGetTokenQuery model)
         {

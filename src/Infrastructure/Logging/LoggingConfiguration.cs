@@ -1,5 +1,4 @@
-﻿using System.Data;
-using Microsoft.Extensions.Hosting;
+﻿using Microsoft.Extensions.Hosting;
 using Serilog;
 using Serilog.Enrichers.Span;
 using Serilog.Exceptions;
@@ -11,10 +10,7 @@ public static class LoggingConfiguration
 {
     public static Action<HostBuilderContext, LoggerConfiguration> ConfigureLogger => (context, configuration) =>
     {
-        #region Enriching Logger Context
-
         var env = context.HostingEnvironment;
-
 
         configuration.Enrich.FromLogContext()
             .Enrich.WithProperty("ApplicationName", env.ApplicationName)
@@ -22,17 +18,15 @@ public static class LoggingConfiguration
             .Enrich.WithSpan()
             .Enrich.WithExceptionDetails();
 
-        #endregion
-
-
-        if (!context.HostingEnvironment.IsDevelopment())
-        {
-            //
-        }
-        else
+        if (context.HostingEnvironment.IsDevelopment())
         {
             configuration.WriteTo.Console().MinimumLevel.Information();
-            configuration.WriteTo.File(new JsonFormatter(), "logs/log.json").MinimumLevel.Information();
+            configuration.WriteTo.File(
+                formatter: new JsonFormatter(),
+                path: "logs/log-.json",
+                rollingInterval: RollingInterval.Day,
+                retainedFileCountLimit: 7,
+                shared: false).MinimumLevel.Information();
         }
     };
 }

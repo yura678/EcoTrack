@@ -75,8 +75,11 @@ public class JwtService : IJwtService
 
         var securityToken = tokenHandler.CreateJwtSecurityToken(descriptor);
 
-
-        var refreshToken = await _unitOfWork.UserRefreshTokenRepository.CreateToken(user.Id, cancellationToken);
+        var refreshExpires = now.AddDays(_siteSetting.RefreshExpirationDays > 0
+            ? _siteSetting.RefreshExpirationDays
+            : 14);
+        var refreshToken = await _unitOfWork.UserRefreshTokenRepository.CreateToken(
+            user.Id, resolvedEnterpriseId, refreshExpires, cancellationToken);
         await _unitOfWork.SaveChangesAsync(cancellationToken);
 
         return new AccessToken(securityToken, refreshToken.ToString());
@@ -128,7 +131,7 @@ public class JwtService : IJwtService
                 return await userOption.MatchAsync<User, Option<AccessToken>>(
                     Some: async unpackedUser =>
                     {
-                        var result = await this.GenerateAsync(unpackedUser, null, cancellationToken);
+                        var result = await this.GenerateAsync(unpackedUser, refreshToken.EnterpriseId, cancellationToken);
                         return Option<AccessToken>.Some(result);
                     },
                     None: () => Option<AccessToken>.None

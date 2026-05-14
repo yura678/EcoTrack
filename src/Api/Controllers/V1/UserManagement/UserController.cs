@@ -16,6 +16,7 @@ using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 
 namespace Api.Controllers.V1.UserManagement;
 
@@ -70,6 +71,7 @@ public class UserController : BaseController
     }
 
     [HttpPost("token-request")]
+    [EnableRateLimiting("auth")]
     [ProducesOkApiResponseType<UserTokenRequestQueryResponse>]
     public async Task<IActionResult> TokenRequest(UserTokenRequestQuery model)
     {
@@ -82,6 +84,7 @@ public class UserController : BaseController
     }
 
     [HttpPost("login-confirmation")]
+    [EnableRateLimiting("auth")]
     [ProducesOkApiResponseType<AccessToken>]
     public async Task<IActionResult> ValidateUser(GenerateUserTokenQuery model)
     {
@@ -94,6 +97,7 @@ public class UserController : BaseController
     }
 
     [HttpPost("refresh-signIn")]
+    [EnableRateLimiting("auth")]
     [RequireTokenWithoutAuthorization]
     [ProducesOkApiResponseType<AccessToken>]
     public async Task<IActionResult> RefreshUserToken(RefreshUserTokenCommand model)
@@ -126,6 +130,7 @@ public class UserController : BaseController
     }
 
     [HttpPost("passwordToken-request")]
+    [EnableRateLimiting("auth")]
     [ProducesOkApiResponseType<AccessToken>]
     public async Task<IActionResult> PasswordTokenRequest(PasswordUserTokenRequestQuery model)
         => (await _mediator.Send(model)).Match(

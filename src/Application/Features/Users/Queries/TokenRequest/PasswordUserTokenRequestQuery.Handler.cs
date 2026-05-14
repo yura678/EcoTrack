@@ -5,12 +5,14 @@ using Application.Models.Jwt;
 using Domain.Entities.User;
 using LanguageExt;
 using MediatR;
+using Microsoft.Extensions.Logging;
 
 namespace Application.Features.Users.Queries.TokenRequest;
 
 public class PasswordUserTokenRequestQueryResult(
     IAppUserManager userManager,
-    IJwtService jwtService)
+    IJwtService jwtService,
+    ILogger<PasswordUserTokenRequestQueryResult> logger)
     : IRequestHandler<PasswordUserTokenRequestQuery, Either<UserException, AccessToken>>
 {
     public async Task<Either<UserException, AccessToken>> Handle(
@@ -22,22 +24,30 @@ public class PasswordUserTokenRequestQueryResult(
         return await user.MatchAsync<User, Either<UserException, AccessToken>>(
             Some: async u =>
             {
-                
                 if (await userManager.IsUserLockedOutAsync(u))
                 {
-                    return new UserIsLockedException(u.Id, u.LockoutEnd!.Value);
+                    logger.LogWarning("Login attempt on locked user {UserId}", u.Id);
+                    return new InvalidCredentialsException(Guid.Empty);
                 }
 
                 if (!await userManager.IsPasswordValidAsync(u, request.Password))
                 {
-                    return new InvalidCredentialsException(u.Id);
+                    await userManager.IncrementAccessFailedCountAsync(u);
+                    logger.LogWarning("Failed login attempt for user {UserId}", u.Id);
+                    return new InvalidCredentialsException(Guid.Empty);
                 }
+
+                await userManager.ResetUserLockoutAsync(u);
 
                 var token = await jwtService.GenerateAsync(u, null, cancellationToken);
 
                 return token;
             },
-            None: () => new InvalidCredentialsException(Guid.Empty)
+            None: () =>
+            {
+                logger.LogWarning("Login attempt with unknown username");
+                return new InvalidCredentialsException(Guid.Empty);
+            }
         );
     }
 }

@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Threading.RateLimiting;
 using Api.Modules;
 using Api.Swagger;
 using Application.ServiceConfiguration;
@@ -7,6 +8,7 @@ using Infrastructure.Identity.Dtos;
 using Infrastructure.Identity.ServiceConfiguration;
 using Infrastructure.Logging;
 using Infrastructure.Persistence.ServiceConfiguration;
+using Microsoft.AspNetCore.RateLimiting;
 using Serilog;
 using Shared.Extensions;
 
@@ -27,6 +29,26 @@ builder.Services.SetupServices(configuration)
     .AddPersistenceServices(configuration);
 
 builder.Services.RegisterValidatorsAsServices();
+builder.Services.AddMemoryCache();
+
+builder.Services.AddRateLimiter(options =>
+{
+    options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+
+    options.AddPolicy("auth", httpContext =>
+    {
+        var partition = httpContext.Connection.RemoteIpAddress?.ToString()
+                        ?? httpContext.Request.Headers["X-Forwarded-For"].ToString()
+                        ?? "anon";
+        return RateLimitPartition.GetFixedWindowLimiter(partition, _ => new FixedWindowRateLimiterOptions
+        {
+            PermitLimit = 10,
+            Window = TimeSpan.FromMinutes(5),
+            QueueLimit = 0,
+            AutoReplenishment = true
+        });
+    });
+});
 
 
 builder.Services.AddEndpointsApiExplorer();
@@ -41,11 +63,27 @@ if (app.Environment.IsDevelopment())
     app.UseRouting();
     app.UseDeveloperExceptionPage();
 }
+else
+{
+    app.UseHsts();
+}
 
 await app.InitialiseDatabaseAsync();
 await app.SeedDefaultUsersAsync();
 
 app.UseHttpsRedirection();
+
+app.Use(async (context, next) =>
+{
+    context.Response.Headers["X-Content-Type-Options"] = "nosniff";
+    context.Response.Headers["X-Frame-Options"] = "DENY";
+    context.Response.Headers["Referrer-Policy"] = "no-referrer";
+    await next();
+});
+
+app.UseCors(Api.Modules.SetupModule.CorsPolicyName);
+
+app.UseRateLimiter();
 
 app.UseAuthentication();
 app.UseAuthorization();

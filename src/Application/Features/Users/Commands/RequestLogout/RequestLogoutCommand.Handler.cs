@@ -1,4 +1,5 @@
-﻿using Application.Common.Interfaces.Identity;
+using Application.Common.Interfaces.Identity;
+using Application.Common.Interfaces.Persistence;
 using Application.Features.Users.Exceptions;
 using Domain.Entities.User;
 using LanguageExt;
@@ -6,7 +7,7 @@ using MediatR;
 
 namespace Application.Features.Users.Commands.RequestLogout;
 
-internal class RequestLogoutCommandHandler(IAppUserManager userManager)
+internal class RequestLogoutCommandHandler(IAppUserManager userManager, IUnitOfWork unitOfWork)
     : IRequestHandler<RequestLogoutCommand, Either<UserException, bool>>
 {
     public async Task<Either<UserException, bool>> Handle(
@@ -19,6 +20,8 @@ internal class RequestLogoutCommandHandler(IAppUserManager userManager)
             Some: async u =>
             {
                 await userManager.UpdateSecurityStampAsync(u);
+                await unitOfWork.UserRefreshTokenRepository.InvalidateAllForUserAsync(u.Id, cancellationToken);
+                await unitOfWork.SaveChangesAsync(cancellationToken);
                 return true;
             },
             None: () => new UserNotFoundException(request.UserId)

@@ -28,8 +28,8 @@ public class UserTokenRequestQueryHandler(
                     ? await userManager.GenerateOtpCode(u)
                     : await userManager.GenerateEmailConfirmationToken(u, u.Email);
 
-                logger.LogWarning($"Generated Code for user Id {u.Id} is {code}");
-                
+                logger.LogInformation("Issued login code for user {UserId}", u.Id);
+
                 var emailBody = u.EmailConfirmed
                     ? EmailTemplates.LoginCode(code)
                     : EmailTemplates.EmailConfirmation(code);
