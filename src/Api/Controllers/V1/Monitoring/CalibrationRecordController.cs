@@ -93,16 +93,4 @@ public class CalibrationRecordController(
             e => e.ToObjectResult());
     }
 
-    [HttpDelete("calibrations/{id:guid}")]
-    [ProducesOkApiResponseType<CalibrationRecordDto>]
-    public async Task<IActionResult> Delete(
-        [FromRoute] Guid id,
-        CancellationToken cancellationToken)
-    {
-        var command = new DeleteCalibrationRecordCommand { Id = id };
-        var result = await sender.Send(command, cancellationToken);
-        return result.Match(
-            c => Ok(CalibrationRecordDto.FromDomainModel(c)),
-            e => e.ToObjectResult());
-    }
 }

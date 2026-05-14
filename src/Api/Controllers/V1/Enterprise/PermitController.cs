@@ -169,15 +169,11 @@ public class PermitController(
 
     [HttpDelete("permits/{id:guid}")]
     [ProducesOkApiResponseType<PermitDto>]
-    public async Task<IActionResult> DeletePermit(
+    public async Task<IActionResult> DeleteDraftPermit(
         [FromRoute] Guid id,
         CancellationToken cancellationToken)
     {
-        var input = new DeletePermitCommand
-        {
-            Id = id
-        };
-
+        var input = new DeletePermitCommand { Id = id };
         var deletedEntity = await sender.Send(input, cancellationToken);
 
         return deletedEntity.Match(

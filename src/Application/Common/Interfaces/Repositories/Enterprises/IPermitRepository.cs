@@ -16,6 +16,4 @@ public interface IPermitRepository
 
     Task<Option<Permit>> GetActiveByEmissionSourceAsync(
         Guid sourceId, DateTime activeAt, CancellationToken cancellationToken);
-
-    Task<bool> HasDependenciesAsync(Guid permitId, CancellationToken cancellationToken);
 }

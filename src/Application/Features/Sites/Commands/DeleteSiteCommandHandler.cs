@@ -17,7 +17,6 @@ public class DeleteSiteCommandHandler(
         CancellationToken cancellationToken)
     {
         return await CheckSiteId(request.Id, cancellationToken)
-            .BindAsync(s => CheckDependencies(s, cancellationToken))
             .BindAsync(s => DeleteEntity(s, cancellationToken));
     }
 
@@ -47,17 +46,6 @@ public class DeleteSiteCommandHandler(
             },
             () => new SiteNotFoundException(id)
         );
-    }
-
-    private async Task<Either<SiteException, Site>> CheckDependencies(
-        Site entity,
-        CancellationToken cancellationToken)
-    {
-        var hasDependencies = await unitOfWork.SiteRepository.HasDependenciesAsync(entity.Id, cancellationToken);
-
-        return hasDependencies
-            ? new SiteHasDependenciesException(entity.Id)
-            : entity;
     }
 
     private async Task<Either<SiteException, Site>> DeleteEntity(

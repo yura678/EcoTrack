@@ -15,7 +15,6 @@ public class DeletePollutantCommandHandler(
         CancellationToken cancellationToken)
     {
         return await CheckPollutantId(request.Id, cancellationToken)
-            .BindAsync(p => CheckDependencies(p, cancellationToken))
             .BindAsync(p => DeleteEntity(p, cancellationToken));
     }
 
@@ -29,17 +28,6 @@ public class DeletePollutantCommandHandler(
             p => p,
             () => new PollutantNotFoundException(id)
         );
-    }
-
-    private async Task<Either<PollutantException, Pollutant>> CheckDependencies(
-        Pollutant entity,
-        CancellationToken cancellationToken)
-    {
-        bool hasDeps = await unitOfWork.PollutantRepository.HasDependenciesAsync(entity.Id, cancellationToken);
-
-        return hasDeps
-            ? new PollutantHasDependenciesException(entity.Id)
-            : entity;
     }
 
     private async Task<Either<PollutantException, Pollutant>> DeleteEntity(

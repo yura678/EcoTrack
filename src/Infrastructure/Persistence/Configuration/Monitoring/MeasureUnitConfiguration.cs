@@ -29,5 +29,9 @@ public class MeasureUnitConfiguration : IEntityTypeConfiguration<MeasureUnit>
             .HasConversion(new DateTimeUtcConverter())
             .HasDefaultValueSql("timezone('utc', now())")
             .IsRequired();
+
+        builder.Property(x => x.DeletedAt)
+            .HasConversion(new DateTimeUtcConverter())
+            .IsRequired(false);
     }
 }

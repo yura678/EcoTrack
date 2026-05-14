@@ -1,5 +1,3 @@
-﻿using Domain.Entities.Monitoring;
-
 namespace Application.Features.Measurements.Exceptions;
 
 public abstract class MeasurementException(
@@ -24,21 +22,6 @@ public class MeasurementRelatedEntityNotFoundException(
 
 public class MeasurementNotFoundException(Guid measurementId)
     : MeasurementException(measurementId, $"Measurement with ID '{measurementId}' was not found.");
-
-public class MonitoringRequirementNotFoundException(
-    Guid id,
-    Guid sourceId,
-    Guid pollutantId)
-    : MeasurementException(id,
-        $"No active Monitoring requirement found for Source {sourceId} and Pollutant {pollutantId}. Measurement rejected as per Monitoring Plan.");
-
-public class InvalidAveragingWindowException(
-    Guid id,
-    Guid sourceId,
-    Guid pollutantId,
-    AveragingWindow expected,
-    AveragingWindow actual) : MeasurementException(id,
-    $"Invalid averaging window: expected {expected}, but got {actual} for Source {sourceId} and Pollutant {pollutantId}.");
 
 public class DuplicateMeasurementException(
     Guid id,

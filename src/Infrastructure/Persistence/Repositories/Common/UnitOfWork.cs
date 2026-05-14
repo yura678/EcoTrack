@@ -21,11 +21,9 @@ public class UnitOfWork(
     IPollutantRepository pollutantRepository,
     IMeasurementRepository measurementRepository,
     IMonitoringDeviceRepository monitoringDeviceRepository,
-    IMonitoringRequirementRepository monitoringRequirementRepository,
     IComplianceEventRepository complianceEventRepository,
     IDevicePollutantCapabilityRepository devicePollutantCapabilityRepository,
     ICalibrationRecordRepository calibrationRecordRepository,
-    IMonitoringPlanRepository monitoringPlanRepository,
     IPermitRepository permitRepository,
     IEmissionLimitRepository emissionLimitRepository,
     IInvitationRepository invitationRepository,
@@ -43,11 +41,9 @@ public class UnitOfWork(
     public IPollutantRepository PollutantRepository { get; } = pollutantRepository;
     public IMeasurementRepository MeasurementRepository { get; } = measurementRepository;
     public IMonitoringDeviceRepository MonitoringDeviceRepository { get; } = monitoringDeviceRepository;
-    public IMonitoringRequirementRepository MonitoringRequirementRepository { get; } = monitoringRequirementRepository;
     public IComplianceEventRepository ComplianceEventRepository { get; } = complianceEventRepository;
     public IDevicePollutantCapabilityRepository DevicePollutantCapabilityRepository { get; } = devicePollutantCapabilityRepository;
     public ICalibrationRecordRepository CalibrationRecordRepository { get; } = calibrationRecordRepository;
-    public IMonitoringPlanRepository MonitoringPlanRepository { get; } = monitoringPlanRepository;
     public IPermitRepository PermitRepository { get; } = permitRepository;
     public IEmissionLimitRepository EmissionLimitRepository { get; } = emissionLimitRepository;
     public IInvitationRepository InvitationRepository { get; } = invitationRepository;

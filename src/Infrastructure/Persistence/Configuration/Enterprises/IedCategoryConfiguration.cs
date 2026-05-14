@@ -21,5 +21,8 @@ public class IedCategoryConfiguration : IEntityTypeConfiguration<IedCategory>
         builder.Property(x => x.Description)
             .IsRequired(false)
             .HasMaxLength(1000);
+
+        builder.Property(x => x.DeletedAt)
+            .IsRequired(false);
     }
 }

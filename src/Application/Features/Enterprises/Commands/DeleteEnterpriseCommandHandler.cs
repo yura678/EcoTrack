@@ -14,7 +14,6 @@ public class DeleteEnterpriseCommandHandler(
         CancellationToken cancellationToken)
     {
         return await CheckEnterpriseId(request.Id, cancellationToken)
-            .BindAsync(e => CheckDependencies(e, cancellationToken))
             .BindAsync(e => DeleteEntity(e, cancellationToken));
     }
 
@@ -29,17 +28,6 @@ public class DeleteEnterpriseCommandHandler(
             e => e,
             () => new EnterpriseNotFoundException(id)
         );
-    }
-
-    private async Task<Either<EnterpriseException, Enterprise>> CheckDependencies(
-        Enterprise entity,
-        CancellationToken cancellationToken)
-    {
-        bool hasDependencies = await unitOfWork.EnterpriseRepository.HasDependenciesAsync(entity.Id, cancellationToken);
-
-        return hasDependencies
-            ? new EnterpriseHasDependenciesException(entity.Id)
-            : entity;
     }
 
     private async Task<Either<EnterpriseException, Enterprise>> DeleteEntity(

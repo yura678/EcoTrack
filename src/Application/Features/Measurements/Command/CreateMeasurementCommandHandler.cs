@@ -39,8 +39,6 @@ public class CreateMeasurementCommandHandler(
     {
         return await CheckEmissionSourceId(request.EmissionSourceId, cancellationToken)
             .BindAsync(r => CheckPollutantId(request.PollutantId, cancellationToken))
-            .BindAsync(_ => CheckIfRequirementExist(request, cancellationToken))
-            .BindAsync(r => ValidateAveragingWindow(r, request.Window, request.EmissionSourceId, request.PollutantId))
             .BindAsync(_ => CheckMonitoringDeviceId(request.DeviceId, request.EmissionSourceId, cancellationToken))
             .BindAsync(_ => CheckMeasureUnitId(request.UnitId, cancellationToken))
             .BindAsync(u => CheckForDuplicateMeasurement(u, request.Timestamp, request.PollutantId,
@@ -101,49 +99,6 @@ public class CreateMeasurementCommandHandler(
             () => new MeasurementRelatedEntityNotFoundException(Guid.Empty, typeof(MeasureUnit),
                 unitId)
         );
-    }
-
-    private async Task<Either<MeasurementException, MonitoringRequirement>> CheckIfRequirementExist(
-        CreateMeasurementCommand request,
-        CancellationToken cancellationToken)
-    {
-        var monitoringPlan = await unitOfWork.MonitoringPlanRepository.GetActiveByEmissionSourceAsync(
-            request.EmissionSourceId, cancellationToken);
-
-        return monitoringPlan.Match<Either<MeasurementException, MonitoringRequirement>>(
-            m =>
-            {
-                var requirement = m.Requirements!.FirstOrDefault(x => x.PollutantId.Equals(request.PollutantId));
-                if (requirement is null)
-                {
-                    return new MonitoringRequirementNotFoundException(Guid.Empty,
-                        request.EmissionSourceId, request.PollutantId);
-                }
-
-                return requirement;
-            },
-            () => new MonitoringRequirementNotFoundException(Guid.Empty,
-                request.EmissionSourceId, request.PollutantId)
-        );
-    }
-
-
-    private Either<MeasurementException, Unit> ValidateAveragingWindow(
-        MonitoringRequirement requirement,
-        AveragingWindow window,
-        Guid sourceId,
-        Guid pollutantId)
-    {
-        return requirement.Frequency switch
-        {
-            Frequency.Hourly when window != AveragingWindow.Hour1 => new InvalidAveragingWindowException(
-                Guid.Empty, sourceId, pollutantId, expected: AveragingWindow.Hour1,
-                actual: window),
-            Frequency.Daily when window != AveragingWindow.Hour24 => new
-                InvalidAveragingWindowException(Guid.Empty, sourceId, pollutantId,
-                    expected: AveragingWindow.Hour24, actual: window),
-            _ => Unit.Default
-        };
     }
 
     private async Task<Either<MeasurementException, MeasureUnit>> CheckForDuplicateMeasurement(

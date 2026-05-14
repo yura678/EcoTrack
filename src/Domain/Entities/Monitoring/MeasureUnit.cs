@@ -3,12 +3,13 @@ using Domain.Entities.Enterprises;
 
 namespace Domain.Entities.Monitoring;
 
-public class MeasureUnit : BaseEntity
+public class MeasureUnit : BaseEntity, ISoftDeletable
 {
     public string Symbol { get; private set; }
     public MeasureUnitDimension Dimension { get; private set; }
     public decimal ToBaseFactor { get; private set; }
     public DateTime CreatedAt { get; }
+    public DateTime? DeletedAt { get; private set; }
 
     public ICollection<Measurement>? Measurements { get; private set; } = [];
     public ICollection<EmissionLimit>? EmissionLimits { get; private set; } = [];
@@ -28,6 +29,9 @@ public class MeasureUnit : BaseEntity
     public static MeasureUnit New(Guid id, string symbol, MeasureUnitDimension dimension,
         decimal toBaseFactor) =>
         new(id, symbol, dimension, toBaseFactor, DateTime.UtcNow);
+
+    public void MarkDeleted() => DeletedAt = DateTime.UtcNow;
+    public void Restore() => DeletedAt = null;
 }
 
 public enum MeasureUnitDimension

@@ -3,7 +3,7 @@ using Domain.Entities.User;
 
 namespace Domain.Entities.Enterprises;
 
-public class Enterprise : BaseEntity
+public class Enterprise : BaseEntity, ISoftDeletable
 {
     public string Name { get; private set; }
     public string Edrpou { get; }
@@ -14,6 +14,7 @@ public class Enterprise : BaseEntity
     public Sector? Sector { get; private set; }
     public DateTime CreatedAt { get; }
     public DateTime? UpdatedAt { get; private set; }
+    public DateTime? DeletedAt { get; private set; }
 
     public ICollection<Site>? Sites { get; private set; } = [];
     public ICollection<User.UserEnterpriseMembership>? Memberships { get; private set; } = [];
@@ -52,6 +53,9 @@ public class Enterprise : BaseEntity
 
         UpdatedAt = DateTime.UtcNow;
     }
+
+    public void MarkDeleted() => DeletedAt = DateTime.UtcNow;
+    public void Restore() => DeletedAt = null;
 }
 
 public enum RiskGroup

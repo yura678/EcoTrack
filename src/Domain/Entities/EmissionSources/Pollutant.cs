@@ -4,7 +4,7 @@ using Domain.Entities.Monitoring;
 
 namespace Domain.Entities.EmissionSources;
 
-public class Pollutant : BaseEntity
+public class Pollutant : BaseEntity, ISoftDeletable
 {
     public string Code { get; private set; }
     public string Name { get; private set; }
@@ -16,10 +16,10 @@ public class Pollutant : BaseEntity
     public decimal? EprtrThresholdKgYear { get; private set; }
     public DateTime CreatedAt { get; }
     public DateTime? UpdatedAt { get; private set; }
+    public DateTime? DeletedAt { get; private set; }
 
     public ICollection<EmissionLimit>? EmissionLimits { get; private set; } = [];
     public ICollection<Measurement>? Measurements { get; private set; } = [];
-    public ICollection<MonitoringRequirement>? MonitoringRequirements { get; private set; } = [];
 
     private Pollutant(Guid id, string code, string name, string? casNumber,
         PollutantCategory category, PollutantMedia media,
@@ -63,6 +63,9 @@ public class Pollutant : BaseEntity
 
         UpdatedAt = DateTime.UtcNow;
     }
+
+    public void MarkDeleted() => DeletedAt = DateTime.UtcNow;
+    public void Restore() => DeletedAt = null;
 }
 
 public enum PollutantCategory

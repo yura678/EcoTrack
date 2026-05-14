@@ -40,6 +40,10 @@ public class EnterpriseConfiguration : IEntityTypeConfiguration<Enterprise>
             .HasConversion(new DateTimeUtcConverter())
             .IsRequired(false);
 
+        builder.Property(x => x.DeletedAt)
+            .HasConversion(new DateTimeUtcConverter())
+            .IsRequired(false);
+
         builder.HasOne(x => x.Sector)
             .WithMany(s => s.Enterprises)
             .HasForeignKey(x => x.SectorId)

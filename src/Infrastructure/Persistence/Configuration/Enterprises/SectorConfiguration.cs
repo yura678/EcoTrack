@@ -21,5 +21,8 @@ public class SectorConfiguration : IEntityTypeConfiguration<Sector>
 
         builder.HasIndex(x => x.Code)
             .IsUnique();
+
+        builder.Property(x => x.DeletedAt)
+            .IsRequired(false);
     }
 }

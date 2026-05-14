@@ -1,4 +1,4 @@
-﻿using Application.Features.Measurements.Exceptions;
+using Application.Features.Measurements.Exceptions;
 using Microsoft.AspNetCore.Mvc;
 
 namespace Api.Modules.Errors;
@@ -13,9 +13,7 @@ public static class MeasurementErrorFactory
             {
                 MeasurementNotFoundException
                     or MeasurementRelatedEntityNotFoundException
-                    or MonitoringRequirementNotFoundException
                     or DuplicateMeasurementException => StatusCodes.Status404NotFound,
-                InvalidAveragingWindowException  => StatusCodes.Status400BadRequest,
                 UnhandledMeasurementException => StatusCodes.Status500InternalServerError,
                 _ => throw new NotImplementedException("Measurement error handler does not implemented.")
             }

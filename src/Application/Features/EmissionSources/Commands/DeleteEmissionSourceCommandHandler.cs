@@ -14,7 +14,6 @@ public class DeleteEmissionSourceCommandHandler(
         CancellationToken cancellationToken)
     {
         return await CheckEmissionSourceId(request, cancellationToken)
-            .BindAsync(e => CheckDependencies(e, cancellationToken))
             .BindAsync(e => DeleteEntity(e, cancellationToken));
     }
 
@@ -28,18 +27,6 @@ public class DeleteEmissionSourceCommandHandler(
             e => e,
             () => new EmissionSourceNotFoundException(request.Id)
         );
-    }
-
-    private async Task<Either<EmissionSourceException, EmissionSource>> CheckDependencies(
-        EmissionSource emissionSource,
-        CancellationToken cancellationToken)
-    {
-        var hasDependencies =
-            await unitOfWork.EmissionSourceRepository.HasDependenciesAsync(emissionSource.Id, cancellationToken);
-
-        return hasDependencies
-            ? new EmissionSourceHasDependenciesException(emissionSource.Id)
-            : emissionSource;
     }
 
     private async Task<Either<EmissionSourceException, EmissionSource>> DeleteEntity(

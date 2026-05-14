@@ -61,5 +61,9 @@ public class PollutantConfiguration : IEntityTypeConfiguration<Pollutant>
         builder.Property(x => x.UpdatedAt)
             .HasConversion(new DateTimeUtcConverter())
             .IsRequired(false);
+
+        builder.Property(x => x.DeletedAt)
+            .HasConversion(new DateTimeUtcConverter())
+            .IsRequired(false);
     }
 }
