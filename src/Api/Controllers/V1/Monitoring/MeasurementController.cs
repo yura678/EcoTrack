@@ -19,6 +19,7 @@ namespace Api.Controllers.V1.Monitoring;
 [ApiController]
 public class MeasurementController(
     IMeasurementQueries measurementQueries,
+    IRawMeasurementQueries rawMeasurementQueries,
     ISender sender) : BaseController
 {
     [HttpGet]
@@ -73,6 +74,40 @@ public class MeasurementController(
         return newEntity.Match(
             m => Ok(MeasurementDto.FromDomainModel(m)),
             e => e.ToObjectResult());
+    }
+
+    [HttpGet("timeseries")]
+    [ProducesOkApiResponseType<IReadOnlyList<TimeSeriesPointDto>>]
+    public async Task<IActionResult> GetTimeSeries(
+        [FromQuery] TimeSeriesQueryDto query,
+        CancellationToken cancellationToken)
+    {
+        var points = await rawMeasurementQueries.GetTimeSeriesAsync(
+            query.PollutantId,
+            query.EmissionSourceId,
+            query.From,
+            query.To,
+            query.Window,
+            query.Aggregation,
+            cancellationToken);
+
+        return Ok(points.Select(TimeSeriesPointDto.FromReadModel).ToList());
+    }
+
+    [HttpGet("heatmap")]
+    [ProducesOkApiResponseType<IReadOnlyList<HeatmapPointDto>>]
+    public async Task<IActionResult> GetHeatmap(
+        [FromQuery] HeatmapQueryDto query,
+        CancellationToken cancellationToken)
+    {
+        var points = await rawMeasurementQueries.GetHeatmapAsync(
+            query.PollutantId,
+            query.From,
+            query.To,
+            query.Aggregation,
+            cancellationToken);
+
+        return Ok(points.Select(HeatmapPointDto.FromReadModel).ToList());
     }
 
     [HttpPut("{id:guid}/reject")]

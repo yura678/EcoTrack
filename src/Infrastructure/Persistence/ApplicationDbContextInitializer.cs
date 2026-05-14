@@ -1,4 +1,5 @@
-﻿using Microsoft.EntityFrameworkCore;
+﻿using Application.Common.Interfaces.Ingestion;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Domain.Entities.EmissionSources;
 using Domain.Entities.Enterprises;
@@ -8,7 +9,8 @@ namespace Infrastructure.Persistence;
 
 public class ApplicationDbContextInitializer(
     ILogger<ApplicationDbContextInitializer> logger,
-    ApplicationDbContext dbContext)
+    ApplicationDbContext dbContext,
+    IRawMeasurementWriter rawMeasurementWriter)
 {
     public async Task InitialiseAsync()
     {
@@ -17,6 +19,7 @@ public class ApplicationDbContextInitializer(
             await dbContext.Database.MigrateAsync();
             await SeedDataAsync();
             await SeedDomainEntitiesAsync();
+            await SeedRawMeasurementsAsync();
         }
         catch (Exception exception)
         {
@@ -536,5 +539,131 @@ public class ApplicationDbContextInitializer(
 
         logger.LogInformation(
             "Seeded Enterprises → Sites (2 each) → Installations (3 each) → EmissionSources (5 each) -> MonitoringDevices (4 each).");
+    }
+
+    private async Task SeedRawMeasurementsAsync()
+    {
+        if (await dbContext.Set<RawMeasurement>().AsNoTracking().AnyAsync())
+        {
+            logger.LogInformation("Skipping seeding: raw_measurement already has rows.");
+            return;
+        }
+
+        const int sourceLimit = 12;
+        const int days = 3;
+        const int intervalMinutes = 5;
+
+        var pollutantCodes = new[] { "CO", "NO₂", "SO₂" };
+        var pollutants = await dbContext.Set<Pollutant>()
+            .AsNoTracking()
+            .Where(p => pollutantCodes.Contains(p.Code))
+            .ToListAsync();
+
+        if (pollutants.Count == 0)
+        {
+            logger.LogWarning("Skipping raw_measurement seed: required pollutants not found.");
+            return;
+        }
+
+        var unit = await dbContext.Set<MeasureUnit>()
+            .AsNoTracking()
+            .FirstOrDefaultAsync(u => u.Symbol == "mg/m³");
+
+        if (unit is null)
+        {
+            logger.LogWarning("Skipping raw_measurement seed: mg/m³ unit not found.");
+            return;
+        }
+
+        var sources = await dbContext.Set<AirEmissionSource>()
+            .AsNoTracking()
+            .OrderBy(s => s.Code)
+            .Take(sourceLimit)
+            .Select(s => new { s.Id, s.InstallationId })
+            .ToListAsync();
+
+        if (sources.Count == 0)
+        {
+            logger.LogWarning("Skipping raw_measurement seed: no air emission sources found.");
+            return;
+        }
+
+        var installationIds = sources.Select(s => s.InstallationId).Distinct().ToList();
+        var devicesByInstallation = await dbContext.Set<MonitoringDevice>()
+            .AsNoTracking()
+            .Where(d => installationIds.Contains(d.InstallationId))
+            .Select(d => new { d.Id, d.InstallationId })
+            .ToListAsync();
+
+        var deviceLookup = devicesByInstallation
+            .GroupBy(d => d.InstallationId)
+            .ToDictionary(g => g.Key, g => g.First().Id);
+
+        var baselineByCode = new Dictionary<string, decimal>
+        {
+            ["CO"] = 8m,
+            ["NO₂"] = 18m,
+            ["SO₂"] = 14m
+        };
+
+        var rng = new Random(42);
+        var endTime = DateTime.UtcNow;
+        var startTime = endTime.AddDays(-days);
+        var totalSteps = (int)((endTime - startTime).TotalMinutes / intervalMinutes);
+
+        var batch = new List<RawMeasurement>(capacity: 5000);
+        var totalInserted = 0;
+
+        foreach (var source in sources)
+        {
+            if (!deviceLookup.TryGetValue(source.InstallationId, out var deviceId))
+            {
+                continue;
+            }
+
+            // Per-source offset so heatmap shows variation across the country
+            var sourceOffset = (decimal)((rng.NextDouble() - 0.5) * 0.4);
+
+            foreach (var pollutant in pollutants)
+            {
+                var baseline = baselineByCode.GetValueOrDefault(pollutant.Code, 10m);
+
+                for (var step = 0; step < totalSteps; step++)
+                {
+                    var time = startTime.AddMinutes(step * intervalMinutes);
+
+                    // Daily sinusoidal cycle (peak around midday)
+                    var hourOfDay = time.Hour + time.Minute / 60.0;
+                    var dailyCycle = (decimal)Math.Sin((hourOfDay - 6) / 24.0 * 2 * Math.PI) * 0.3m;
+
+                    // Random noise ±15%
+                    var noise = (decimal)((rng.NextDouble() - 0.5) * 0.3);
+
+                    // Occasional 2x spike (~1% chance)
+                    var spike = rng.NextDouble() < 0.01 ? 1m : 0m;
+
+                    var multiplier = 1m + dailyCycle + noise + sourceOffset + spike;
+                    var value = Math.Round(baseline * Math.Max(0.1m, multiplier), 3);
+
+                    batch.Add(RawMeasurement.New(
+                        time, source.Id, pollutant.Id, deviceId, unit.Id, value));
+
+                    if (batch.Count >= 5000)
+                    {
+                        totalInserted += await rawMeasurementWriter.WriteBatchAsync(batch, CancellationToken.None);
+                        batch.Clear();
+                    }
+                }
+            }
+        }
+
+        if (batch.Count > 0)
+        {
+            totalInserted += await rawMeasurementWriter.WriteBatchAsync(batch, CancellationToken.None);
+        }
+
+        logger.LogInformation(
+            "Seeded raw_measurement: {Rows} rows across {Sources} sources × {Pollutants} pollutants over {Days} days.",
+            totalInserted, sources.Count, pollutants.Count, days);
     }
 }

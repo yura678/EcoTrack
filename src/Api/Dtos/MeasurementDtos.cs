@@ -1,6 +1,45 @@
+using Application.Common.Interfaces.Queries.Monitoring;
 using Domain.Entities.Monitoring;
 
 namespace Api.Dtos;
+
+public record TimeSeriesQueryDto(
+    Guid PollutantId,
+    Guid EmissionSourceId,
+    DateTime From,
+    DateTime To,
+    BucketWindow Window,
+    AggregationFunc Aggregation = AggregationFunc.Average);
+
+public record HeatmapQueryDto(
+    Guid PollutantId,
+    DateTime From,
+    DateTime To,
+    AggregationFunc Aggregation = AggregationFunc.Average);
+
+public record TimeSeriesPointDto(
+    DateTime BucketStart,
+    decimal Value,
+    int TotalPointsCount,
+    int ValidPointsCount)
+{
+    public static TimeSeriesPointDto FromReadModel(TimeSeriesPoint p) =>
+        new(p.BucketStart, p.Value, p.TotalPointsCount, p.ValidPointsCount);
+}
+
+public record HeatmapPointDto(
+    Guid EmissionSourceId,
+    double Latitude,
+    double Longitude,
+    decimal Value,
+    Guid UnitId,
+    int TotalPointsCount,
+    int ValidPointsCount)
+{
+    public static HeatmapPointDto FromReadModel(HeatmapPoint p) =>
+        new(p.EmissionSourceId, p.Latitude, p.Longitude, p.Value, p.UnitId,
+            p.TotalPointsCount, p.ValidPointsCount);
+}
 
 public record MeasurementQueryDto(
     Guid InstallationId,

@@ -108,6 +108,8 @@ public static class ServiceCollectionExtensions
         services.AddScoped<MeasurementRepository>();
         services.AddScoped<IMeasurementRepository>(provider => provider.GetRequiredService<MeasurementRepository>());
         services.AddScoped<IMeasurementQueries>(provider => provider.GetRequiredService<MeasurementRepository>());
+
+        services.AddScoped<IRawMeasurementQueries, RawMeasurementQueries>();
         
         services.AddScoped<MonitoringDeviceRepository>();
         services.AddScoped<IMonitoringDeviceRepository>(provider => provider.GetRequiredService<MonitoringDeviceRepository>());
