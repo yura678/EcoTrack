@@ -351,17 +351,5 @@ public class EmissionSourceControllerTests : BaseIntegrationTest, IAsyncLifetime
         await SaveChangesAsync();
     }
 
-    public async Task DisposeAsync()
-    {
-        Context.Set<EmissionSource>().RemoveRange(Context.Set<EmissionSource>());
-        Context.Set<IedCategory>().RemoveRange(Context.Set<IedCategory>());
-        Context.Set<MonitoringDevice>().RemoveRange(Context.Set<MonitoringDevice>());
-
-        Context.Set<Installation>().RemoveRange(Context.Set<Installation>());
-        Context.Set<Site>().RemoveRange(Context.Set<Site>());
-        Context.Set<Enterprise>().RemoveRange(Context.Set<Enterprise>());
-        Context.Set<Sector>().RemoveRange(Context.Set<Sector>());
-
-        await SaveChangesAsync();
-    }
+    public Task DisposeAsync() => ResetTenantDataAsync();
 }

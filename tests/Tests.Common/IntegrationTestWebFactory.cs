@@ -27,15 +27,23 @@ public class IntegrationTestWebFactory: WebApplicationFactory<Program>, IAsyncLi
         builder.ConfigureTestServices(services =>
         {
             RegisterDatabase(services);
-            
+
+            services.AddAuthentication(defaultScheme: "TestScheme")
+                .AddScheme<AuthenticationSchemeOptions, TestAuthHandler>(
+                    "TestScheme", _ => { });
+
+            services.Configure<AuthenticationOptions>(options =>
+            {
+                options.DefaultAuthenticateScheme = "TestScheme";
+                options.DefaultChallengeScheme = "TestScheme";
+                options.DefaultScheme = "TestScheme";
+            });
         }).ConfigureAppConfiguration((_, config) =>
         {
             config
                 .AddJsonFile("appsettings.Test.json")
                 .AddEnvironmentVariables();
         });
-        
-        
     }
 
     private void RegisterDatabase(IServiceCollection services)

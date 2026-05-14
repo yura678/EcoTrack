@@ -3,3 +3,13 @@ obj/
 /packages/
 riderModule.iml
 /_ReSharper.Caches/
+src/Api/logs/
+**/logs/*.json
+appsettings.Local.json
+
+# IDE / editor user-specific files
+.idea/
+.vs/
+*.user
+*.suo
+*.DotSettings.user

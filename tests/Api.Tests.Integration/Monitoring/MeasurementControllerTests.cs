@@ -30,9 +30,6 @@ public class MeasurementControllerTests : BaseIntegrationTest, IAsyncLifetime
 
     private readonly MonitoringDevice _device;
 
-    private readonly MonitoringPlan _plan;
-    private readonly MonitoringRequirement _requirement;
-
     private readonly Permit _multiPermit;
     private readonly EmissionLimit[] _limits3;
 
@@ -53,18 +50,6 @@ public class MeasurementControllerTests : BaseIntegrationTest, IAsyncLifetime
         _g = MeasureUnitsData.GPerM3();
         _ug = MeasureUnitsData.UgPerM3();
         _device = MonitoringDevicesData.FirstTestDevice(_emissionSource.Id, _installation.Id);
-
-        var planId = Guid.NewGuid();
-
-        _requirement = MonitoringRequirementsData.FirstTestRequirement(
-            planId,
-            _emissionSource.Id,
-            _pollutant.Id);
-
-        _plan = MonitoringPlansData.FirstActiveTestPlan(
-            planId,
-            _installation.Id,
-            [_requirement]);
 
         var multi = PermitsBundlesData.FirstMultiLimitPermit(
             _installation.Id,
@@ -358,10 +343,6 @@ public class MeasurementControllerTests : BaseIntegrationTest, IAsyncLifetime
         await Context.Set<MeasureUnit>().AddRangeAsync(_mg, _g, _ug);
         await Context.Set<MonitoringDevice>().AddAsync(_device);
 
-
-        await Context.Set<MonitoringPlan>().AddAsync(_plan);
-        await Context.Set<MonitoringRequirement>().AddAsync(_requirement);
-
         await Context.Set<Permit>().AddAsync(_multiPermit);
         await Context.Set<EmissionLimit>().AddRangeAsync(_limits3);
 
@@ -371,24 +352,5 @@ public class MeasurementControllerTests : BaseIntegrationTest, IAsyncLifetime
         await SaveChangesAsync();
     }
 
-    public async Task DisposeAsync()
-    {
-        Context.Set<ComplianceEvent>().RemoveRange(Context.Set<ComplianceEvent>());
-        Context.Set<Measurement>().RemoveRange( Context.Set<Measurement>());
-        Context.Set<EmissionLimit>().RemoveRange( Context.Set<EmissionLimit>());
-        Context.Set<Permit>().RemoveRange( Context.Set<Permit>());
-        Context.Set<MonitoringRequirement>().RemoveRange( Context.Set<MonitoringRequirement>());
-        Context.Set<MonitoringPlan>().RemoveRange( Context.Set<MonitoringPlan>());
-        Context.Set<MonitoringDevice>().RemoveRange( Context.Set<MonitoringDevice>());
-        Context.Set<MeasureUnit>().RemoveRange( Context.Set<MeasureUnit>());
-        Context.Set<Pollutant>().RemoveRange( Context.Set<Pollutant>());
-        Context.Set<EmissionSource>().RemoveRange( Context.Set<EmissionSource>());
-        Context.Set<IedCategory>().RemoveRange(Context.Set<IedCategory>());
-        Context.Set<Installation>().RemoveRange( Context.Set<Installation>());
-        Context.Set<Site>().RemoveRange( Context.Set<Site>());
-        Context.Set<Enterprise>().RemoveRange( Context.Set<Enterprise>());
-        Context.Set<Sector>().RemoveRange( Context.Set<Sector>());
-
-        await SaveChangesAsync();
-    }
+    public Task DisposeAsync() => ResetTenantDataAsync();
 }

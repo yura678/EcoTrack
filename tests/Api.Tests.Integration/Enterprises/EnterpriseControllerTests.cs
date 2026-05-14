@@ -277,7 +277,7 @@ public class EnterpriseControllerTests : BaseIntegrationTest, IAsyncLifetime
     }
 
     [Fact]
-    public async Task ShouldNotDeleteEnterprise()
+    public async Task ShouldDeleteEnterprise2()
     {
         // Arrange
         var id = _thirdTestEnterprise.Id;
@@ -286,7 +286,7 @@ public class EnterpriseControllerTests : BaseIntegrationTest, IAsyncLifetime
         var response = await Client.DeleteAsync($"{BaseRoute}/{id}");
 
         // Assert
-        response.StatusCode.Should().Be(HttpStatusCode.Conflict);
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
     }
 
 
@@ -300,12 +300,5 @@ public class EnterpriseControllerTests : BaseIntegrationTest, IAsyncLifetime
         await SaveChangesAsync();
     }
 
-    public async Task DisposeAsync()
-    {
-        await Context.Set<MonitoringDevice>().ExecuteDeleteAsync();
-        await Context.Set<Installation>().ExecuteDeleteAsync();
-        await Context.Set<Site>().ExecuteDeleteAsync();
-        await Context.Set<Enterprise>().ExecuteDeleteAsync();
-        await Context.Set<Sector>().ExecuteDeleteAsync();
-    }
+    public Task DisposeAsync() => ResetTenantDataAsync();
 }

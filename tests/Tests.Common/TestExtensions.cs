@@ -1,9 +1,6 @@
 ﻿using System.Security.Claims;
 using System.Text.Encodings.Web;
 using Microsoft.AspNetCore.Authentication;
-using Microsoft.AspNetCore.Mvc.Testing;
-using Microsoft.AspNetCore.TestHost;
-using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using System.Text.Json;
@@ -14,27 +11,6 @@ namespace Tests.Common;
 
 public static class TestExtensions
 {
-    public static WebApplicationFactory<Program> WithWebHostBuilderMock(this IntegrationTestWebFactory factory)
-    {
-        return factory.WithWebHostBuilder(builder =>
-        {
-            builder.ConfigureTestServices(services =>
-            {
-                services.AddAuthentication(defaultScheme: "TestScheme")
-                    .AddScheme<AuthenticationSchemeOptions, TestAuthHandler>(
-                        "TestScheme", _ => { });
-
-                services.Configure<AuthenticationOptions>(options =>
-                {
-                    options.DefaultAuthenticateScheme = "TestScheme";
-                    options.DefaultChallengeScheme = "TestScheme";
-                    options.DefaultScheme = "TestScheme";
-                });
-            });
-        });
-    }
-
-
     public static async Task<T> ToResponseModel<T>(this HttpResponseMessage response)
     {
         var jsonString = await response.Content.ReadAsStringAsync();

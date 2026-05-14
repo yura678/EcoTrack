@@ -316,20 +316,5 @@ public class PermitControllerTests : BaseIntegrationTest, IAsyncLifetime
         await SaveChangesAsync();
     }
 
-    public async Task DisposeAsync()
-    {
-        Context.Set<EmissionLimit>().RemoveRange(Context.Set<EmissionLimit>());
-        Context.Set<Permit>().RemoveRange(Context.Set<Permit>());
-        Context.Set<Pollutant>().RemoveRange(Context.Set<Pollutant>());
-        Context.Set<IedCategory>().RemoveRange(Context.Set<IedCategory>());
-        Context.Set<MeasureUnit>().RemoveRange(Context.Set<MeasureUnit>());
-        Context.Set<EmissionSource>().RemoveRange(Context.Set<EmissionSource>());
-        Context.Set<MonitoringDevice>().RemoveRange(Context.Set<MonitoringDevice>());
-        Context.Set<Installation>().RemoveRange(Context.Set<Installation>());
-        Context.Set<Site>().RemoveRange(Context.Set<Site>());
-        Context.Set<Enterprise>().RemoveRange(Context.Set<Enterprise>());
-        Context.Set<Sector>().RemoveRange(Context.Set<Sector>());
-
-        await SaveChangesAsync();
-    }
+    public Task DisposeAsync() => ResetTenantDataAsync();
 }

@@ -284,7 +284,7 @@ public class SiteControllerTests : BaseIntegrationTest, IAsyncLifetime
     }
 
     [Fact]
-    public async Task ShouldNotDeleteSiteWhenInstallationsExist()
+    public async Task ShouldDeleteSiteWhenInstallationsExist()
     {
         // Arrange
         var route = $"{BaseRoute}/{_firstSite.Id}";
@@ -293,7 +293,7 @@ public class SiteControllerTests : BaseIntegrationTest, IAsyncLifetime
         var response = await Client.DeleteAsync(route);
 
         // Assert
-        response.StatusCode.Should().Be(HttpStatusCode.Conflict);
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
     }
 
    
@@ -308,15 +308,5 @@ public class SiteControllerTests : BaseIntegrationTest, IAsyncLifetime
         await SaveChangesAsync();
     }
 
-    public async Task DisposeAsync()
-    {
-        Context.Set<MonitoringDevice>().RemoveRange(Context.Set<MonitoringDevice>());
-        Context.Set<Installation>().RemoveRange(Context.Set<Installation>());
-        Context.Set<IedCategory>().RemoveRange(Context.Set<IedCategory>());
-        Context.Set<Site>().RemoveRange(Context.Set<Site>());
-        Context.Set<Enterprise>().RemoveRange(Context.Set<Enterprise>());
-        Context.Set<Sector>().RemoveRange(Context.Set<Sector>());
-
-        await SaveChangesAsync();
-    }
+    public Task DisposeAsync() => ResetTenantDataAsync();
 }
