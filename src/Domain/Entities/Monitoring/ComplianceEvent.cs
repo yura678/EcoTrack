@@ -4,12 +4,13 @@ using Domain.Entities.Enterprises;
 
 namespace Domain.Entities.Monitoring;
 
-public class ComplianceEvent : BaseEntity
+public class ComplianceEvent : BaseEntity, ITenantOwned
 {
     public ComplianceEventType EventType { get; private set; }
 
     public Guid EmissionSourceId { get; private set; }
     public EmissionSource? EmissionSource { get; private set; }
+    public Guid EnterpriseId { get; private set; }
 
     public Guid? MeasurementId { get; private set; }
     public Measurement? Measurement { get; private set; }
@@ -95,5 +96,18 @@ public class ComplianceEvent : BaseEntity
         if (status == ComplianceEventStatus.Closed)
             ClosedAt = DateTime.UtcNow;
         UpdatedAt = DateTime.UtcNow;
+    }
+
+    public void AssignTenant(Guid enterpriseId)
+    {
+        if (EnterpriseId == Guid.Empty)
+        {
+            EnterpriseId = enterpriseId;
+        }
+        else if (EnterpriseId != enterpriseId)
+        {
+            throw new InvalidOperationException(
+                $"EnterpriseId is immutable on ComplianceEvent (current: {EnterpriseId}, attempted: {enterpriseId}).");
+        }
     }
 }

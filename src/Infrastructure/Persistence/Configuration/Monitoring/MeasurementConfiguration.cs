@@ -95,5 +95,8 @@ public class MeasurementConfiguration : IEntityTypeConfiguration<Measurement>
             .WithMany(x => x.Measurements)
             .HasForeignKey(x => x.UnitId)
             .OnDelete(DeleteBehavior.Restrict);
+
+        builder.Property(x => x.EnterpriseId).IsRequired();
+        builder.HasIndex(x => x.EnterpriseId);
     }
 }

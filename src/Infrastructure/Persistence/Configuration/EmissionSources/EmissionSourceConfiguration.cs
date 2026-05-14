@@ -36,10 +36,17 @@ public class EmissionSourceConfiguration : IEntityTypeConfiguration<EmissionSour
             .HasConversion(new DateTimeUtcConverter())
             .IsRequired(false);
 
+        builder.Property(x => x.DeletedAt)
+            .HasConversion(new DateTimeUtcConverter())
+            .IsRequired(false);
+
         builder.HasOne(x => x.Installation)
             .WithMany(x => x.EmissionSources)
             .HasForeignKey(x => x.InstallationId)
             .IsRequired()
             .OnDelete(DeleteBehavior.Cascade);
+
+        builder.Property(x => x.EnterpriseId).IsRequired();
+        builder.HasIndex(x => x.EnterpriseId);
     }
 }

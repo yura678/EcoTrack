@@ -2,10 +2,11 @@ using Domain.Common;
 
 namespace Domain.Entities.Monitoring;
 
-public class CalibrationRecord : BaseEntity
+public class CalibrationRecord : BaseEntity, ITenantOwned
 {
     public Guid DeviceId { get; private set; }
     public MonitoringDevice? Device { get; private set; }
+    public Guid EnterpriseId { get; private set; }
     public CalibrationType Type { get; private set; }
     public DateTime PerformedAt { get; private set; }
     public DateTime NextDueAt { get; private set; }
@@ -51,6 +52,19 @@ public class CalibrationRecord : BaseEntity
         CertificateNumber = certificateNumber;
         Notes = notes;
         UpdatedAt = DateTime.UtcNow;
+    }
+
+    public void AssignTenant(Guid enterpriseId)
+    {
+        if (EnterpriseId == Guid.Empty)
+        {
+            EnterpriseId = enterpriseId;
+        }
+        else if (EnterpriseId != enterpriseId)
+        {
+            throw new InvalidOperationException(
+                $"EnterpriseId is immutable on CalibrationRecord (current: {EnterpriseId}, attempted: {enterpriseId}).");
+        }
     }
 }
 

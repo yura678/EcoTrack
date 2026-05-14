@@ -1,4 +1,3 @@
-using Application.Common.Interfaces.Identity;
 using Application.Common.Interfaces.Queries.Monitoring;
 using Application.Common.Interfaces.Repositories.Monitoring;
 using Application.Common.Models;
@@ -9,19 +8,13 @@ using Microsoft.EntityFrameworkCore;
 
 namespace Infrastructure.Persistence.Repositories.Monitoring;
 
-internal class MeasurementRepository(ApplicationDbContext context, ICurrentUserService currentUserService)
+internal class MeasurementRepository(ApplicationDbContext context)
     : BaseAsyncRepository<Measurement>(context), IMeasurementRepository, IMeasurementQueries
 {
     public async Task<Option<Measurement>> GetByIdAsync(Guid id, CancellationToken cancellationToken)
     {
-        var currentEnterpriseId = currentUserService.GetCurrentEnterpriseId();
-        bool isSuperAdmin = currentUserService.IsSuperAdmin();
-
         var entity = await base.TableNoTracking
-            .FirstOrDefaultAsync(x => x.Id == id &&
-                                      (isSuperAdmin || x.EmissionSource!.Installation!.Site!.EnterpriseId ==
-                                          currentEnterpriseId),
-                cancellationToken);
+            .FirstOrDefaultAsync(x => x.Id == id, cancellationToken);
 
         return entity ?? Option<Measurement>.None;
     }
@@ -30,15 +23,10 @@ internal class MeasurementRepository(ApplicationDbContext context, ICurrentUserS
         Guid emissionSourceId,
         CancellationToken cancellationToken)
     {
-        var currentEnterpriseId = currentUserService.GetCurrentEnterpriseId();
-        bool isSuperAdmin = currentUserService.IsSuperAdmin();
-
         var entity = await base.TableNoTracking
             .FirstOrDefaultAsync(x => x.WindowEnd == timestamp
                                       && x.PollutantId == pollutantId
-                                      && x.EmissionSourceId == emissionSourceId
-                                      && (isSuperAdmin || x.EmissionSource!.Installation!.Site!.EnterpriseId ==
-                                          currentEnterpriseId),
+                                      && x.EmissionSourceId == emissionSourceId,
                 cancellationToken);
 
         return entity ?? Option<Measurement>.None;
@@ -47,12 +35,8 @@ internal class MeasurementRepository(ApplicationDbContext context, ICurrentUserS
     public async Task<PageResult<Measurement>> GetPagedAsync(
         Guid installationId, DateTime? from, DateTime? to, int page, int pageSize, CancellationToken cancellationToken)
     {
-        var currentEnterpriseId = currentUserService.GetCurrentEnterpriseId();
-        bool isSuperAdmin = currentUserService.IsSuperAdmin();
-
         var query = base.TableNoTracking
-            .Where(x => x.EmissionSource!.InstallationId == installationId)
-            .Where(x => isSuperAdmin || x.EmissionSource!.Installation!.Site!.EnterpriseId == currentEnterpriseId);
+            .Where(x => x.EmissionSource!.InstallationId == installationId);
 
         if (from.HasValue)
         {

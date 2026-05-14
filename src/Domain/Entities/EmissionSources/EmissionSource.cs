@@ -5,18 +5,19 @@ using NetTopologySuite.Geometries;
 
 namespace Domain.Entities.EmissionSources;
 
-public class EmissionSource : BaseEntity
+public class EmissionSource : BaseEntity, ISoftDeletable, ITenantOwned
 {
     public string Code { get; protected set; }
     public Guid InstallationId { get; protected set; }
     public Installation? Installation { get; private set; }
+    public Guid EnterpriseId { get; protected set; }
     public Point Location { get; protected set; }
     public DateTime CreatedAt { get; }
     public DateTime? UpdatedAt { get; protected set; }
+    public DateTime? DeletedAt { get; protected set; }
 
     public ICollection<Measurement>? Measurements { get; protected set; } = [];
     public ICollection<EmissionLimit>? EmissionLimits { get; protected set; } = [];
-    public ICollection<MonitoringRequirement>? MonitoringRequirements { get; protected set; } = [];
     public ICollection<MonitoringDevice>? MonitoringDevices { get; protected set; } = [];
 
     protected EmissionSource(Guid id, Guid installationId, string code, Point location,
@@ -37,5 +38,21 @@ public class EmissionSource : BaseEntity
     {
         Location = BuildPoint(latitude, longitude);
         UpdatedAt = DateTime.UtcNow;
+    }
+
+    public void MarkDeleted() => DeletedAt = DateTime.UtcNow;
+    public void Restore() => DeletedAt = null;
+
+    public void AssignTenant(Guid enterpriseId)
+    {
+        if (EnterpriseId == Guid.Empty)
+        {
+            EnterpriseId = enterpriseId;
+        }
+        else if (EnterpriseId != enterpriseId)
+        {
+            throw new InvalidOperationException(
+                $"EnterpriseId is immutable on EmissionSource (current: {EnterpriseId}, attempted: {enterpriseId}).");
+        }
     }
 }

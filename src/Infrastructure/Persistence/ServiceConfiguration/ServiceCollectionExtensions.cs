@@ -14,6 +14,7 @@ using Infrastructure.Persistence.Repositories.Common;
 using Infrastructure.Persistence.Repositories.EmissionSources;
 using Infrastructure.Persistence.Repositories.Enterprises;
 using Infrastructure.Persistence.Ingestion;
+using Infrastructure.Persistence.Interceptors;
 using Infrastructure.Persistence.Repositories.Monitoring;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.EntityFrameworkCore;
@@ -42,9 +43,16 @@ public static class ServiceCollectionExtensions
             return dataSourceBuilder.Build();
         });
 
+        services.AddSingleton<SoftDeleteSaveChangesInterceptor>();
+        services.AddSingleton<TenantBackfillInterceptor>();
+        services.AddScoped<TenantSaveChangesInterceptor>();
+
         services.AddDbContext<ApplicationDbContext>((provider, options) =>
         {
             var dataSource = provider.GetRequiredService<NpgsqlDataSource>();
+            var softDeleteInterceptor = provider.GetRequiredService<SoftDeleteSaveChangesInterceptor>();
+            var tenantBackfillInterceptor = provider.GetRequiredService<TenantBackfillInterceptor>();
+            var tenantInterceptor = provider.GetRequiredService<TenantSaveChangesInterceptor>();
             options
                 .UseNpgsql(dataSource,
                     builder =>
@@ -52,6 +60,7 @@ public static class ServiceCollectionExtensions
                         builder.MigrationsAssembly(typeof(ApplicationDbContext).Assembly.FullName);
                         builder.UseNetTopologySuite();
                     })
+                .AddInterceptors(softDeleteInterceptor, tenantBackfillInterceptor, tenantInterceptor)
                 .UseSnakeCaseNamingConvention()
                 .ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
         });
@@ -104,9 +113,6 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IMonitoringDeviceRepository>(provider => provider.GetRequiredService<MonitoringDeviceRepository>());
         services.AddScoped<IMonitoringDeviceQueries>(provider => provider.GetRequiredService<MonitoringDeviceRepository>());
         
-        services.AddScoped<MonitoringRequirementRepository>();
-        services.AddScoped<IMonitoringRequirementRepository>(provider => provider.GetRequiredService<MonitoringRequirementRepository>());
-        
         services.AddScoped<ComplianceEventRepository>();
         services.AddScoped<IComplianceEventRepository>(provider => provider.GetRequiredService<ComplianceEventRepository>());
         services.AddScoped<IComplianceEventQueries>(provider => provider.GetRequiredService<ComplianceEventRepository>());
@@ -118,10 +124,6 @@ public static class ServiceCollectionExtensions
         services.AddScoped<CalibrationRecordRepository>();
         services.AddScoped<ICalibrationRecordRepository>(provider => provider.GetRequiredService<CalibrationRecordRepository>());
         services.AddScoped<ICalibrationRecordQueries>(provider => provider.GetRequiredService<CalibrationRecordRepository>());
-        
-        services.AddScoped<MonitoringPlanRepository>();
-        services.AddScoped<IMonitoringPlanQueries>(provider => provider.GetRequiredService<MonitoringPlanRepository>());
-        services.AddScoped<IMonitoringPlanRepository>(provider => provider.GetRequiredService<MonitoringPlanRepository>());
         
         services.AddScoped<PermitRepository>();
         services.AddScoped<IPermitQueries>(provider => provider.GetRequiredService<PermitRepository>());

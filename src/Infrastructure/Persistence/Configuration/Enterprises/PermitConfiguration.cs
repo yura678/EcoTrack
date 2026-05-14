@@ -52,6 +52,8 @@ public class PermitConfiguration : IEntityTypeConfiguration<Permit>
             .HasForeignKey(x => x.InstallationId)
             .IsRequired()
             .OnDelete(DeleteBehavior.Restrict);
-        
+
+        builder.Property(x => x.EnterpriseId).IsRequired();
+        builder.HasIndex(x => x.EnterpriseId);
     }
 }

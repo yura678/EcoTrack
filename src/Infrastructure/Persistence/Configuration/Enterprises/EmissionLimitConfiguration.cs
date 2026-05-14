@@ -56,5 +56,8 @@ public class EmissionLimitConfiguration : IEntityTypeConfiguration<EmissionLimit
             .WithMany(x => x.EmissionLimits)
             .HasForeignKey(x => x.PermitId)
             .OnDelete(DeleteBehavior.Cascade);
+
+        builder.Property(x => x.EnterpriseId).IsRequired();
+        builder.HasIndex(x => x.EnterpriseId);
     }
 }

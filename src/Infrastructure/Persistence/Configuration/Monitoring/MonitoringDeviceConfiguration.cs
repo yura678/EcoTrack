@@ -65,5 +65,8 @@ public class MonitoringDeviceConfiguration : IEntityTypeConfiguration<Monitoring
             .WithMany()
             .HasForeignKey(x => x.InstallationId)
             .OnDelete(DeleteBehavior.Restrict);
+
+        builder.Property(x => x.EnterpriseId).IsRequired();
+        builder.HasIndex(x => x.EnterpriseId);
     }
 }

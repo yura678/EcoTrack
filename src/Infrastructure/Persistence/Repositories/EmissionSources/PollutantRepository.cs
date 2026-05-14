@@ -23,8 +23,6 @@ internal class PollutantRepository(ApplicationDbContext context)
         var hasDependencies = await DbContext.Set<Measurement>().AnyAsync(x => x.PollutantId.Equals(id),
                                   cancellationToken)
                               || await DbContext.Set<EmissionLimit>().AnyAsync(x => x.PollutantId.Equals(id),
-                                  cancellationToken)
-                              || await DbContext.Set<MonitoringRequirement>().AnyAsync(x => x.PollutantId.Equals(id),
                                   cancellationToken);
 
         return hasDependencies;

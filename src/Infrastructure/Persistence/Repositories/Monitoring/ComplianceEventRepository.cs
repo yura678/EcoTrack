@@ -1,4 +1,3 @@
-using Application.Common.Interfaces.Identity;
 using Application.Common.Interfaces.Queries.Monitoring;
 using Application.Common.Interfaces.Repositories.Monitoring;
 using Domain.Entities.Monitoring;
@@ -8,7 +7,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace Infrastructure.Persistence.Repositories.Monitoring;
 
-internal class ComplianceEventRepository(ApplicationDbContext context, ICurrentUserService currentUserService) :
+internal class ComplianceEventRepository(ApplicationDbContext context) :
     BaseAsyncRepository<ComplianceEvent>(context), IComplianceEventRepository, IComplianceEventQueries
 {
     public async Task<IReadOnlyCollection<ComplianceEvent>> AddRangeAsync(
@@ -23,26 +22,15 @@ internal class ComplianceEventRepository(ApplicationDbContext context, ICurrentU
     public async Task<IReadOnlyList<ComplianceEvent>> GetByMeasurementIdAsync(Guid measurementId,
         CancellationToken cancellationToken)
     {
-        var currentEnterpriseId = currentUserService.GetCurrentEnterpriseId();
-        bool isSuperAdmin = currentUserService.IsSuperAdmin();
-
         return await TableNoTracking
-            .Where(x => x.MeasurementId == measurementId &&
-                        (isSuperAdmin || x.EmissionSource!.Installation!.Site!.EnterpriseId ==
-                            currentEnterpriseId))
+            .Where(x => x.MeasurementId == measurementId)
             .ToListAsync(cancellationToken);
     }
 
     public async Task<Option<ComplianceEvent>> GetByIdAsync(Guid id, CancellationToken cancellationToken)
     {
-        var currentEnterpriseId = currentUserService.GetCurrentEnterpriseId();
-        bool isSuperAdmin = currentUserService.IsSuperAdmin();
-
         var entity = await Table
-            .FirstOrDefaultAsync(x => x.Id == id &&
-                                      (isSuperAdmin ||
-                                       x.EmissionSource!.Installation!.Site!.EnterpriseId ==
-                                       currentEnterpriseId), cancellationToken);
+            .FirstOrDefaultAsync(x => x.Id == id, cancellationToken);
 
         return entity ?? Option<ComplianceEvent>.None;
     }

@@ -1,4 +1,3 @@
-using Application.Common.Interfaces.Identity;
 using Application.Common.Interfaces.Queries.Monitoring;
 using Application.Common.Interfaces.Repositories.Monitoring;
 using Domain.Entities.Monitoring;
@@ -8,9 +7,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace Infrastructure.Persistence.Repositories.Monitoring;
 
-internal class DevicePollutantCapabilityRepository(
-    ApplicationDbContext context,
-    ICurrentUserService currentUserService)
+internal class DevicePollutantCapabilityRepository(ApplicationDbContext context)
     : BaseAsyncRepository<DevicePollutantCapability>(context),
         IDevicePollutantCapabilityRepository,
         IDevicePollutantCapabilityQueries
@@ -18,14 +15,8 @@ internal class DevicePollutantCapabilityRepository(
     public async Task<Option<DevicePollutantCapability>> GetByIdAsync(Guid id,
         CancellationToken cancellationToken)
     {
-        var currentEnterpriseId = currentUserService.GetCurrentEnterpriseId();
-        bool isSuperAdmin = currentUserService.IsSuperAdmin();
-
         var entity = await Table
-            .FirstOrDefaultAsync(
-                x => x.Id == id &&
-                     (isSuperAdmin || x.Device!.Installation!.Site!.EnterpriseId == currentEnterpriseId),
-                cancellationToken);
+            .FirstOrDefaultAsync(x => x.Id == id, cancellationToken);
 
         return entity ?? Option<DevicePollutantCapability>.None;
     }
@@ -44,13 +35,8 @@ internal class DevicePollutantCapabilityRepository(
     public async Task<IReadOnlyList<DevicePollutantCapability>> GetByDeviceIdAsync(
         Guid deviceId, CancellationToken cancellationToken)
     {
-        var currentEnterpriseId = currentUserService.GetCurrentEnterpriseId();
-        bool isSuperAdmin = currentUserService.IsSuperAdmin();
-
         return await TableNoTracking
-            .Where(x => x.DeviceId == deviceId &&
-                        (isSuperAdmin ||
-                         x.Device!.Installation!.Site!.EnterpriseId == currentEnterpriseId))
+            .Where(x => x.DeviceId == deviceId)
             .ToListAsync(cancellationToken);
     }
 }

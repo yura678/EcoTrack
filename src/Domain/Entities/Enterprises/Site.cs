@@ -3,7 +3,7 @@ using NetTopologySuite.Geometries;
 
 namespace Domain.Entities.Enterprises;
 
-public class Site : BaseEntity
+public class Site : BaseEntity, ISoftDeletable, ITenantOwned
 {
     public string Name { get; private set; }
     public string Address { get; private set; }
@@ -14,6 +14,7 @@ public class Site : BaseEntity
     public Enterprise? Enterprise { get; private set; }
     public DateTime CreatedAt { get; }
     public DateTime? UpdatedAt { get; private set; }
+    public DateTime? DeletedAt { get; private set; }
 
     public ICollection<Installation>? Installations { get; private set; } = [];
 
@@ -61,5 +62,21 @@ public class Site : BaseEntity
         Elevation = elevation;
 
         UpdatedAt = DateTime.UtcNow;
+    }
+
+    public void MarkDeleted() => DeletedAt = DateTime.UtcNow;
+    public void Restore() => DeletedAt = null;
+
+    public void AssignTenant(Guid enterpriseId)
+    {
+        if (EnterpriseId == Guid.Empty)
+        {
+            EnterpriseId = enterpriseId;
+        }
+        else if (EnterpriseId != enterpriseId)
+        {
+            throw new InvalidOperationException(
+                $"EnterpriseId is immutable on Site (current: {EnterpriseId}, attempted: {enterpriseId}).");
+        }
     }
 }

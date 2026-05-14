@@ -69,5 +69,8 @@ public class ComplianceEventConfiguration : IEntityTypeConfiguration<ComplianceE
             .OnDelete(DeleteBehavior.SetNull);
 
         builder.HasIndex(x => new { x.EmissionSourceId, x.DetectedAt });
+
+        builder.Property(x => x.EnterpriseId).IsRequired();
+        builder.HasIndex(x => x.EnterpriseId);
     }
 }

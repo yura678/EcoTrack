@@ -1,4 +1,3 @@
-﻿using Application.Common.Interfaces.Identity;
 using Application.Common.Interfaces.Queries.Enterprises;
 using Application.Common.Interfaces.Repositories.Enterprises;
 using Domain.Entities.Enterprises;
@@ -9,7 +8,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace Infrastructure.Persistence.Repositories.Enterprises;
 
-internal class InstallationRepository(ApplicationDbContext context, ICurrentUserService currentUserService)
+internal class InstallationRepository(ApplicationDbContext context)
     : BaseAsyncRepository<Installation>(context),
         IInstallationRepository, IInstallationQueries
 {
@@ -22,13 +21,8 @@ internal class InstallationRepository(ApplicationDbContext context, ICurrentUser
     public async Task<IReadOnlyList<Installation>> GetBySiteIdAsync(Guid siteId,
         CancellationToken cancellationToken)
     {
-        var currentEnterpriseId = currentUserService.GetCurrentEnterpriseId();
-        bool isSuperAdmin = currentUserService.IsSuperAdmin();
-
         return await base.TableNoTracking
-            .Include(x => x.Site)
-            .Where(x => x.SiteId == siteId &&
-                        (isSuperAdmin || x.Site!.EnterpriseId == currentEnterpriseId))
+            .Where(x => x.SiteId == siteId)
             .ToListAsync(cancellationToken);
     }
 
@@ -43,23 +37,14 @@ internal class InstallationRepository(ApplicationDbContext context, ICurrentUser
                 .AnyAsync(x => x.EmissionSource != null &&
                                x.EmissionSource.InstallationId.Equals(id), cancellationToken)
             || await DbContext.Set<MonitoringDevice>()
-                .AnyAsync(x => x.InstallationId.Equals(id), cancellationToken)
-            || await DbContext.Set<MonitoringRequirement>()
-                .AnyAsync(x => x.EmissionSource != null &&
-                               x.EmissionSource.InstallationId.Equals(id), cancellationToken);
+                .AnyAsync(x => x.InstallationId.Equals(id), cancellationToken);
     }
 
 
     public async Task<Option<Installation>> GetByIdAsync(Guid id, CancellationToken cancellationToken)
     {
-        var currentEnterpriseId = currentUserService.GetCurrentEnterpriseId();
-        bool isSuperAdmin = currentUserService.IsSuperAdmin();
-
         var entity = await base.TableNoTracking
-            .Include(x => x.Site)
-            .FirstOrDefaultAsync(x => x.Id == id &&
-                                      (isSuperAdmin || x.Site!.EnterpriseId == currentEnterpriseId),
-                cancellationToken);
+            .FirstOrDefaultAsync(x => x.Id == id, cancellationToken);
 
         return entity ?? Option<Installation>.None;
     }
@@ -67,13 +52,9 @@ internal class InstallationRepository(ApplicationDbContext context, ICurrentUser
     public async Task<Option<Installation>> GetByIdWithEmissionsAsync(Guid id,
         CancellationToken cancellationToken)
     {
-        var currentEnterpriseId = currentUserService.GetCurrentEnterpriseId();
-        bool isSuperAdmin = currentUserService.IsSuperAdmin();
-
         var entity = await base.TableNoTracking
             .Include(x => x.EmissionSources)
-            .FirstOrDefaultAsync(x => x.Id.Equals(id) &&
-                                      (isSuperAdmin || x.Site!.EnterpriseId == currentEnterpriseId), cancellationToken);
+            .FirstOrDefaultAsync(x => x.Id.Equals(id), cancellationToken);
 
         return entity ?? Option<Installation>.None;
     }

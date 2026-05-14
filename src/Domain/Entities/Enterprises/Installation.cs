@@ -4,18 +4,18 @@ using Domain.Entities.Monitoring;
 
 namespace Domain.Entities.Enterprises;
 
-public class Installation : BaseEntity
+public class Installation : BaseEntity, ITenantOwned
 {
     public string Name { get; private set; }
     public Guid IedCategoryId { get; private set; }
     public IedCategory? IedCategory { get; private set; }
     public Guid SiteId { get; private set; }
     public Site? Site { get; private set; }
+    public Guid EnterpriseId { get; private set; }
     public InstallationStatus Status { get; private set; }
     public DateTime CreatedAt { get; }
     public DateTime? UpdatedAt { get; private set; }
 
-    public ICollection<MonitoringPlan>? MonitoringPlans { get; private set; } = [];
     public ICollection<EmissionSource>? EmissionSources { get; private set; } = [];
 
 
@@ -50,6 +50,19 @@ public class Installation : BaseEntity
         Status = status;
 
         UpdatedAt = DateTime.UtcNow;
+    }
+
+    public void AssignTenant(Guid enterpriseId)
+    {
+        if (EnterpriseId == Guid.Empty)
+        {
+            EnterpriseId = enterpriseId;
+        }
+        else if (EnterpriseId != enterpriseId)
+        {
+            throw new InvalidOperationException(
+                $"EnterpriseId is immutable on Installation (current: {EnterpriseId}, attempted: {enterpriseId}).");
+        }
     }
 }
 

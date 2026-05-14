@@ -39,5 +39,8 @@ public class DevicePollutantCapabilityConfiguration : IEntityTypeConfiguration<D
 
         builder.HasIndex(x => new { x.DeviceId, x.PollutantId })
             .IsUnique();
+
+        builder.Property(x => x.EnterpriseId).IsRequired();
+        builder.HasIndex(x => x.EnterpriseId);
     }
 }

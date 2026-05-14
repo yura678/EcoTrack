@@ -3,10 +3,11 @@ using Domain.Entities.EmissionSources;
 
 namespace Domain.Entities.Monitoring;
 
-public class DevicePollutantCapability : BaseEntity
+public class DevicePollutantCapability : BaseEntity, ITenantOwned
 {
     public Guid DeviceId { get; private set; }
     public MonitoringDevice? Device { get; private set; }
+    public Guid EnterpriseId { get; private set; }
     public Guid PollutantId { get; private set; }
     public Pollutant? Pollutant { get; private set; }
     public decimal RangeMin { get; private set; }
@@ -38,5 +39,18 @@ public class DevicePollutantCapability : BaseEntity
         RangeMax = rangeMax;
         RangeUnitId = rangeUnitId;
         AccuracyClass = accuracyClass;
+    }
+
+    public void AssignTenant(Guid enterpriseId)
+    {
+        if (EnterpriseId == Guid.Empty)
+        {
+            EnterpriseId = enterpriseId;
+        }
+        else if (EnterpriseId != enterpriseId)
+        {
+            throw new InvalidOperationException(
+                $"EnterpriseId is immutable on DevicePollutantCapability (current: {EnterpriseId}, attempted: {enterpriseId}).");
+        }
     }
 }

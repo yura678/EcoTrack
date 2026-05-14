@@ -1,4 +1,3 @@
-﻿using Application.Common.Interfaces.Identity;
 using Application.Common.Interfaces.Queries.Monitoring;
 using Application.Common.Interfaces.Repositories.Monitoring;
 using Application.Common.Models;
@@ -10,7 +9,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace Infrastructure.Persistence.Repositories.Monitoring;
 
-internal class MonitoringDeviceRepository(ApplicationDbContext context, ICurrentUserService currentUserService)
+internal class MonitoringDeviceRepository(ApplicationDbContext context)
     : BaseAsyncRepository<MonitoringDevice>(context), IMonitoringDeviceRepository, IMonitoringDeviceQueries
 {
     public async Task<IReadOnlyList<MonitoringDevice>> GetAllAsync(CancellationToken cancellationToken)
@@ -23,11 +22,8 @@ internal class MonitoringDeviceRepository(ApplicationDbContext context, ICurrent
         Guid installationId, int page, int pageSize,
         CancellationToken cancellationToken)
     {
-        var currentEnterpriseId = currentUserService.GetCurrentEnterpriseId();
-        bool isSuperAdmin = currentUserService.IsSuperAdmin();
         var query = base.TableNoTracking
-            .Where(x => x.InstallationId == installationId)
-            .Where(x => isSuperAdmin || x.Installation!.Site!.EnterpriseId == currentEnterpriseId);
+            .Where(x => x.InstallationId == installationId);
 
         var total = await query.CountAsync(cancellationToken);
 
@@ -49,13 +45,8 @@ internal class MonitoringDeviceRepository(ApplicationDbContext context, ICurrent
     public async Task<Option<MonitoringDevice>> GetByIdAsync(Guid id,
         CancellationToken cancellationToken)
     {
-        var currentEnterpriseId = currentUserService.GetCurrentEnterpriseId();
-        bool isSuperAdmin = currentUserService.IsSuperAdmin();
-
         var entity = await base.TableNoTracking
-            .FirstOrDefaultAsync(x => x.Id == id &&
-                                      (isSuperAdmin || x.Installation!.Site!.EnterpriseId == currentEnterpriseId),
-                cancellationToken);
+            .FirstOrDefaultAsync(x => x.Id == id, cancellationToken);
 
         return entity ?? Option<MonitoringDevice>.None;
     }
@@ -66,11 +57,8 @@ internal class MonitoringDeviceRepository(ApplicationDbContext context, ICurrent
         Guid id,
         CancellationToken cancellationToken)
     {
-        var currentEnterpriseId = currentUserService.GetCurrentEnterpriseId();
-        bool isSuperAdmin = currentUserService.IsSuperAdmin();
-
         var device = await base.TableNoTracking
-            .Where(d => d.Id == id && (isSuperAdmin || d.Installation!.Site!.EnterpriseId == currentEnterpriseId))
+            .Where(d => d.Id == id)
             .SelectMany(
                 d => DbContext.Set<EmissionSource>()
                     .AsNoTracking()
@@ -88,6 +76,7 @@ internal class MonitoringDeviceRepository(ApplicationDbContext context, ICurrent
     public async Task<Option<MonitoringDevice>> GetBySerialNumberAsync(string serialNumber,
         CancellationToken cancellationToken)
     {
+        // Used by HMAC ingest auth (no user context) — global filter bypassed automatically.
         var entity = await base.TableNoTracking
             .FirstOrDefaultAsync(x => x.SerialNumber == serialNumber, cancellationToken);
 

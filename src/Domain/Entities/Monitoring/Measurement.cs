@@ -3,7 +3,7 @@ using Domain.Entities.EmissionSources;
 
 namespace Domain.Entities.Monitoring;
 
-public class Measurement : BaseEntity
+public class Measurement : BaseEntity, ITenantOwned
 {
     public DateTime WindowStart { get; private set; }
     public DateTime WindowEnd { get; private set; }
@@ -12,6 +12,7 @@ public class Measurement : BaseEntity
 
     public Guid EmissionSourceId { get; private set; }
     public EmissionSource? EmissionSource { get; private set; }
+    public Guid EnterpriseId { get; private set; }
 
     public Guid PollutantId { get; private set; }
     public Pollutant? Pollutant { get; private set; }
@@ -99,5 +100,18 @@ public class Measurement : BaseEntity
         SubstitutionReason = reason;
         SubstitutedAt = DateTime.UtcNow;
         UpdatedAt = DateTime.UtcNow;
+    }
+
+    public void AssignTenant(Guid enterpriseId)
+    {
+        if (EnterpriseId == Guid.Empty)
+        {
+            EnterpriseId = enterpriseId;
+        }
+        else if (EnterpriseId != enterpriseId)
+        {
+            throw new InvalidOperationException(
+                $"EnterpriseId is immutable on Measurement (current: {EnterpriseId}, attempted: {enterpriseId}).");
+        }
     }
 }

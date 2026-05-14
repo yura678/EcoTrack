@@ -4,13 +4,14 @@ using Domain.Entities.Enterprises;
 
 namespace Domain.Entities.Monitoring;
 
-public class MonitoringDevice : BaseEntity
+public class MonitoringDevice : BaseEntity, ITenantOwned
 {
     public Guid? EmissionSourceId { get; private set; }
     public EmissionSource? EmissionSource { get; private set; }
 
     public Guid InstallationId { get; private set; }
     public Installation? Installation { get; private set; }
+    public Guid EnterpriseId { get; private set; }
     public string Model { get; private set; }
     public string SerialNumber { get; private set; }
     public MonitoringDeviceType Type { get; private set; }
@@ -70,6 +71,19 @@ public class MonitoringDevice : BaseEntity
     {
         IngestionSecret = newSecret;
         UpdatedAt = DateTime.UtcNow;
+    }
+
+    public void AssignTenant(Guid enterpriseId)
+    {
+        if (EnterpriseId == Guid.Empty)
+        {
+            EnterpriseId = enterpriseId;
+        }
+        else if (EnterpriseId != enterpriseId)
+        {
+            throw new InvalidOperationException(
+                $"EnterpriseId is immutable on MonitoringDevice (current: {EnterpriseId}, attempted: {enterpriseId}).");
+        }
     }
 }
 

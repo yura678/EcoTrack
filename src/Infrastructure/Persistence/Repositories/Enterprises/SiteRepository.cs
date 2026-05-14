@@ -1,4 +1,3 @@
-﻿using Application.Common.Interfaces.Identity;
 using Application.Common.Interfaces.Queries.Enterprises;
 using Application.Common.Interfaces.Repositories.Enterprises;
 using Domain.Entities.Enterprises;
@@ -8,7 +7,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace Infrastructure.Persistence.Repositories.Enterprises;
 
-internal class SiteRepository(ApplicationDbContext context, ICurrentUserService currentUserService)
+internal class SiteRepository(ApplicationDbContext context)
     : BaseAsyncRepository<Site>(context),
         ISiteRepository, ISiteQueries
 {
@@ -21,26 +20,15 @@ internal class SiteRepository(ApplicationDbContext context, ICurrentUserService 
     public async Task<IReadOnlyList<Site>> GetByEnterpriseIdAsync(Guid enterpriseId,
         CancellationToken cancellationToken)
     {
-        var currentEnterpriseId = currentUserService.GetCurrentEnterpriseId();
-        bool isSuperAdmin = currentUserService.IsSuperAdmin();
-        
         return await base.TableNoTracking
-            .Where(x => x.EnterpriseId.Equals(enterpriseId) &&
-                        (isSuperAdmin || x.EnterpriseId == currentEnterpriseId))
+            .Where(x => x.EnterpriseId == enterpriseId)
             .ToListAsync(cancellationToken);
     }
 
     public async Task<Option<Site>> GetByIdAsync(Guid id, CancellationToken cancellationToken)
     {
-        var currentEnterpriseId = currentUserService.GetCurrentEnterpriseId();
-        bool isSuperAdmin = currentUserService.IsSuperAdmin();
-
         var entity = await base.TableNoTracking
-            .FirstOrDefaultAsync(x =>
-                    x.Id == id &&
-                    //  якщо isSuperAdmin == true, перевірка EnterpriseId ігнорується на рівні БД
-                    (isSuperAdmin || x.EnterpriseId == currentEnterpriseId),
-                cancellationToken);
+            .FirstOrDefaultAsync(x => x.Id == id, cancellationToken);
 
         return entity ?? Option<Site>.None;
     }
@@ -55,15 +43,9 @@ internal class SiteRepository(ApplicationDbContext context, ICurrentUserService 
     public async Task<Option<Site>> GetByIdWithInstallationsAsync(Guid id,
         CancellationToken cancellationToken)
     {
-        var currentEnterpriseId = currentUserService.GetCurrentEnterpriseId();
-        bool isSuperAdmin = currentUserService.IsSuperAdmin();
-
         var entity = await base.TableNoTracking
             .Include(x => x.Installations)
-            .FirstOrDefaultAsync(x =>
-                    x.Id == id &&
-                    (isSuperAdmin || x.EnterpriseId == currentEnterpriseId),
-                cancellationToken);
+            .FirstOrDefaultAsync(x => x.Id == id, cancellationToken);
 
         return entity ?? Option<Site>.None;
     }

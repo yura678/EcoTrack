@@ -4,11 +4,12 @@ using Domain.Entities.Monitoring;
 
 namespace Domain.Entities.Enterprises;
 
-public class EmissionLimit : BaseEntity
+public class EmissionLimit : BaseEntity, ITenantOwned
 {
     public decimal Value { get; private set; }
     public LimitType LimitType { get; private set; }
     public AveragingWindow Period { get; private set; }
+    public Guid EnterpriseId { get; private set; }
 
     public Guid UnitId { get; private set; }
     public MeasureUnit? Unit { get; private set; }
@@ -78,5 +79,18 @@ public class EmissionLimit : BaseEntity
         InstallationId = installationId;
         ValidFrom = validFrom;
         ValidTo = validTo;
+    }
+
+    public void AssignTenant(Guid enterpriseId)
+    {
+        if (EnterpriseId == Guid.Empty)
+        {
+            EnterpriseId = enterpriseId;
+        }
+        else if (EnterpriseId != enterpriseId)
+        {
+            throw new InvalidOperationException(
+                $"EnterpriseId is immutable on EmissionLimit (current: {EnterpriseId}, attempted: {enterpriseId}).");
+        }
     }
 }

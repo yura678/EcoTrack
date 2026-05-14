@@ -2,10 +2,11 @@
 
 namespace Domain.Entities.Enterprises;
 
-public class Permit : BaseEntity
+public class Permit : BaseEntity, ITenantOwned
 {
     public Guid InstallationId { get; private set; }
     public Installation? Installation { get; private set; }
+    public Guid EnterpriseId { get; private set; }
 
     public string Number { get; private set; }
     public PermitType PermitType { get; private set; }
@@ -65,6 +66,19 @@ public class Permit : BaseEntity
         PermitStatus = status;
 
         UpdatedAt = DateTime.UtcNow;
+    }
+
+    public void AssignTenant(Guid enterpriseId)
+    {
+        if (EnterpriseId == Guid.Empty)
+        {
+            EnterpriseId = enterpriseId;
+        }
+        else if (EnterpriseId != enterpriseId)
+        {
+            throw new InvalidOperationException(
+                $"EnterpriseId is immutable on Permit (current: {EnterpriseId}, attempted: {enterpriseId}).");
+        }
     }
 }
 

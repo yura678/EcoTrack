@@ -38,5 +38,8 @@ public class InstallationConfiguration : IEntityTypeConfiguration<Installation>
             .WithMany(x => x.Installations)
             .HasForeignKey(x => x.IedCategoryId)
             .OnDelete(DeleteBehavior.Restrict);
+
+        builder.Property(x => x.EnterpriseId).IsRequired();
+        builder.HasIndex(x => x.EnterpriseId);
     }
 }

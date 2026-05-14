@@ -54,5 +54,8 @@ public class CalibrationRecordConfiguration : IEntityTypeConfiguration<Calibrati
             .OnDelete(DeleteBehavior.Cascade);
 
         builder.HasIndex(x => new { x.DeviceId, x.PerformedAt });
+
+        builder.Property(x => x.EnterpriseId).IsRequired();
+        builder.HasIndex(x => x.EnterpriseId);
     }
 }
