@@ -79,27 +79,60 @@ public class ComplianceDetectionService(
                 .Select(m => new
                 {
                     m.Id, m.EmissionSourceId, m.PollutantId,
-                    m.Value, m.WindowStart, m.WindowEnd
+                    m.Value, m.UnitId, m.WindowStart, m.WindowEnd
                 })
                 .ToListAsync(ct);
 
             var byKey = measurements.ToDictionary(m => (m.EmissionSourceId, m.PollutantId));
 
+            var unitIds = byPeriod.Select(t => t.UnitId)
+                .Concat(measurements.Select(m => m.UnitId))
+                .Distinct()
+                .ToArray();
+            var units = await LoadUnitsAsync(unitIds, ct);
+
             foreach (var t in byPeriod)
             {
                 if (existingKeys.Contains((t.LimitId, t.EmissionSourceId))) continue;
                 if (!byKey.TryGetValue((t.EmissionSourceId, t.PollutantId), out var m)) continue;
-                if (m.Value <= t.Value) continue;
+                if (!units.TryGetValue(t.UnitId, out var limitUnit)
+                    || !units.TryGetValue(m.UnitId, out var measurementUnit)) continue;
 
-                var ratio = Math.Round(m.Value / t.Value, 4);
+                if (limitUnit.Dimension != measurementUnit.Dimension)
+                {
+                    logger.LogWarning(
+                        "Limit {LimitId} ({LimitDim}) and measurement {MeasurementId} ({MeasDim}) " +
+                        "use incompatible dimensions; skipping.",
+                        t.LimitId, limitUnit.Dimension, m.Id, measurementUnit.Dimension);
+                    continue;
+                }
+
+                var measuredBase = m.Value * measurementUnit.ToBaseFactor;
+                var limitBase = t.Value * limitUnit.ToBaseFactor;
+                if (measuredBase <= limitBase) continue;
+
+                var ratio = Math.Round(measuredBase / limitBase, 4);
                 newEvents.Add(ComplianceEvent.ForLimitExceedance(
                     Guid.NewGuid(), t.EmissionSourceId,
                     measurementId: m.Id, t.LimitId, ratio, m.WindowStart, m.WindowEnd,
-                    notes: $"Avg {m.Value:0.###} > limit {t.Value:0.###} (ratio {ratio:0.##})"));
+                    notes: $"{m.Value:0.###} {measurementUnit.Symbol} > " +
+                           $"{t.Value:0.###} {limitUnit.Symbol} (ratio {ratio:0.##})"));
             }
         }
 
         return newEvents;
+    }
+
+    private record UnitInfo(string Symbol, MeasureUnitDimension Dimension, decimal ToBaseFactor);
+
+    private async Task<Dictionary<Guid, UnitInfo>> LoadUnitsAsync(Guid[] unitIds, CancellationToken ct)
+    {
+        if (unitIds.Length == 0) return [];
+        return await context.Set<MeasureUnit>()
+            .Where(u => unitIds.Contains(u.Id))
+            .Select(u => new { u.Id, u.Symbol, u.Dimension, u.ToBaseFactor })
+            .ToDictionaryAsync(u => u.Id,
+                u => new UnitInfo(u.Symbol, u.Dimension, u.ToBaseFactor), ct);
     }
 
     // ─── DeviceOffline ───────────────────────────────────────────────────────────
@@ -292,7 +325,7 @@ public class ComplianceDetectionService(
 
     private record LimitTarget(
         Guid LimitId, Guid EmissionSourceId, Guid PollutantId,
-        AveragingWindow Period, decimal Value);
+        AveragingWindow Period, decimal Value, Guid UnitId);
 
     private async Task<List<LimitTarget>> GetActiveLimitTargetsAsync(LimitType limitType, CancellationToken ct)
     {
@@ -303,7 +336,8 @@ public class ComplianceDetectionService(
                         && (l.ValidTo == null || l.ValidTo >= now))
             .Select(l => new
             {
-                l.Id, l.EmissionSourceId, l.InstallationId, l.PollutantId, l.Period, l.Value
+                l.Id, l.EmissionSourceId, l.InstallationId, l.PollutantId,
+                l.Period, l.Value, l.UnitId
             })
             .ToListAsync(ct);
 
@@ -330,13 +364,14 @@ public class ComplianceDetectionService(
         {
             if (l.EmissionSourceId.HasValue)
             {
-                result.Add(new LimitTarget(l.Id, l.EmissionSourceId.Value, l.PollutantId, l.Period, l.Value));
+                result.Add(new LimitTarget(l.Id, l.EmissionSourceId.Value, l.PollutantId,
+                    l.Period, l.Value, l.UnitId));
             }
             else if (l.InstallationId.HasValue
                      && sourcesByInstallation.TryGetValue(l.InstallationId.Value, out var sids))
             {
                 foreach (var sid in sids)
-                    result.Add(new LimitTarget(l.Id, sid, l.PollutantId, l.Period, l.Value));
+                    result.Add(new LimitTarget(l.Id, sid, l.PollutantId, l.Period, l.Value, l.UnitId));
             }
         }
         return result;
