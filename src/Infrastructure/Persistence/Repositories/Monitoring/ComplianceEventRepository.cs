@@ -34,4 +34,12 @@ internal class ComplianceEventRepository(ApplicationDbContext context) :
 
         return entity ?? Option<ComplianceEvent>.None;
     }
+
+    public async Task<IReadOnlyList<ComplianceEvent>> GetOpenByTypeAsync(ComplianceEventType eventType,
+        CancellationToken cancellationToken)
+    {
+        return await TableNoTracking
+            .Where(x => x.EventType == eventType && x.Status == ComplianceEventStatus.Open)
+            .ToListAsync(cancellationToken);
+    }
 }

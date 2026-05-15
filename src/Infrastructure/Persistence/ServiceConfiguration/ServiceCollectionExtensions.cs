@@ -9,6 +9,7 @@ using Application.Common.Interfaces.Repositories.Emissions;
 using Application.Common.Interfaces.Repositories.Enterprises;
 using Application.Common.Interfaces.Repositories.Monitoring;
 using Application.Common.Settings;
+using Infrastructure.Compliance;
 using Infrastructure.Persistence.Repositories;
 using Infrastructure.Persistence.Repositories.Common;
 using Infrastructure.Persistence.Repositories.EmissionSources;
@@ -68,6 +69,12 @@ public static class ServiceCollectionExtensions
         services.AddRepositories();
         services.AddScoped<IRawMeasurementWriter, RawMeasurementWriter>();
         services.AddScoped<IRawProcessParameterWriter, RawProcessParameterWriter>();
+
+        services.Configure<ComplianceDetectionSettings>(
+            configuration.GetSection("ComplianceDetection"));
+        services.AddScoped<MeasurementMaterializationService>();
+        services.AddScoped<ComplianceDetectionService>();
+        services.AddHostedService<ComplianceDetectionHostedService>();
 
         return services;
     }

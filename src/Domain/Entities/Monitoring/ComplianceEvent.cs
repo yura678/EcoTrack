@@ -55,7 +55,7 @@ public class ComplianceEvent : BaseEntity, ITenantOwned
     }
 
     public static ComplianceEvent ForLimitExceedance(Guid id, Guid emissionSourceId,
-        Guid measurementId, Guid limitId, decimal ratio,
+        Guid? measurementId, Guid limitId, decimal ratio,
         DateTime windowStart, DateTime windowEnd, string? notes = null) =>
         new(id, ComplianceEventType.LimitExceedance, emissionSourceId,
             measurementId, limitId, deviceId: null,
@@ -63,7 +63,7 @@ public class ComplianceEvent : BaseEntity, ITenantOwned
             ComplianceEventStatus.Open, DateTime.UtcNow, closedAt: null, notes, updatedAt: null);
 
     public static ComplianceEvent ForDataAvailabilityLoss(Guid id, Guid emissionSourceId,
-        Guid measurementId, DateTime windowStart, DateTime windowEnd, string? notes = null) =>
+        Guid? measurementId, DateTime windowStart, DateTime windowEnd, string? notes = null) =>
         new(id, ComplianceEventType.DataAvailabilityLoss, emissionSourceId,
             measurementId, limitId: null, deviceId: null,
             windowStart, windowEnd, ratio: null,

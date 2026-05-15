@@ -6,4 +6,7 @@ public interface IComplianceEventQueries
 {
     Task<IReadOnlyList<ComplianceEvent>> GetByMeasurementIdAsync(Guid measurementId,
         CancellationToken cancellationToken);
+
+    Task<IReadOnlyList<ComplianceEvent>> GetOpenByTypeAsync(ComplianceEventType eventType,
+        CancellationToken cancellationToken);
 }
