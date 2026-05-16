@@ -66,6 +66,15 @@ internal class EmissionSourceRepository(ApplicationDbContext context)
         return entity ?? Option<EmissionSource>.None;
     }
 
+    public async Task<Option<EmissionSource>> GetByIdIncludingDeletedAsync(Guid id, CancellationToken cancellationToken)
+    {
+        var entity = await base.Table
+            .IgnoreQueryFilters()
+            .FirstOrDefaultAsync(x => x.Id == id, cancellationToken);
+
+        return entity ?? Option<EmissionSource>.None;
+    }
+
     public async Task<IReadOnlyList<EmissionSource>> GetByEnterpriseAndIdsAsync(
         Guid enterpriseId,
         IReadOnlyList<Guid> ids,

@@ -52,6 +52,13 @@ public class Installation : BaseEntity, ITenantOwned
         UpdatedAt = DateTime.UtcNow;
     }
 
+    public void Decommission()
+    {
+        if (Status == InstallationStatus.Decommissioned) return;
+        Status = InstallationStatus.Decommissioned;
+        UpdatedAt = DateTime.UtcNow;
+    }
+
     public void AssignTenant(Guid enterpriseId)
     {
         if (EnterpriseId == Guid.Empty)

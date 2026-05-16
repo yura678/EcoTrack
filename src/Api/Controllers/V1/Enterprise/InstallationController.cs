@@ -112,20 +112,4 @@ public class InstallationController(
             e => e.ToObjectResult());
     }
 
-    [HttpDelete("installations/{id:guid}")]
-    [ProducesOkApiResponseType<InstallationDto>]
-    public async Task<IActionResult> DeleteInstallation(
-        [FromRoute] Guid id,
-        CancellationToken cancellationToken)
-    {
-        var input = new DeleteInstallationCommand
-        {
-            Id = id,
-        };
-        var deletedEntity = await sender.Send(input, cancellationToken);
-
-        return deletedEntity.Match(
-            i => Ok(InstallationDto.FromDomainModel(i)),
-            e => e.ToObjectResult());
-    }
 }

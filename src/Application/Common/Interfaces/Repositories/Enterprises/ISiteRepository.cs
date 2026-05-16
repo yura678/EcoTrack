@@ -9,5 +9,7 @@ public interface ISiteRepository
     Site Update(Site entity);
     Site Delete(Site entity);
     Task<Option<Site>> GetByIdAsync(Guid id, CancellationToken cancellationToken);
+    Task<Option<Site>> GetByIdIncludingDeletedAsync(Guid id, CancellationToken cancellationToken);
     Task<bool> HasDependenciesAsync(Guid id, CancellationToken cancellationToken);
+    Task<IReadOnlyList<Site>> GetByEnterpriseIdAsync(Guid enterpriseId, CancellationToken cancellationToken);
 }

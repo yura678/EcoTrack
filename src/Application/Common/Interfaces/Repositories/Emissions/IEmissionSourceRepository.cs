@@ -9,6 +9,7 @@ public interface IEmissionSourceRepository
     EmissionSource Update(EmissionSource entity);
     EmissionSource Delete(EmissionSource entity);
     Task<Option<EmissionSource>> GetByIdAsync(Guid id, CancellationToken cancellationToken);
+    Task<Option<EmissionSource>> GetByIdIncludingDeletedAsync(Guid id, CancellationToken cancellationToken);
 
     Task<IReadOnlyList<EmissionSource>> GetByEnterpriseAndIdsAsync(
         Guid enterpriseId,

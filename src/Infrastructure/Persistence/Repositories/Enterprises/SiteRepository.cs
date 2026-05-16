@@ -20,7 +20,7 @@ internal class SiteRepository(ApplicationDbContext context)
     public async Task<IReadOnlyList<Site>> GetByEnterpriseIdAsync(Guid enterpriseId,
         CancellationToken cancellationToken)
     {
-        return await base.TableNoTracking
+        return await base.Table
             .Where(x => x.EnterpriseId == enterpriseId)
             .ToListAsync(cancellationToken);
     }
@@ -28,6 +28,15 @@ internal class SiteRepository(ApplicationDbContext context)
     public async Task<Option<Site>> GetByIdAsync(Guid id, CancellationToken cancellationToken)
     {
         var entity = await base.TableNoTracking
+            .FirstOrDefaultAsync(x => x.Id == id, cancellationToken);
+
+        return entity ?? Option<Site>.None;
+    }
+
+    public async Task<Option<Site>> GetByIdIncludingDeletedAsync(Guid id, CancellationToken cancellationToken)
+    {
+        var entity = await base.Table
+            .IgnoreQueryFilters()
             .FirstOrDefaultAsync(x => x.Id == id, cancellationToken);
 
         return entity ?? Option<Site>.None;

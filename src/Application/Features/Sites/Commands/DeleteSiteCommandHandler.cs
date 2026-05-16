@@ -54,6 +54,22 @@ public class DeleteSiteCommandHandler(
     {
         try
         {
+            var installations = await unitOfWork.InstallationRepository
+                .GetBySiteIdsAsync(new[] { site.Id }, cancellationToken);
+
+            foreach (var installation in installations)
+                installation.Decommission();
+
+            if (installations.Count > 0)
+            {
+                var installationIds = installations.Select(i => i.Id).ToList();
+                var devices = await unitOfWork.MonitoringDeviceRepository
+                    .GetByInstallationIdsAsync(installationIds, cancellationToken);
+
+                foreach (var device in devices)
+                    device.Decommission();
+            }
+
             var deletedSite = unitOfWork.SiteRepository.Delete(site);
             await unitOfWork.SaveChangesAsync(cancellationToken);
             return deletedSite;

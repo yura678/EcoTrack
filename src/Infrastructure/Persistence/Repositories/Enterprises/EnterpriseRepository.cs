@@ -49,6 +49,15 @@ internal class EnterpriseRepository(ApplicationDbContext context)
         return entity ?? Option<Enterprise>.None;
     }
 
+    public async Task<Option<Enterprise>> GetByIdIncludingDeletedAsync(Guid id, CancellationToken cancellationToken)
+    {
+        var entity = await base.Table
+            .IgnoreQueryFilters()
+            .FirstOrDefaultAsync(x => x.Id.Equals(id), cancellationToken);
+
+        return entity ?? Option<Enterprise>.None;
+    }
+
     public async Task<Option<Enterprise>> GetByIdWithSitesAsync(Guid id,
         CancellationToken cancellationToken)
     {

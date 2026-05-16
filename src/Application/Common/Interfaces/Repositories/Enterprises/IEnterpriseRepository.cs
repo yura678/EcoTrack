@@ -6,6 +6,7 @@ namespace Application.Common.Interfaces.Repositories.Enterprises;
 public interface IEnterpriseRepository
 {
     Task<Option<Enterprise>> GetByIdAsync(Guid id, CancellationToken cancellationToken);
+    Task<Option<Enterprise>> GetByIdIncludingDeletedAsync(Guid id, CancellationToken cancellationToken);
     Task<Option<Enterprise>> GetByEdrpouAsync(string edrpou, CancellationToken cancellationToken);
     Task<bool> HasDependenciesAsync(Guid id, CancellationToken cancellationToken);
 

@@ -171,4 +171,16 @@ public class EmissionSourceController(
             e => Ok(EmissionSourceDto.FromDomainModel(e)),
             e => e.ToObjectResult());
     }
+
+    [HttpPost("emission-sources/{id:guid}/restore")]
+    [ProducesOkApiResponseType<EmissionSourceDto>]
+    public async Task<IActionResult> RestoreEmissionSource(
+        [FromRoute] Guid id,
+        CancellationToken cancellationToken)
+    {
+        var result = await sender.Send(new RestoreEmissionSourceCommand(id), cancellationToken);
+        return result.Match(
+            e => Ok(EmissionSourceDto.FromDomainModel(e)),
+            e => e.ToObjectResult());
+    }
 }

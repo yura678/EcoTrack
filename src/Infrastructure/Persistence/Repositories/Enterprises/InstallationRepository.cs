@@ -58,4 +58,12 @@ internal class InstallationRepository(ApplicationDbContext context)
 
         return entity ?? Option<Installation>.None;
     }
+
+    public async Task<IReadOnlyList<Installation>> GetBySiteIdsAsync(IReadOnlyList<Guid> siteIds,
+        CancellationToken cancellationToken)
+    {
+        return await base.Table
+            .Where(x => siteIds.Contains(x.SiteId))
+            .ToListAsync(cancellationToken);
+    }
 }

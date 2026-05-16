@@ -16,4 +16,9 @@ public interface IMonitoringDeviceRepository
     MonitoringDevice Update(MonitoringDevice entity);
     MonitoringDevice Delete(MonitoringDevice entity);
     public Task<bool> HasDependenciesAsync(Guid id, CancellationToken cancellationToken);
+
+    Task<IReadOnlyList<MonitoringDevice>> GetByInstallationIdsAsync(IReadOnlyList<Guid> installationIds,
+        CancellationToken cancellationToken);
+    Task<IReadOnlyList<MonitoringDevice>> GetByEmissionSourceIdAsync(Guid emissionSourceId,
+        CancellationToken cancellationToken);
 }

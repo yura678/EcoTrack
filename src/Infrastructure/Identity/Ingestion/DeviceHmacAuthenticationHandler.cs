@@ -74,6 +74,9 @@ public class DeviceHmacAuthenticationHandler(
         if (device is null)
             return AuthenticateResult.Fail("Unknown device serial.");
 
+        if (device.Status == DeviceStatus.Decommissioned)
+            return AuthenticateResult.Fail("Device is decommissioned.");
+
         if (string.IsNullOrEmpty(device.IngestionSecret))
             return AuthenticateResult.Fail("Device has no ingestion secret configured.");
 

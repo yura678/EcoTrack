@@ -35,6 +35,12 @@ public class DeleteEmissionSourceCommandHandler(
     {
         try
         {
+            var devices = await unitOfWork.MonitoringDeviceRepository
+                .GetByEmissionSourceIdAsync(entity.Id, cancellationToken);
+
+            foreach (var device in devices)
+                device.Decommission();
+
             var deletedEmission = unitOfWork.EmissionSourceRepository.Delete(entity);
             await unitOfWork.SaveChangesAsync(cancellationToken);
             return deletedEmission;

@@ -73,6 +73,14 @@ public class MonitoringDevice : BaseEntity, ITenantOwned
         UpdatedAt = DateTime.UtcNow;
     }
 
+    public void Decommission()
+    {
+        if (Status == DeviceStatus.Decommissioned) return;
+        Status = DeviceStatus.Decommissioned;
+        IngestionSecret = null;
+        UpdatedAt = DateTime.UtcNow;
+    }
+
     public void AssignTenant(Guid enterpriseId)
     {
         if (EnterpriseId == Guid.Empty)

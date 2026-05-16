@@ -75,21 +75,29 @@ public class ApplicationDbContext
         modelBuilder.Entity<Site>().HasQueryFilter(x =>
             x.DeletedAt == null && (BypassTenantFilter || x.EnterpriseId == TenantFilterId));
         modelBuilder.Entity<EmissionSource>().HasQueryFilter(x =>
-            x.DeletedAt == null && (BypassTenantFilter || x.EnterpriseId == TenantFilterId));
+            x.DeletedAt == null
+            && x.Installation!.Site!.DeletedAt == null
+            && (BypassTenantFilter || x.EnterpriseId == TenantFilterId));
 
-        // Tenant-owned only
+        // Tenant-owned; visibility cascaded from soft-deletable ancestors.
         modelBuilder.Entity<Installation>().HasQueryFilter(x =>
-            BypassTenantFilter || x.EnterpriseId == TenantFilterId);
+            x.Site!.DeletedAt == null
+            && (BypassTenantFilter || x.EnterpriseId == TenantFilterId));
         modelBuilder.Entity<Permit>().HasQueryFilter(x =>
-            BypassTenantFilter || x.EnterpriseId == TenantFilterId);
+            x.Installation!.Site!.DeletedAt == null
+            && (BypassTenantFilter || x.EnterpriseId == TenantFilterId));
         modelBuilder.Entity<EmissionLimit>().HasQueryFilter(x =>
-            BypassTenantFilter || x.EnterpriseId == TenantFilterId);
+            x.Permit!.Installation!.Site!.DeletedAt == null
+            && (BypassTenantFilter || x.EnterpriseId == TenantFilterId));
         modelBuilder.Entity<Measurement>().HasQueryFilter(x =>
-            BypassTenantFilter || x.EnterpriseId == TenantFilterId);
+            x.EmissionSource!.DeletedAt == null
+            && (BypassTenantFilter || x.EnterpriseId == TenantFilterId));
         modelBuilder.Entity<MonitoringDevice>().HasQueryFilter(x =>
-            BypassTenantFilter || x.EnterpriseId == TenantFilterId);
+            x.Installation!.Site!.DeletedAt == null
+            && (BypassTenantFilter || x.EnterpriseId == TenantFilterId));
         modelBuilder.Entity<ComplianceEvent>().HasQueryFilter(x =>
-            BypassTenantFilter || x.EnterpriseId == TenantFilterId);
+            x.EmissionSource!.DeletedAt == null
+            && (BypassTenantFilter || x.EnterpriseId == TenantFilterId));
         modelBuilder.Entity<CalibrationRecord>().HasQueryFilter(x =>
             BypassTenantFilter || x.EnterpriseId == TenantFilterId);
         modelBuilder.Entity<DevicePollutantCapability>().HasQueryFilter(x =>

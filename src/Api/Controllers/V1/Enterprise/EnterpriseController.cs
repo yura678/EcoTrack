@@ -127,4 +127,16 @@ public class EnterpriseController(
             e => Ok(EnterpriseDto.FromDomainModel(e)),
             e => e.ToObjectResult());
     }
+
+    [HttpPost("{id:guid}/restore")]
+    [ProducesOkApiResponseType<EnterpriseDto>]
+    public async Task<IActionResult> RestoreEnterprise(
+        [FromRoute] Guid id,
+        CancellationToken cancellationToken)
+    {
+        var result = await sender.Send(new RestoreEnterpriseCommand(id), cancellationToken);
+        return result.Match(
+            e => Ok(EnterpriseDto.FromDomainModel(e)),
+            e => e.ToObjectResult());
+    }
 }

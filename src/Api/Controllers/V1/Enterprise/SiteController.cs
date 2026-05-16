@@ -112,4 +112,16 @@ public class SiteController(
             s => Ok(SiteDto.FromDomainModel(s)),
             e => e.ToObjectResult());
     }
+
+    [HttpPost("sites/{id:guid}/restore")]
+    [ProducesOkApiResponseType<SiteDto>]
+    public async Task<IActionResult> RestoreSite(
+        [FromRoute] Guid id,
+        CancellationToken cancellationToken)
+    {
+        var result = await sender.Send(new RestoreSiteCommand(id), cancellationToken);
+        return result.Match(
+            s => Ok(SiteDto.FromDomainModel(s)),
+            e => e.ToObjectResult());
+    }
 }

@@ -12,4 +12,5 @@ public interface IInstallationRepository
 
     Task<Option<Installation>> GetByIdAsync(Guid id, CancellationToken cancellationToken);
 
+    Task<IReadOnlyList<Installation>> GetBySiteIdsAsync(IReadOnlyList<Guid> siteIds, CancellationToken cancellationToken);
 }

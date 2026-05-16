@@ -87,4 +87,20 @@ internal class MonitoringDeviceRepository(ApplicationDbContext context)
     {
         return DbContext.Set<Measurement>().AnyAsync(x => x.DeviceId.Equals(id), cancellationToken);
     }
+
+    public async Task<IReadOnlyList<MonitoringDevice>> GetByInstallationIdsAsync(
+        IReadOnlyList<Guid> installationIds, CancellationToken cancellationToken)
+    {
+        return await base.Table
+            .Where(x => installationIds.Contains(x.InstallationId))
+            .ToListAsync(cancellationToken);
+    }
+
+    public async Task<IReadOnlyList<MonitoringDevice>> GetByEmissionSourceIdAsync(
+        Guid emissionSourceId, CancellationToken cancellationToken)
+    {
+        return await base.Table
+            .Where(x => x.EmissionSourceId == emissionSourceId)
+            .ToListAsync(cancellationToken);
+    }
 }
