@@ -1,4 +1,5 @@
 using Application.Common.Interfaces.Queries.Monitoring;
+using Domain.Entities.Monitoring;
 using Microsoft.EntityFrameworkCore;
 using Npgsql;
 using NpgsqlTypes;
@@ -28,6 +29,118 @@ internal class RawMeasurementQueries(ApplicationDbContext context) : IRawMeasure
         aggregation == AggregationFunc.P95
             ? GetHeatmapFromRawAsync(pollutantId, from, to, cancellationToken)
             : GetHeatmapFromCaAsync(pollutantId, from, to, aggregation, cancellationToken);
+
+    // ─── Compliance audit (what-if read-only) ────────────────────────────────────
+
+    public async Task<ComplianceAuditResult?> GetComplianceAuditAsync(
+        ComplianceAuditQueryParams query, CancellationToken cancellationToken)
+    {
+        var limitUnit = await context.Set<MeasureUnit>()
+            .Where(u => u.Id == query.LimitUnitId)
+            .Select(u => new { u.Symbol, u.Dimension, u.ToBaseFactor })
+            .FirstOrDefaultAsync(cancellationToken);
+        if (limitUnit is null) return null;
+
+        var period = PeriodToTimeSpan(query.Period);
+        if (period == TimeSpan.Zero) return null;
+
+        var periodLiteral = PeriodToPgInterval(period);
+        var limitInBase = query.LimitValue * limitUnit.ToBaseFactor;
+
+        var sql = $@"
+            WITH bucketed AS (
+                SELECT
+                    time_bucket(INTERVAL '{periodLiteral}', m.bucket) AS window_start,
+                    (SUM(m.sum_value) / NULLIF(SUM(m.sample_count), 0)) AS avg_raw,
+                    (array_agg(m.unit_id))[1] AS unit_id
+                FROM measurement_1m m
+                WHERE m.emission_source_id = @source_id
+                  AND m.pollutant_id = @pollutant_id
+                  AND m.bucket >= @from
+                  AND m.bucket < @to
+                GROUP BY window_start
+            ),
+            converted AS (
+                SELECT b.avg_raw * u.to_base_factor AS value_base
+                FROM bucketed b
+                JOIN measure_unit u ON u.id = b.unit_id
+                WHERE u.dimension = @limit_dimension
+                  AND u.deleted_at IS NULL
+                  AND b.avg_raw IS NOT NULL
+            )
+            SELECT
+                COUNT(*)::bigint AS buckets_with_data,
+                COUNT(*) FILTER (WHERE value_base > @limit_base)::bigint AS exceedance_buckets,
+                MAX(value_base)::numeric(18,6) AS max_value,
+                AVG(value_base)::numeric(18,6) AS avg_value,
+                MAX(value_base / NULLIF(@limit_base, 0))::numeric(18,6) AS max_ratio
+            FROM converted";
+
+        await using var command = await CreateCommandAsync(sql, cancellationToken);
+        AddParam(command, "source_id", NpgsqlDbType.Uuid, query.EmissionSourceId);
+        AddParam(command, "pollutant_id", NpgsqlDbType.Uuid, query.PollutantId);
+        AddParam(command, "from", NpgsqlDbType.TimestampTz, EnsureUtc(query.From));
+        AddParam(command, "to", NpgsqlDbType.TimestampTz, EnsureUtc(query.To));
+        AddParam(command, "limit_dimension", NpgsqlDbType.Integer, (int)limitUnit.Dimension);
+        AddParam(command, "limit_base", NpgsqlDbType.Numeric, limitInBase);
+
+        long bucketsWithData = 0;
+        long exceedanceBuckets = 0;
+        decimal? maxValue = null, avgValue = null, maxRatio = null;
+
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        if (await reader.ReadAsync(cancellationToken))
+        {
+            bucketsWithData = reader.IsDBNull(0) ? 0 : reader.GetInt64(0);
+            exceedanceBuckets = reader.IsDBNull(1) ? 0 : reader.GetInt64(1);
+            maxValue = reader.IsDBNull(2) ? (decimal?)null : reader.GetDecimal(2);
+            avgValue = reader.IsDBNull(3) ? (decimal?)null : reader.GetDecimal(3);
+            maxRatio = reader.IsDBNull(4) ? (decimal?)null : reader.GetDecimal(4);
+        }
+
+        var totalBuckets = (int)Math.Max(0, (query.To - query.From).Ticks / period.Ticks);
+        var dataAvailability = totalBuckets == 0
+            ? 0m
+            : Math.Round((decimal)bucketsWithData / totalBuckets, 4);
+        var exceedanceRate = bucketsWithData == 0
+            ? (decimal?)null
+            : Math.Round((decimal)exceedanceBuckets / bucketsWithData, 4);
+
+        return new ComplianceAuditResult(
+            From: EnsureUtc(query.From),
+            To: EnsureUtc(query.To),
+            Period: query.Period,
+            LimitValueInBase: limitInBase,
+            LimitUnitSymbol: limitUnit.Symbol,
+            TotalBuckets: totalBuckets,
+            BucketsWithData: bucketsWithData,
+            ExceedanceBuckets: exceedanceBuckets,
+            MaxValueInBase: maxValue,
+            AvgValueInBase: avgValue,
+            MaxRatio: maxRatio,
+            ExceedanceRate: exceedanceRate,
+            DataAvailability: dataAvailability);
+    }
+
+    private static TimeSpan PeriodToTimeSpan(AveragingWindow period) => period switch
+    {
+        AveragingWindow.Minute1 => TimeSpan.FromMinutes(1),
+        AveragingWindow.Minute10 => TimeSpan.FromMinutes(10),
+        AveragingWindow.HalfHour => TimeSpan.FromMinutes(30),
+        AveragingWindow.Hour1 => TimeSpan.FromHours(1),
+        AveragingWindow.Hour24 => TimeSpan.FromHours(24),
+        _ => TimeSpan.Zero
+    };
+
+    private static string PeriodToPgInterval(TimeSpan period)
+    {
+        if (period == TimeSpan.FromMinutes(1)) return "1 minute";
+        if (period == TimeSpan.FromMinutes(10)) return "10 minutes";
+        if (period == TimeSpan.FromMinutes(30)) return "30 minutes";
+        if (period == TimeSpan.FromHours(1)) return "1 hour";
+        if (period == TimeSpan.FromHours(24)) return "1 day";
+        throw new ArgumentOutOfRangeException(nameof(period), period, null);
+    }
 
     // ─── Continuous-aggregate path (avg/max/min/sum) ────────────────────────────
 

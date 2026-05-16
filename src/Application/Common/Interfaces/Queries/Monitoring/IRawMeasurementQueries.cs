@@ -1,3 +1,5 @@
+using Domain.Entities.Monitoring;
+
 namespace Application.Common.Interfaces.Queries.Monitoring;
 
 public enum BucketWindow
@@ -35,6 +37,30 @@ public record HeatmapPoint(
     int TotalPointsCount,
     int ValidPointsCount);
 
+public record ComplianceAuditQueryParams(
+    Guid EmissionSourceId,
+    Guid PollutantId,
+    decimal LimitValue,
+    Guid LimitUnitId,
+    AveragingWindow Period,
+    DateTime From,
+    DateTime To);
+
+public record ComplianceAuditResult(
+    DateTime From,
+    DateTime To,
+    AveragingWindow Period,
+    decimal LimitValueInBase,
+    string LimitUnitSymbol,
+    int TotalBuckets,
+    long BucketsWithData,
+    long ExceedanceBuckets,
+    decimal? MaxValueInBase,
+    decimal? AvgValueInBase,
+    decimal? MaxRatio,
+    decimal? ExceedanceRate,
+    decimal DataAvailability);
+
 public interface IRawMeasurementQueries
 {
     Task<IReadOnlyList<TimeSeriesPoint>> GetTimeSeriesAsync(
@@ -51,5 +77,14 @@ public interface IRawMeasurementQueries
         DateTime from,
         DateTime to,
         AggregationFunc aggregation,
+        CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Read-only "what-if" audit: simulate compliance for a hypothetical limit over a past period
+    /// without writing Measurement or ComplianceEvent records.
+    /// Returns null when the limit unit doesn't exist or is incompatible with measurement units.
+    /// </summary>
+    Task<ComplianceAuditResult?> GetComplianceAuditAsync(
+        ComplianceAuditQueryParams query,
         CancellationToken cancellationToken);
 }
