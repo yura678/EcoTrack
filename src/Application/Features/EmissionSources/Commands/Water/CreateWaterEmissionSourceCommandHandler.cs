@@ -36,7 +36,8 @@ public class CreateWaterEmissionSourceCommandHandler(
         string code,
         CancellationToken cancellationToken)
     {
-        var entity = await unitOfWork.EmissionSourceRepository.GetByCodeAsync(installationId, code, cancellationToken);
+        var entity = await unitOfWork.EmissionSourceRepository
+            .GetByCodeIncludingDeletedAsync(installationId, code, cancellationToken);
 
         return entity.Match<Either<EmissionSourceException, Unit>>(
             e => new EmissionSourceCodeAlreadyExistsException(e.Id, code),

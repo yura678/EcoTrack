@@ -12,6 +12,7 @@ public interface IMonitoringDeviceRepository
         Guid id, CancellationToken cancellationToken);
 
     Task<Option<MonitoringDevice>> GetBySerialNumberAsync(string serialNumber, CancellationToken cancellationToken);
+    Task<Option<MonitoringDevice>> GetBySerialNumberIncludingDeletedAsync(string serialNumber, CancellationToken cancellationToken);
     Task<MonitoringDevice> AddAsync(MonitoringDevice entity, CancellationToken cancellationToken);
     MonitoringDevice Update(MonitoringDevice entity);
     MonitoringDevice Delete(MonitoringDevice entity);

@@ -54,4 +54,20 @@ internal class PollutantRepository(ApplicationDbContext context)
         return await base.TableNoTracking
             .FirstOrDefaultAsync(x => x.Name.Equals(name), cancellationToken);
     }
+
+    public async Task<Option<Pollutant>> GetByCodeIncludingDeletedAsync(string code,
+        CancellationToken cancellationToken)
+    {
+        return await base.TableNoTracking
+            .IgnoreQueryFilters()
+            .FirstOrDefaultAsync(x => x.Code.Equals(code), cancellationToken);
+    }
+
+    public async Task<Option<Pollutant>> GetByNameIncludingDeletedAsync(string name,
+        CancellationToken cancellationToken)
+    {
+        return await base.TableNoTracking
+            .IgnoreQueryFilters()
+            .FirstOrDefaultAsync(x => x.Name.Equals(name), cancellationToken);
+    }
 }

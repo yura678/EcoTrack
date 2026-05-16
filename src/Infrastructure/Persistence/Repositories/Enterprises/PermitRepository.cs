@@ -29,6 +29,16 @@ internal class PermitRepository(ApplicationDbContext context)
         return entity ?? Option<Permit>.None;
     }
 
+    public async Task<Option<Permit>> GetByNumberIncludingDeletedAsync(string number,
+        CancellationToken cancellationToken)
+    {
+        var entity = await base.TableNoTracking
+            .IgnoreQueryFilters()
+            .FirstOrDefaultAsync(x => x.Number == number, cancellationToken);
+
+        return entity ?? Option<Permit>.None;
+    }
+
     public async Task<PageResult<Permit>> GetPagedAsync(Guid installationId,
         DateTime? from, DateTime? to, int page, int pageSize,
         CancellationToken cancellationToken)

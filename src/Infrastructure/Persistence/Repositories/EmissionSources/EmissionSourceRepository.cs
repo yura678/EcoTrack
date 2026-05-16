@@ -105,6 +105,16 @@ internal class EmissionSourceRepository(ApplicationDbContext context)
         return entity ?? Option<EmissionSource>.None;
     }
 
+    public async Task<Option<EmissionSource>> GetByCodeIncludingDeletedAsync(Guid installationId, string code,
+        CancellationToken cancellationToken)
+    {
+        var entity = await base.TableNoTracking
+            .IgnoreQueryFilters()
+            .FirstOrDefaultAsync(x => x.Code == code && x.InstallationId == installationId, cancellationToken);
+
+        return entity ?? Option<EmissionSource>.None;
+    }
+
     public async Task<bool> HasDependenciesAsync(Guid id, CancellationToken cancellationToken)
     {
         var hasDependencies =

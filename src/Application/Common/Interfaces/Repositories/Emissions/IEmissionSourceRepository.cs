@@ -26,5 +26,8 @@ public interface IEmissionSourceRepository
     Task<Option<EmissionSource>> GetByCodeAsync(Guid id, string code,
         CancellationToken cancellationToken);
 
+    Task<Option<EmissionSource>> GetByCodeIncludingDeletedAsync(Guid installationId, string code,
+        CancellationToken cancellationToken);
+
     Task<bool> HasDependenciesAsync(Guid id, CancellationToken cancellationToken);
 }

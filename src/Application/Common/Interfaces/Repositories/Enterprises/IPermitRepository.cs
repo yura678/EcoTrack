@@ -7,6 +7,7 @@ public interface IPermitRepository
 {
     Task<Option<Permit>> GetByIdAsync(Guid id, CancellationToken cancellationToken);
     Task<Option<Permit>> GetByNumberAsync(string number, CancellationToken cancellationToken);
+    Task<Option<Permit>> GetByNumberIncludingDeletedAsync(string number, CancellationToken cancellationToken);
     Task<Permit> AddAsync(Permit entity, CancellationToken cancellationToken);
     Permit Update(Permit entity);
     Permit Delete(Permit entity);

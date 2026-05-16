@@ -80,8 +80,8 @@ public class CreateMonitoringDeviceCommandHandler(
         string serialNumber,
         CancellationToken cancellationToken)
     {
-        var entity =
-            await unitOfWork.MonitoringDeviceRepository.GetBySerialNumberAsync(serialNumber, cancellationToken);
+        var entity = await unitOfWork.MonitoringDeviceRepository
+            .GetBySerialNumberIncludingDeletedAsync(serialNumber, cancellationToken);
 
         return entity.Match<Either<MonitoringDeviceException, Unit>>(
             _ => new MonitoringDeviceNumberAlreadyExistsException(Guid.Empty, serialNumber),

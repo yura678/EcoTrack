@@ -16,4 +16,7 @@ public interface IPollutantRepository
 
     Task<Option<Pollutant>> GetByCodeAsync(string code, CancellationToken cancellationToken);
     Task<Option<Pollutant>> GetByNameAsync(string name, CancellationToken cancellationToken);
+
+    Task<Option<Pollutant>> GetByCodeIncludingDeletedAsync(string code, CancellationToken cancellationToken);
+    Task<Option<Pollutant>> GetByNameIncludingDeletedAsync(string name, CancellationToken cancellationToken);
 }

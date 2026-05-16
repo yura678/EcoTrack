@@ -24,7 +24,8 @@ public class CreatePollutantCommandHandler(
         string code,
         CancellationToken cancellationToken)
     {
-        var entity = await unitOfWork.PollutantRepository.GetByCodeAsync(code, cancellationToken);
+        var entity = await unitOfWork.PollutantRepository
+            .GetByCodeIncludingDeletedAsync(code, cancellationToken);
 
         return entity.Match<Either<PollutantException, Unit>>(
             p => new PollutantCodeAlreadyExistsException(p.Id, p.Code),
@@ -36,7 +37,8 @@ public class CreatePollutantCommandHandler(
         string name,
         CancellationToken cancellationToken)
     {
-        var entity = await unitOfWork.PollutantRepository.GetByNameAsync(name, cancellationToken);
+        var entity = await unitOfWork.PollutantRepository
+            .GetByNameIncludingDeletedAsync(name, cancellationToken);
 
         return entity.Match<Either<PollutantException, Unit>>(
             p => new PollutantNameAlreadyExistsException(p.Id, p.Name),

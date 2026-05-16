@@ -44,7 +44,8 @@ public class CreatePermitCommandHandler(
         string number,
         CancellationToken cancellationToken)
     {
-        var entity = await unitOfWork.PermitRepository.GetByNumberAsync(number, cancellationToken);
+        var entity = await unitOfWork.PermitRepository
+            .GetByNumberIncludingDeletedAsync(number, cancellationToken);
 
         return entity.Match<Either<PermitException, Unit>>(
             _ => new PermitNumberAlreadyExistsException(Guid.Empty, number),

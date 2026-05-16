@@ -76,8 +76,19 @@ internal class MonitoringDeviceRepository(ApplicationDbContext context)
     public async Task<Option<MonitoringDevice>> GetBySerialNumberAsync(string serialNumber,
         CancellationToken cancellationToken)
     {
-        // Used by HMAC ingest auth (no user context) — global filter bypassed automatically.
+        // Used by HMAC ingest auth (no user context: tenancy bypass) and as a "find live device"
+        // helper. Soft-delete filter still applies — decommissioned devices are hidden.
         var entity = await base.TableNoTracking
+            .FirstOrDefaultAsync(x => x.SerialNumber == serialNumber, cancellationToken);
+
+        return entity ?? Option<MonitoringDevice>.None;
+    }
+
+    public async Task<Option<MonitoringDevice>> GetBySerialNumberIncludingDeletedAsync(string serialNumber,
+        CancellationToken cancellationToken)
+    {
+        var entity = await base.TableNoTracking
+            .IgnoreQueryFilters()
             .FirstOrDefaultAsync(x => x.SerialNumber == serialNumber, cancellationToken);
 
         return entity ?? Option<MonitoringDevice>.None;

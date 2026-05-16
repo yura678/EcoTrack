@@ -37,7 +37,8 @@ public class UpdatePollutantCommandHandler(
         string code,
         CancellationToken cancellationToken)
     {
-        var existing = await unitOfWork.PollutantRepository.GetByCodeAsync(code, cancellationToken);
+        var existing = await unitOfWork.PollutantRepository
+            .GetByCodeIncludingDeletedAsync(code, cancellationToken);
 
         return existing.Match<Either<PollutantException, Pollutant>>(
             p => p.Id == pollutant.Id
@@ -52,7 +53,8 @@ public class UpdatePollutantCommandHandler(
         string name,
         CancellationToken cancellationToken)
     {
-        var existing = await unitOfWork.PollutantRepository.GetByNameAsync(name, cancellationToken);
+        var existing = await unitOfWork.PollutantRepository
+            .GetByNameIncludingDeletedAsync(name, cancellationToken);
 
         return existing.Match<Either<PollutantException, Pollutant>>(
             p => p.Id == pollutant.Id
