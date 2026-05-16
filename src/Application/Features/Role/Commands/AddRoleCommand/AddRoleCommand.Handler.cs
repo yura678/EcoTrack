@@ -31,7 +31,7 @@ internal class AddRoleCommandHandler(
                 return new RoleCreationException(Guid.Empty, "Missing Enterprise context for the current user.");
             }
 
-            var addRoleResult =
+            var (addRoleResult, _) =
                 await roleManagerService.CreateRoleAsync(new CreateRoleDto()
                     { RoleName = request.RoleName, DisplayName = request.RoleName, EnterpriseId = enterpriseId.Value });
 

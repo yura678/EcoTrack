@@ -1,5 +1,4 @@
-﻿using System.Text.RegularExpressions;
-using Application.Features.Users.Commands.Create;
+﻿using Application.Features.Users.Commands.Create;
 using Application.Features.Users.Exceptions;
 using FluentValidation;
 using LanguageExt;
@@ -14,7 +13,6 @@ public record RegisterByInvitationCommand(
     string UserName,
     string Name,
     string FamilyName,
-    string PhoneNumber,
     string Email,
     string Password,
     string RepeatPassword)
@@ -46,13 +44,6 @@ public record RegisterByInvitationCommand(
             .NotNull()
             .MaximumLength(256).WithMessage("Email must not exceed 256 characters.")
             .EmailAddress().WithMessage("Email format is invalid");
-
-        validator.RuleFor(c => c.PhoneNumber).NotEmpty()
-            .NotNull().WithMessage("Phone Number is required.")
-            .MinimumLength(10).WithMessage("PhoneNumber must not be less than 10 characters.")
-            .MaximumLength(20).WithMessage("PhoneNumber must not exceed 50 characters.")
-            .Matches(new Regex(@"^[\+]?[(]?[0-9]{3}[)]?[-\s\.]?[0-9]{3}[-\s\.]?[0-9]{4,6}$"))
-            .WithMessage("Phone number is not valid");
 
         validator.RuleFor(c => c.Password)
             .Matches(c => c.RepeatPassword)

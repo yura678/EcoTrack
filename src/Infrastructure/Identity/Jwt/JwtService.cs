@@ -42,8 +42,10 @@ public class JwtService : IJwtService
         var encryptingCredentials = new EncryptingCredentials(new SymmetricSecurityKey(encryptionkey),
             SecurityAlgorithms.Aes128KW, SecurityAlgorithms.Aes128CbcHmacSha256);
 
+        var isSuperAdmin = await _userManager.IsInRoleAsync(user, "superAdmin");
+
         var resolvedEnterpriseId = enterpriseId;
-        if (resolvedEnterpriseId is null && !await _userManager.IsInRoleAsync(user, "superAdmin"))
+        if (resolvedEnterpriseId is null && !isSuperAdmin)
         {
             var memberships =
                 await _unitOfWork.UserEnterpriseMembershipRepository.GetActiveByUserIdAsync(user.Id, cancellationToken);
@@ -51,7 +53,27 @@ public class JwtService : IJwtService
             if (first is not null) resolvedEnterpriseId = first.EnterpriseId;
         }
 
-        var claims = (await _getClaimsAsync(user)).ToList();
+        // Build claims manually so Role reflects the active enterprise membership only,
+        // not the union of all roles ever assigned to this user across enterprises.
+        var principalClaims = (await _getClaimsAsync(user))
+            .Where(c => c.Type != ClaimTypes.Role);
+        var claims = principalClaims.ToList();
+
+        if (isSuperAdmin)
+        {
+            claims.Add(new Claim(ClaimTypes.Role, "superAdmin"));
+        }
+        else if (resolvedEnterpriseId.HasValue)
+        {
+            var membership = await _unitOfWork.UserEnterpriseMembershipRepository
+                .GetActiveByUserAndEnterpriseWithRoleAsync(user.Id, resolvedEnterpriseId.Value, cancellationToken);
+            membership.IfSome(m =>
+            {
+                if (!string.IsNullOrEmpty(m.Role?.Name))
+                    claims.Add(new Claim(ClaimTypes.Role, m.Role.Name));
+            });
+        }
+
         if (resolvedEnterpriseId.HasValue)
         {
             claims.Add(new Claim("CompanyId", resolvedEnterpriseId.Value.ToString()));

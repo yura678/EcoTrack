@@ -21,6 +21,9 @@ public interface IAppUserManager
 
     Task<IdentityResult> VerifyUserCode(User user, string code);
     Task<string> GenerateOtpCode(User user);
+
+    Task<string> GenerateEmailConfirmationCodeAsync(User user);
+    Task<IdentityResult> ConfirmEmailWithCodeAsync(User user, string code);
     Task<Option<User>> GetUserByPhoneNumber(string phoneNumber);
     Task<Option<User>> GetUserByEmail(string email);
 

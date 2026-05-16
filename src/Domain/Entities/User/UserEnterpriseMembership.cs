@@ -40,4 +40,11 @@ public class UserEnterpriseMembership : BaseEntity
         RoleId = roleId;
         RevokedAt = null;
     }
+
+    public void ChangeRole(Guid roleId)
+    {
+        if (!IsActive)
+            throw new InvalidOperationException("Cannot change role of a revoked membership.");
+        RoleId = roleId;
+    }
 }

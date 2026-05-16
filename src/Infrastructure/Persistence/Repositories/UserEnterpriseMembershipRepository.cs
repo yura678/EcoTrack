@@ -46,4 +46,15 @@ internal class UserEnterpriseMembershipRepository(ApplicationDbContext context)
             .Include(x => x.Role)
             .ToListAsync(cancellationToken);
     }
+
+    public async Task<Option<UserEnterpriseMembership>> GetActiveByUserAndEnterpriseWithRoleAsync(
+        Guid userId, Guid enterpriseId, CancellationToken cancellationToken)
+    {
+        var entity = await TableNoTracking
+            .Include(x => x.Role)
+            .FirstOrDefaultAsync(
+                x => x.UserId == userId && x.EnterpriseId == enterpriseId && x.RevokedAt == null,
+                cancellationToken);
+        return entity ?? Option<UserEnterpriseMembership>.None;
+    }
 }

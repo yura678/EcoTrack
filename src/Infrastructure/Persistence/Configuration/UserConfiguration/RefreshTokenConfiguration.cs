@@ -1,4 +1,5 @@
-﻿using Domain.Entities.User;
+﻿using Domain.Entities.Enterprises;
+using Domain.Entities.User;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 
@@ -8,10 +9,17 @@ internal class RefreshTokenConfiguration : IEntityTypeConfiguration<UserRefreshT
 {
     public void Configure(EntityTypeBuilder<UserRefreshToken> builder)
     {
-        builder.HasOne(c => c.User).WithMany(c => c.UserRefreshTokens).HasForeignKey(c => c.UserId);
+        builder.HasOne(c => c.User)
+            .WithMany(c => c.UserRefreshTokens)
+            .HasForeignKey(c => c.UserId)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        builder.HasOne<Enterprise>()
+            .WithMany()
+            .HasForeignKey(c => c.EnterpriseId)
+            .OnDelete(DeleteBehavior.SetNull);
 
         builder.Property(x => x.ExpiresAt).IsRequired();
-        builder.Property(x => x.EnterpriseId);
 
         builder.HasIndex(x => new { x.UserId, x.IsValid });
 

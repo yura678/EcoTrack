@@ -10,6 +10,9 @@ public interface IUserEnterpriseMembershipRepository
     Task<Option<UserEnterpriseMembership>> GetByUserAndEnterpriseAsync(Guid userId,
         Guid enterpriseId, CancellationToken cancellationToken);
 
+    Task<Option<UserEnterpriseMembership>> GetActiveByUserAndEnterpriseWithRoleAsync(
+        Guid userId, Guid enterpriseId, CancellationToken cancellationToken);
+
     Task<IReadOnlyList<UserEnterpriseMembership>> GetActiveByUserIdAsync(Guid userId,
         CancellationToken cancellationToken);
 

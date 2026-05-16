@@ -54,11 +54,7 @@ internal class RegisterEnterpriseAdminCommandHandler(
     {
         var userNameExist = await userManager.IsExistUserName(request.UserName);
         if (userNameExist)
-            return new PhoneNumberAlreadyExistsException(Guid.Empty);
-
-        var phoneNumberExist = await userManager.IsExistUser(request.PhoneNumber);
-        if (phoneNumberExist)
-            return new PhoneNumberAlreadyExistsException(Guid.Empty);
+            return new UserNameAlreadyExistsException(Guid.Empty);
 
         var emailNumberExist = await userManager.IsExistEmail(request.Email);
         if (emailNumberExist)
@@ -82,7 +78,6 @@ internal class RegisterEnterpriseAdminCommandHandler(
             UserName = request.UserName,
             Name = request.Name,
             FamilyName = request.FamilyName,
-            PhoneNumber = request.PhoneNumber,
             Email = request.Email,
         };
 
@@ -100,27 +95,22 @@ internal class RegisterEnterpriseAdminCommandHandler(
             EnterpriseId = enterpriseId
         };
 
-        await roleManager.CreateRoleAsync(new CreateRoleDto
+        var (createResultRole, createdRoleId) = await roleManager.CreateRoleAsync(new CreateRoleDto
             { RoleName = role.Name, DisplayName = role.DisplayName, EnterpriseId = role.EnterpriseId });
 
-        var roleResult = await userManager.AddUserToRoleAsync(user, role);
-
-        if (!roleResult.Succeeded)
+        if (!createResultRole.Succeeded || createdRoleId is null)
         {
             return new UserRoleAssignmentException(Guid.Empty, "admin");
         }
 
-        var createdRole = await roleManager.GetRoleByNameAsync("admin");
-        var createdRoleId = createdRole.Match(r => r.Id, () => Guid.Empty);
-
         await unitOfWork.UserEnterpriseMembershipRepository.AddAsync(
-            UserEnterpriseMembership.New(Guid.NewGuid(), user.Id, enterpriseId, createdRoleId),
+            UserEnterpriseMembership.New(Guid.NewGuid(), user.Id, enterpriseId, createdRoleId.Value),
             cancellationToken);
         await unitOfWork.SaveChangesAsync(cancellationToken);
 
-        var code = await userManager.GenerateEmailConfirmationToken(user, user.PhoneNumber);
+        var code = await userManager.GenerateEmailConfirmationCodeAsync(user);
 
-        logger.LogInformation("Issued email confirmation token for enterprise admin {UserId}", user.Id);
+        logger.LogInformation("Issued email confirmation code for enterprise admin {UserId}", user.Id);
 
         var emailBody = EmailTemplates.EmailConfirmation(code);
 

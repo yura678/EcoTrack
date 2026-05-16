@@ -81,6 +81,30 @@ public class AppUserManagerImplementation(AppUserManager userManager, ICurrentUs
             CustomIdentityConstants.OtpPasswordLessLoginPurpose);
     }
 
+    public Task<string> GenerateEmailConfirmationCodeAsync(User user)
+    {
+        return userManager.GenerateUserTokenAsync(
+            user, CustomIdentityConstants.OtpPasswordLessLoginProvider,
+            CustomIdentityConstants.EmailConfirmationPurpose);
+    }
+
+    public async Task<IdentityResult> ConfirmEmailWithCodeAsync(User user, string code)
+    {
+        var verified = await userManager.VerifyUserTokenAsync(
+            user, CustomIdentityConstants.OtpPasswordLessLoginProvider,
+            CustomIdentityConstants.EmailConfirmationPurpose, code);
+
+        if (!verified)
+            return IdentityResult.Failed(new IdentityError { Description = "Incorrect Code" });
+
+        user.EmailConfirmed = true;
+        var updateResult = await userManager.UpdateAsync(user);
+        if (!updateResult.Succeeded) return updateResult;
+
+        await userManager.UpdateSecurityStampAsync(user);
+        return IdentityResult.Success;
+    }
+
     public async Task<Option<User>> GetUserByPhoneNumber(string phoneNumber)
     {
         return await userManager.Users.FirstOrDefaultAsync(c => c.PhoneNumber.Equals(phoneNumber));

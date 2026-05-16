@@ -9,7 +9,7 @@ public interface IRoleManagerService
 {
     Task<List<GetRolesDto>> GetRolesAsync();
     Task<List<GetRolesDto>> GetEnterpriseRolesAsync(Guid enterpriseId);
-    Task<IdentityResult> CreateRoleAsync(CreateRoleDto model);
+    Task<(IdentityResult Result, Guid? CreatedRoleId)> CreateRoleAsync(CreateRoleDto model);
     Task<bool> DeleteRoleAsync(Guid roleId);
     Task<List<ActionDescriptionDto>> GetPermissionActionsAsync();
     Task<Option<RolePermissionDto>> GetRolePermissionsAsync(Guid roleId);

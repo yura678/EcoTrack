@@ -1,5 +1,4 @@
-﻿using System.Text.RegularExpressions;
-using Application.Features.Users.Commands.Create;
+﻿using Application.Features.Users.Commands.Create;
 using Application.Features.Users.Exceptions;
 using FluentValidation;
 using LanguageExt;
@@ -13,7 +12,6 @@ public record RegisterEnterpriseAdminCommand(
     string UserName,
     string Name,
     string FamilyName,
-    string PhoneNumber,
     string Email,
     string Password,
     string RepeatPassword,
@@ -30,16 +28,13 @@ public record RegisterEnterpriseAdminCommand(
         validator.RuleFor(c => c.Name).NotEmpty();
         validator.RuleFor(c => c.UserName).NotEmpty();
         validator.RuleFor(c => c.FamilyName).NotEmpty();
-        
+
         validator.RuleFor(c => c.Email)
             .NotEmpty().WithMessage("Email is required.")
             .NotNull()
             .MaximumLength(256).WithMessage("Email must not exceed 256 characters.")
             .EmailAddress().WithMessage("Email format is invalid");
-        
-        validator.RuleFor(c => c.PhoneNumber).NotEmpty()
-            .Matches(new Regex(@"^[\+]?[(]?[0-9]{3}[)]?[-\s\.]?[0-9]{3}[-\s\.]?[0-9]{4,6}$"));
-        
+
         validator.RuleFor(c => c.Password)
             .Matches(c => c.RepeatPassword).WithMessage("passwords do not match");
 

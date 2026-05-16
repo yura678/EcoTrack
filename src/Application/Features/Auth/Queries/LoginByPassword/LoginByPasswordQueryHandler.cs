@@ -7,21 +7,20 @@ using LanguageExt;
 using MediatR;
 using Microsoft.Extensions.Logging;
 
-namespace Application.Features.Users.Queries.TokenRequest;
+namespace Application.Features.Auth.Queries.LoginByPassword;
 
-public class PasswordUserTokenRequestQueryResult(
+internal class LoginByPasswordQueryHandler(
     IAppUserManager userManager,
     IJwtService jwtService,
-    ILogger<PasswordUserTokenRequestQueryResult> logger)
-    : IRequestHandler<PasswordUserTokenRequestQuery, Either<UserException, AccessToken>>
+    ILogger<LoginByPasswordQueryHandler> logger)
+    : IRequestHandler<LoginByPasswordQuery, Either<UserException, AccessToken>>
 {
-    public async Task<Either<UserException, AccessToken>> Handle(
-        PasswordUserTokenRequestQuery request,
+    public async Task<Either<UserException, AccessToken>> Handle(LoginByPasswordQuery request,
         CancellationToken cancellationToken)
     {
-        var user = await userManager.GetByUserName(request.UserName);
+        var userOption = await userManager.GetUserByEmail(request.Email);
 
-        return await user.MatchAsync<User, Either<UserException, AccessToken>>(
+        return await userOption.MatchAsync<User, Either<UserException, AccessToken>>(
             Some: async u =>
             {
                 if (await userManager.IsUserLockedOutAsync(u))
@@ -37,17 +36,16 @@ public class PasswordUserTokenRequestQueryResult(
                     return new InvalidCredentialsException(Guid.Empty);
                 }
 
+                if (!u.EmailConfirmed)
+                    return new UserVerificationException(u.Id, "Email is not confirmed.");
+
                 await userManager.ResetUserLockoutAsync(u);
-
-                var token = await jwtService.GenerateAsync(u, null, cancellationToken);
-
-                return token;
+                return await jwtService.GenerateAsync(u, null, cancellationToken);
             },
             None: () =>
             {
-                logger.LogWarning("Login attempt with unknown username");
+                logger.LogWarning("Login attempt with unknown email");
                 return new InvalidCredentialsException(Guid.Empty);
-            }
-        );
+            });
     }
 }

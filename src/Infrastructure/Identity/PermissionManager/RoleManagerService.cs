@@ -63,7 +63,7 @@ internal class RoleManagerService : IRoleManagerService
         return result;
     }
 
-    public async Task<IdentityResult> CreateRoleAsync(CreateRoleDto model)
+    public async Task<(IdentityResult Result, Guid? CreatedRoleId)> CreateRoleAsync(CreateRoleDto model)
     {
         var role = new Role
         {
@@ -74,13 +74,13 @@ internal class RoleManagerService : IRoleManagerService
 
         var result = await _roleManger.CreateAsync(role);
 
-        return result;
+        return (result, result.Succeeded ? role.Id : null);
     }
 
     public async Task<bool> DeleteRoleAsync(Guid roleId)
     {
         var role = await _roleManger.Roles.Include(r => r.Claims)
-            .Include(r => r.Users).FirstOrDefaultAsync(r => r.Id == roleId);
+            .FirstOrDefaultAsync(r => r.Id == roleId);
 
         if (role == null)
             return false;
@@ -88,16 +88,20 @@ internal class RoleManagerService : IRoleManagerService
         if (string.IsNullOrEmpty(role.Name))
             return false;
 
-        var users = await _userManager.GetUsersInRoleAsync(role.Name);
+        // Bump security stamp on all users assigned this role so their JWTs become invalid.
+        var affectedUserIds = await _db.Set<UserEnterpriseMembership>()
+            .Where(m => m.RoleId == roleId && m.RevokedAt == null)
+            .Select(m => m.UserId)
+            .ToListAsync();
 
-        foreach (var user in users)
+        foreach (var userId in affectedUserIds)
         {
-            await _userManager.RemoveFromRoleAsync(user, role.Name);
-            await _userManager.UpdateSecurityStampAsync(user);
+            var user = await _userManager.FindByIdAsync(userId.ToString());
+            if (user is not null)
+                await _userManager.UpdateSecurityStampAsync(user);
         }
 
         _db.RemoveRange(role.Claims);
-        _db.RemoveRange(role.Users);
         _db.Remove(role);
         await _db.SaveChangesAsync();
 
@@ -216,11 +220,16 @@ internal class RoleManagerService : IRoleManagerService
 
         if (result.Succeeded)
         {
-            var users = await _userManager.GetUsersInRoleAsync(role.Name);
+            var affectedUserIds = await _db.Set<UserEnterpriseMembership>()
+                .Where(m => m.RoleId == role.Id && m.RevokedAt == null)
+                .Select(m => m.UserId)
+                .ToListAsync();
 
-            foreach (var user in users)
+            foreach (var userId in affectedUserIds)
             {
-                await _userManager.UpdateSecurityStampAsync(user);
+                var user = await _userManager.FindByIdAsync(userId.ToString());
+                if (user is not null)
+                    await _userManager.UpdateSecurityStampAsync(user);
             }
 
             return true;

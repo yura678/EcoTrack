@@ -49,22 +49,17 @@ internal class RegisterByInvitationCommandHandler(
             {
                 var userNameExist = await userManager.IsExistUserName(request.UserName);
                 if (userNameExist)
-                    return new PhoneNumberAlreadyExistsException(Guid.Empty);
-
-                var phoneNumberExist = await userManager.IsExistUser(request.PhoneNumber);
-                if (phoneNumberExist)
                     return new UserNameAlreadyExistsException(Guid.Empty);
 
                 var emailNumberExist = await userManager.IsExistEmail(request.Email);
                 if (emailNumberExist)
                     return new EmailAlreadyExistsException(Guid.Empty);
-                
+
                 var user = new User
                 {
                     UserName = request.UserName,
                     Name = request.Name,
                     FamilyName = request.FamilyName,
-                    PhoneNumber = request.PhoneNumber,
                     Email = request.Email,
                     EmailConfirmed = true,
                 };
