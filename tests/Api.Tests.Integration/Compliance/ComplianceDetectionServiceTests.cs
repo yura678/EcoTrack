@@ -25,6 +25,7 @@ public class ComplianceDetectionServiceTests : BaseIntegrationTest, IAsyncLifeti
     private readonly Pollutant _pollutant;
     private readonly MeasureUnit _mg;
     private readonly MeasureUnit _g;
+    private readonly MeasureUnit _kgh;
     private readonly MonitoringDevice _device;
 
     private readonly DateTime _lastClosedHourStart;
@@ -43,6 +44,7 @@ public class ComplianceDetectionServiceTests : BaseIntegrationTest, IAsyncLifeti
         _pollutant = PollutantsData.FirstTestPollutant();
         _mg = MeasureUnitsData.MgPerM3();
         _g = MeasureUnitsData.GPerM3();
+        _kgh = MeasureUnitsData.KgPerHour();
         _device = MonitoringDevicesData.FirstTestDevice(_source.Id, _installation.Id);
         // Backdate so default tests aren't suppressed by NewDeviceGraceDays.
         BackdateInstall(_device, TimeSpan.FromDays(60));
@@ -341,6 +343,59 @@ public class ComplianceDetectionServiceTests : BaseIntegrationTest, IAsyncLifeti
         events.Should().BeEmpty();
     }
 
+    // ─── MassFlow detection (LimitType dispatch) ─────────────────────────────────
+
+    [Fact]
+    public async Task ShouldDetectMassFlowExceedance()
+    {
+        var (permit, limit) = ActivePermitWithLimit(
+            value: 50m, unitId: _kgh.Id, limitType: LimitType.MassFlow);
+        await Context.Set<Permit>().AddAsync(permit);
+        await Context.Set<EmissionLimit>().AddAsync(limit);
+        await Context.Set<Measurement>().AddAsync(HourlyMeasurement(value: 80m, unitId: _kgh.Id));
+        await SaveChangesAsync();
+
+        await RunDetectionAsync();
+
+        var events = await GetEventsAsync(ComplianceEventType.LimitExceedance, limit.Id);
+        events.Should().HaveCount(1);
+        events[0].Ratio.Should().BeApproximately(1.6m, 0.0001m);
+        events[0].Notes.Should().Contain("kg/h");
+    }
+
+    [Fact]
+    public async Task ShouldNotDetectMassFlowExceedanceWhenWithinLimit()
+    {
+        var (permit, limit) = ActivePermitWithLimit(
+            value: 50m, unitId: _kgh.Id, limitType: LimitType.MassFlow);
+        await Context.Set<Permit>().AddAsync(permit);
+        await Context.Set<EmissionLimit>().AddAsync(limit);
+        await Context.Set<Measurement>().AddAsync(HourlyMeasurement(value: 30m, unitId: _kgh.Id));
+        await SaveChangesAsync();
+
+        await RunDetectionAsync();
+
+        var events = await GetEventsAsync(ComplianceEventType.LimitExceedance, limit.Id);
+        events.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task ShouldSkipLimitWhenMeasurementDimensionDiffers()
+    {
+        // MassFlow limit (kg/h) but measurement is Concentration (mg/m³) — incompatible dims.
+        var (permit, limit) = ActivePermitWithLimit(
+            value: 50m, unitId: _kgh.Id, limitType: LimitType.MassFlow);
+        await Context.Set<Permit>().AddAsync(permit);
+        await Context.Set<EmissionLimit>().AddAsync(limit);
+        await Context.Set<Measurement>().AddAsync(HourlyMeasurement(value: 100m, unitId: _mg.Id));
+        await SaveChangesAsync();
+
+        await RunDetectionAsync();
+
+        var events = await GetEventsAsync(ComplianceEventType.LimitExceedance, limit.Id);
+        events.Should().BeEmpty();
+    }
+
     [Fact]
     public async Task ShouldNotDetectDataAvailabilityLossWhenExpectedCountZero()
     {
@@ -361,17 +416,19 @@ public class ComplianceDetectionServiceTests : BaseIntegrationTest, IAsyncLifeti
 
     // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-    private (Permit Permit, EmissionLimit Limit) ActivePermitWithLimit(decimal value, Guid unitId)
-        => PermitWithLimit(value, unitId, PermitStatus.Active);
+    private (Permit Permit, EmissionLimit Limit) ActivePermitWithLimit(
+        decimal value, Guid unitId, LimitType limitType = LimitType.Concentration)
+        => PermitWithLimit(value, unitId, PermitStatus.Active, limitType);
 
     private (Permit Permit, EmissionLimit Limit) PermitWithLimit(
-        decimal value, Guid unitId, PermitStatus status)
+        decimal value, Guid unitId, PermitStatus status,
+        LimitType limitType = LimitType.Concentration)
     {
         var permitId = Guid.NewGuid();
         var limit = EmissionLimit.New(
             Guid.NewGuid(),
             value,
-            LimitType.Concentration,
+            limitType,
             AveragingWindow.Hour1,
             permitId,
             unitId,
@@ -475,7 +532,7 @@ public class ComplianceDetectionServiceTests : BaseIntegrationTest, IAsyncLifeti
         await Context.Set<Installation>().AddAsync(_installation);
         await Context.Set<EmissionSource>().AddAsync(_source);
         await Context.Set<Pollutant>().AddAsync(_pollutant);
-        await Context.Set<MeasureUnit>().AddRangeAsync(_mg, _g);
+        await Context.Set<MeasureUnit>().AddRangeAsync(_mg, _g, _kgh);
         await Context.Set<MonitoringDevice>().AddAsync(_device);
         await SaveChangesAsync();
     }

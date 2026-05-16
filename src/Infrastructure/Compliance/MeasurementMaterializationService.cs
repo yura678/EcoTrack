@@ -114,8 +114,10 @@ public class MeasurementMaterializationService(
     private async Task<List<Tuple>> GetMaterializationTuplesAsync(CancellationToken ct)
     {
         var now = DateTime.UtcNow;
+        // Materialise for rate-based limits (Concentration + MassFlow). AnnualLoad is sum-based
+        // over long periods and needs a separate running-total path (not yet implemented).
         var limits = await context.Set<EmissionLimit>()
-            .Where(l => l.LimitType == LimitType.Concentration
+            .Where(l => (l.LimitType == LimitType.Concentration || l.LimitType == LimitType.MassFlow)
                         && l.ValidFrom <= now
                         && (l.ValidTo == null || l.ValidTo >= now)
                         && l.Permit!.PermitStatus == PermitStatus.Active

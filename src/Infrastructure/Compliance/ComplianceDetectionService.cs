@@ -41,16 +41,38 @@ public class ComplianceDetectionService(
             await unitOfWork.SaveChangesAsync(cancellationToken);
         }
 
+        await WarnIfAnnualLoadLimitsPresentAsync(cancellationToken);
+
         logger.LogInformation(
             "Compliance detection: {New} new events in {Ms}ms",
             newEvents.Count, (DateTime.UtcNow - start).TotalMilliseconds);
     }
 
+    private async Task WarnIfAnnualLoadLimitsPresentAsync(CancellationToken ct)
+    {
+        var now = DateTime.UtcNow;
+        var count = await context.Set<EmissionLimit>()
+            .CountAsync(l => l.LimitType == LimitType.AnnualLoad
+                             && l.ValidFrom <= now
+                             && (l.ValidTo == null || l.ValidTo >= now)
+                             && l.Permit!.PermitStatus == PermitStatus.Active,
+                ct);
+        if (count > 0)
+        {
+            logger.LogWarning(
+                "{Count} active AnnualLoad limit(s) found; AnnualLoad detection is not yet implemented. " +
+                "Use the compliance-audit endpoint to manually simulate.",
+                count);
+        }
+    }
+
     // ─── LimitExceedance ─────────────────────────────────────────────────────────
+
+    private static readonly LimitType[] RateBasedLimits = [LimitType.Concentration, LimitType.MassFlow];
 
     private async Task<List<ComplianceEvent>> DetectLimitExceedancesAsync(CancellationToken ct)
     {
-        var targets = await GetActiveLimitTargetsAsync(LimitType.Concentration, ct);
+        var targets = await GetActiveLimitTargetsAsync(RateBasedLimits, ct);
         if (targets.Count == 0) return [];
 
         var existing = await complianceEventQueries.GetOpenByTypeAsync(
@@ -244,7 +266,7 @@ public class ComplianceDetectionService(
 
     private async Task<List<ComplianceEvent>> DetectDataAvailabilityLossAsync(CancellationToken ct)
     {
-        var targets = await GetActiveLimitTargetsAsync(LimitType.Concentration, ct);
+        var targets = await GetActiveLimitTargetsAsync(RateBasedLimits, ct);
         if (targets.Count == 0) return [];
 
         var existing = await complianceEventQueries.GetOpenByTypeAsync(
@@ -304,7 +326,7 @@ public class ComplianceDetectionService(
         var to = DateTime.UtcNow;
         var from = to - window;
 
-        var targets = await GetActiveLimitTargetsAsync(LimitType.Concentration, ct);
+        var targets = await GetActiveLimitTargetsAsync(RateBasedLimits, ct);
         var distinctPairs = targets
             .Select(t => (t.EmissionSourceId, t.PollutantId))
             .Distinct()
@@ -343,11 +365,12 @@ public class ComplianceDetectionService(
         Guid LimitId, Guid EmissionSourceId, Guid PollutantId,
         AveragingWindow Period, decimal Value, Guid UnitId);
 
-    private async Task<List<LimitTarget>> GetActiveLimitTargetsAsync(LimitType limitType, CancellationToken ct)
+    private async Task<List<LimitTarget>> GetActiveLimitTargetsAsync(
+        IReadOnlyCollection<LimitType> limitTypes, CancellationToken ct)
     {
         var now = DateTime.UtcNow;
         var limits = await context.Set<EmissionLimit>()
-            .Where(l => l.LimitType == limitType
+            .Where(l => limitTypes.Contains(l.LimitType)
                         && l.ValidFrom <= now
                         && (l.ValidTo == null || l.ValidTo >= now)
                         && l.Permit!.PermitStatus == PermitStatus.Active
