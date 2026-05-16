@@ -8,6 +8,7 @@ public interface IEnterpriseRepository
     Task<Option<Enterprise>> GetByIdAsync(Guid id, CancellationToken cancellationToken);
     Task<Option<Enterprise>> GetByIdIncludingDeletedAsync(Guid id, CancellationToken cancellationToken);
     Task<Option<Enterprise>> GetByEdrpouAsync(string edrpou, CancellationToken cancellationToken);
+    Task<Option<Enterprise>> GetByEdrpouIncludingDeletedAsync(string edrpou, CancellationToken cancellationToken);
     Task<bool> HasDependenciesAsync(Guid id, CancellationToken cancellationToken);
 
     Task<Enterprise> AddAsync(Enterprise entity, CancellationToken cancellationToken);

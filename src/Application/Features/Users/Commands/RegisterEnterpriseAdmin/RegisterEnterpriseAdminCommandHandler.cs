@@ -60,7 +60,8 @@ internal class RegisterEnterpriseAdminCommandHandler(
         if (sectorOption.IsNone)
             return new SectorNotFoundException(request.SectorId);
 
-        var edrpouTaken = await unitOfWork.EnterpriseRepository.GetByEdrpouAsync(request.Edrpou, cancellationToken);
+        var edrpouTaken = await unitOfWork.EnterpriseRepository
+            .GetByEdrpouIncludingDeletedAsync(request.Edrpou, cancellationToken);
         if (edrpouTaken.IsSome)
             return new EdrpouAlreadyExistsException(request.Edrpou);
 

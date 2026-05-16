@@ -76,6 +76,15 @@ internal class EnterpriseRepository(ApplicationDbContext context)
         return entity ?? Option<Enterprise>.None;
     }
 
+    public async Task<Option<Enterprise>> GetByEdrpouIncludingDeletedAsync(string edrpou, CancellationToken cancellationToken)
+    {
+        var entity = await base.TableNoTracking
+            .IgnoreQueryFilters()
+            .FirstOrDefaultAsync(x => x.Edrpou == edrpou, cancellationToken);
+
+        return entity ?? Option<Enterprise>.None;
+    }
+
     public Task<bool> HasDependenciesAsync(Guid id, CancellationToken cancellationToken)
     {
         var hasDependencies = context.Set<Site>().AnyAsync(x => x.EnterpriseId.Equals(id), cancellationToken);
