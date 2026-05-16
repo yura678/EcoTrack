@@ -104,5 +104,15 @@ public class ApplicationDbContext
         // SwitchEnterprise / GetMemberships keep working) or to the current enterprise tenant.
         modelBuilder.Entity<UserEnterpriseMembership>().HasQueryFilter(x =>
             BypassTenantFilter || x.UserId == CurrentUserFilterId || x.EnterpriseId == TenantFilterId);
+
+        // Matching filters on dependents so EF doesn't return rows whose required parent is filtered out.
+        modelBuilder.Entity<RoleClaim>().HasQueryFilter(x =>
+            BypassTenantFilter || x.Role.EnterpriseId == null || x.Role.EnterpriseId == TenantFilterId);
+
+        modelBuilder.Entity<UserRole>().HasQueryFilter(x =>
+            BypassTenantFilter || x.Role!.EnterpriseId == null || x.Role!.EnterpriseId == TenantFilterId);
+
+        modelBuilder.Entity<EnterpriseInvitation>().HasQueryFilter(x =>
+            x.Enterprise!.DeletedAt == null);
     }
 }
