@@ -333,7 +333,9 @@ public class ComplianceDetectionService(
         var limits = await context.Set<EmissionLimit>()
             .Where(l => l.LimitType == limitType
                         && l.ValidFrom <= now
-                        && (l.ValidTo == null || l.ValidTo >= now))
+                        && (l.ValidTo == null || l.ValidTo >= now)
+                        && l.Permit!.PermitStatus == PermitStatus.Active
+                        && l.Permit!.ValidUntil >= now)
             .Select(l => new
             {
                 l.Id, l.EmissionSourceId, l.InstallationId, l.PollutantId,
