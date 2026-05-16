@@ -36,6 +36,15 @@ public class ComplianceDetectionHostedService(
             try
             {
                 using var scope = scopeFactory.CreateScope();
+                var lockProvider = scope.ServiceProvider.GetRequiredService<DetectionLockProvider>();
+
+                await using var lockHandle = await lockProvider.TryAcquireAsync(stoppingToken);
+                if (lockHandle is null)
+                {
+                    logger.LogDebug("Another instance holds the detection lock; skipping tick.");
+                    continue;
+                }
+
                 var materialization = scope.ServiceProvider
                     .GetRequiredService<MeasurementMaterializationService>();
                 await materialization.RunAsync(stoppingToken);

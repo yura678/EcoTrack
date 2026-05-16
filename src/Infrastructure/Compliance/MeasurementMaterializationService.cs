@@ -34,55 +34,65 @@ public class MeasurementMaterializationService(
         var deviceLookup = await GetFirstDevicePerSourceAsync(sourceIds, cancellationToken);
 
         var newMeasurements = new List<Measurement>();
+        var now = DateTime.UtcNow;
+        var fallbackEarliest = now - TimeSpan.FromDays(Math.Max(1, _settings.BackfillDays));
 
-        foreach (var tuple in tuples)
+        foreach (var byPeriod in tuples.GroupBy(t => t.Period))
         {
-            if (!deviceLookup.TryGetValue(tuple.SourceId, out var deviceId))
-            {
-                continue; // No device — cannot construct Measurement (FK requirement)
-            }
-
-            var period = PeriodToTimeSpan(tuple.Period);
+            var period = PeriodToTimeSpan(byPeriod.Key);
             if (period == TimeSpan.Zero) continue;
 
-            var lastWindowEnd = await GetLastWindowEndAsync(
-                tuple.SourceId, tuple.PollutantId, tuple.Period, cancellationToken);
+            var groupTuples = byPeriod.ToArray();
+            var groupSources = groupTuples.Select(t => t.SourceId).Distinct().ToArray();
+            var groupPollutants = groupTuples.Select(t => t.PollutantId).Distinct().ToArray();
 
-            var now = DateTime.UtcNow;
+            var lastEnds = await GetLastWindowEndsAsync(
+                groupSources, groupPollutants, byPeriod.Key, cancellationToken);
+
+            var earliest = lastEnds.Values
+                .Where(v => v.HasValue)
+                .Select(v => v!.Value)
+                .DefaultIfEmpty(fallbackEarliest)
+                .Min();
+
             var lastClosedEnd = FloorToPeriod(now, period);
-            var earliest = lastWindowEnd
-                           ?? lastClosedEnd - TimeSpan.FromDays(Math.Max(1, _settings.BackfillDays));
+            if (earliest >= lastClosedEnd) continue;
 
-            var buckets = await GetReBucketedAsync(
-                tuple.SourceId, tuple.PollutantId, period, earliest, lastClosedEnd, cancellationToken);
+            var buckets = await GetReBucketedBulkAsync(
+                groupSources, groupPollutants, period, earliest, lastClosedEnd, cancellationToken);
             if (buckets.Count == 0) continue;
 
-            // Iterate forward from earliest to lastClosedEnd, capped per tick.
-            var windowsThisTick = 0;
-            foreach (var entry in buckets.OrderBy(b => b.Key))
+            foreach (var tuple in groupTuples)
             {
-                if (windowsThisTick >= _settings.BackfillWindowsPerTick) break;
+                if (!deviceLookup.TryGetValue(tuple.SourceId, out var deviceId)) continue;
+                if (!buckets.TryGetValue((tuple.SourceId, tuple.PollutantId), out var tupleBuckets)) continue;
 
-                var windowStart = entry.Key;
-                var windowEnd = windowStart + period;
-                if (windowEnd > lastClosedEnd) break;        // skip not-yet-closed
-                if (lastWindowEnd.HasValue && windowEnd <= lastWindowEnd.Value) continue; // already done
+                var tupleLastEnd = lastEnds.GetValueOrDefault((tuple.SourceId, tuple.PollutantId));
+                var windowsThisTick = 0;
 
-                var agg = entry.Value;
-                if (agg.SampleCount == 0 || agg.Avg is null) continue;
+                foreach (var entry in tupleBuckets.OrderBy(b => b.WindowStart))
+                {
+                    if (windowsThisTick >= _settings.BackfillWindowsPerTick) break;
+                    var windowStart = entry.WindowStart;
+                    var windowEnd = windowStart + period;
+                    if (windowEnd > lastClosedEnd) break;
+                    if (tupleLastEnd.HasValue && windowEnd <= tupleLastEnd.Value) continue;
 
-                var expected = (int)period.TotalMinutes;
-                var measurement = Measurement.New(
-                    Guid.NewGuid(),
-                    windowStart, windowEnd,
-                    tuple.Period, Aggregation.Average,
-                    tuple.SourceId, tuple.PollutantId, deviceId, agg.UnitId,
-                    value: agg.Avg.Value,
-                    validPointsCount: (int)Math.Min(int.MaxValue, agg.ValidCount),
-                    expectedPointsCount: expected);
+                    if (entry.SampleCount == 0 || entry.Avg is null) continue;
 
-                newMeasurements.Add(measurement);
-                windowsThisTick++;
+                    var expected = (int)period.TotalMinutes;
+                    var measurement = Measurement.New(
+                        Guid.NewGuid(),
+                        windowStart, windowEnd,
+                        tuple.Period, Aggregation.Average,
+                        tuple.SourceId, tuple.PollutantId, deviceId, entry.UnitId,
+                        value: entry.Avg.Value,
+                        validPointsCount: (int)Math.Min(int.MaxValue, entry.ValidCount),
+                        expectedPointsCount: expected);
+
+                    newMeasurements.Add(measurement);
+                    windowsThisTick++;
+                }
             }
         }
 
@@ -163,42 +173,55 @@ public class MeasurementMaterializationService(
             .ToDictionary(g => g.Key, g => g.First().Id);
     }
 
-    private async Task<DateTime?> GetLastWindowEndAsync(
-        Guid sourceId, Guid pollutantId, AveragingWindow period, CancellationToken ct)
+    private async Task<Dictionary<(Guid SourceId, Guid PollutantId), DateTime?>> GetLastWindowEndsAsync(
+        Guid[] sourceIds, Guid[] pollutantIds, AveragingWindow period, CancellationToken ct)
     {
-        return await context.Set<Measurement>()
-            .Where(m => m.EmissionSourceId == sourceId
-                        && m.PollutantId == pollutantId
+        var rows = await context.Set<Measurement>()
+            .Where(m => sourceIds.Contains(m.EmissionSourceId)
+                        && pollutantIds.Contains(m.PollutantId)
                         && m.Window == period
                         && m.Aggregation == Aggregation.Average)
-            .OrderByDescending(m => m.WindowEnd)
-            .Select(m => (DateTime?)m.WindowEnd)
-            .FirstOrDefaultAsync(ct);
+            .GroupBy(m => new { m.EmissionSourceId, m.PollutantId })
+            .Select(g => new
+            {
+                g.Key.EmissionSourceId,
+                g.Key.PollutantId,
+                LastEnd = g.Max(x => x.WindowEnd)
+            })
+            .ToListAsync(ct);
+
+        return rows.ToDictionary(
+            r => (r.EmissionSourceId, r.PollutantId),
+            r => (DateTime?)r.LastEnd);
     }
 
-    // ─── Re-bucket measurement_1m to the limit's Period ──────────────────────────
+    // ─── Re-bucket measurement_1m to the limit's Period (bulk) ───────────────────
 
-    private record AggregateBucket(decimal? Avg, long ValidCount, long SampleCount, Guid UnitId);
+    private record AggregateBucket(
+        DateTime WindowStart, decimal? Avg,
+        long ValidCount, long SampleCount, Guid UnitId);
 
-    private async Task<Dictionary<DateTime, AggregateBucket>> GetReBucketedAsync(
-        Guid sourceId, Guid pollutantId, TimeSpan period,
+    private async Task<Dictionary<(Guid, Guid), List<AggregateBucket>>> GetReBucketedBulkAsync(
+        Guid[] sourceIds, Guid[] pollutantIds, TimeSpan period,
         DateTime from, DateTime to, CancellationToken ct)
     {
         var periodLiteral = PeriodToPgInterval(period);
         var sql = $@"
             SELECT
+                emission_source_id,
+                pollutant_id,
                 time_bucket(INTERVAL '{periodLiteral}', bucket) AS window_start,
                 (SUM(sum_value) / NULLIF(SUM(sample_count), 0))::numeric(18,6) AS avg,
                 COALESCE(SUM(valid_count), 0)::bigint AS valid_count,
                 COALESCE(SUM(sample_count), 0)::bigint AS sample_count,
                 (array_agg(unit_id))[1] AS unit_id
             FROM measurement_1m
-            WHERE emission_source_id = @source_id
-              AND pollutant_id = @pollutant_id
+            WHERE emission_source_id = ANY(@source_ids)
+              AND pollutant_id = ANY(@pollutant_ids)
               AND bucket >= @from
               AND bucket < @to
-            GROUP BY window_start
-            ORDER BY window_start";
+            GROUP BY emission_source_id, pollutant_id, window_start
+            ORDER BY emission_source_id, pollutant_id, window_start";
 
         var connection = (NpgsqlConnection)context.Database.GetDbConnection();
         if (connection.State != System.Data.ConnectionState.Open)
@@ -207,21 +230,30 @@ public class MeasurementMaterializationService(
         }
 
         await using var command = new NpgsqlCommand(sql, connection);
-        AddParam(command, "source_id", NpgsqlDbType.Uuid, sourceId);
-        AddParam(command, "pollutant_id", NpgsqlDbType.Uuid, pollutantId);
+        AddParam(command, "source_ids", NpgsqlDbType.Array | NpgsqlDbType.Uuid, sourceIds);
+        AddParam(command, "pollutant_ids", NpgsqlDbType.Array | NpgsqlDbType.Uuid, pollutantIds);
         AddParam(command, "from", NpgsqlDbType.TimestampTz, EnsureUtc(from));
         AddParam(command, "to", NpgsqlDbType.TimestampTz, EnsureUtc(to));
 
-        var dict = new Dictionary<DateTime, AggregateBucket>();
+        var dict = new Dictionary<(Guid, Guid), List<AggregateBucket>>();
         await using var reader = await command.ExecuteReaderAsync(ct);
         while (await reader.ReadAsync(ct))
         {
-            var windowStart = DateTime.SpecifyKind(reader.GetDateTime(0), DateTimeKind.Utc);
-            var avg = reader.IsDBNull(1) ? (decimal?)null : reader.GetDecimal(1);
-            var validCount = reader.GetInt64(2);
-            var sampleCount = reader.GetInt64(3);
-            var unitId = reader.GetGuid(4);
-            dict[windowStart] = new AggregateBucket(avg, validCount, sampleCount, unitId);
+            var sourceId = reader.GetGuid(0);
+            var pollutantId = reader.GetGuid(1);
+            var windowStart = DateTime.SpecifyKind(reader.GetDateTime(2), DateTimeKind.Utc);
+            var avg = reader.IsDBNull(3) ? (decimal?)null : reader.GetDecimal(3);
+            var validCount = reader.GetInt64(4);
+            var sampleCount = reader.GetInt64(5);
+            var unitId = reader.GetGuid(6);
+
+            var key = (sourceId, pollutantId);
+            if (!dict.TryGetValue(key, out var list))
+            {
+                list = new List<AggregateBucket>();
+                dict[key] = list;
+            }
+            list.Add(new AggregateBucket(windowStart, avg, validCount, sampleCount, unitId));
         }
         return dict;
     }

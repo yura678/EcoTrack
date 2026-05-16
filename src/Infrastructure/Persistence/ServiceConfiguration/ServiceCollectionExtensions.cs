@@ -72,6 +72,7 @@ public static class ServiceCollectionExtensions
 
         services.Configure<ComplianceDetectionSettings>(
             configuration.GetSection("ComplianceDetection"));
+        services.AddSingleton<DetectionLockProvider>();
         services.AddScoped<MeasurementMaterializationService>();
         services.AddScoped<ComplianceDetectionService>();
         services.AddHostedService<ComplianceDetectionHostedService>();
