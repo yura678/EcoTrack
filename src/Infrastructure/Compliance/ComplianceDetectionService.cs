@@ -79,7 +79,7 @@ public class ComplianceDetectionService(
                 .Select(m => new
                 {
                     m.Id, m.EmissionSourceId, m.PollutantId,
-                    m.Value, m.UnitId, m.WindowStart, m.WindowEnd
+                    m.Value, m.UnitId, m.Quality, m.WindowStart, m.WindowEnd
                 })
                 .ToListAsync(ct);
 
@@ -95,6 +95,7 @@ public class ComplianceDetectionService(
             {
                 if (existingKeys.Contains((t.LimitId, t.EmissionSourceId))) continue;
                 if (!byKey.TryGetValue((t.EmissionSourceId, t.PollutantId), out var m)) continue;
+                if (m.Quality != Quality.Valid) continue; // untrusted reading — don't raise events
                 if (!units.TryGetValue(t.UnitId, out var limitUnit)
                     || !units.TryGetValue(m.UnitId, out var measurementUnit)) continue;
 
@@ -139,12 +140,14 @@ public class ComplianceDetectionService(
 
     private async Task<List<ComplianceEvent>> DetectDeviceOfflineAsync(CancellationToken ct)
     {
+        var now = DateTime.UtcNow;
         var threshold = TimeSpan.FromMinutes(_settings.DeviceOfflineThresholdMinutes);
-        var cutoff = DateTime.UtcNow - threshold;
+        var cutoff = now - threshold;
+        var graceLine = now - TimeSpan.FromDays(Math.Max(0, _settings.NewDeviceGraceDays));
 
         var devices = await context.Set<MonitoringDevice>()
             .Where(d => d.Status == DeviceStatus.Operational && d.EmissionSourceId != null)
-            .Select(d => new { d.Id, d.EmissionSourceId })
+            .Select(d => new { d.Id, d.EmissionSourceId, d.InstalledAt })
             .ToListAsync(ct);
 
         if (devices.Count == 0) return [];
@@ -163,13 +166,14 @@ public class ComplianceDetectionService(
         foreach (var d in devices)
         {
             if (existingDeviceIds.Contains(d.Id)) continue;
+            if (d.InstalledAt.HasValue && d.InstalledAt.Value > graceLine) continue; // grace
 
             var seen = lastSeen.GetValueOrDefault(d.Id);
             if (seen.HasValue && seen.Value >= cutoff) continue;
 
             newEvents.Add(ComplianceEvent.ForDeviceOffline(
                 Guid.NewGuid(), d.EmissionSourceId!.Value, d.Id,
-                cutoff, DateTime.UtcNow,
+                cutoff, now,
                 notes: seen.HasValue
                     ? $"Last seen {seen.Value:O}"
                     : "No measurements ingested yet"));
@@ -182,6 +186,7 @@ public class ComplianceDetectionService(
     private async Task<List<ComplianceEvent>> DetectCalibrationFailuresAsync(CancellationToken ct)
     {
         var now = DateTime.UtcNow;
+        var graceLine = now - TimeSpan.FromDays(Math.Max(0, _settings.NewDeviceGraceDays));
 
         // Latest calibration record per device, joined to operational source-bound devices.
         var latest = await context.Set<MonitoringDevice>()
@@ -207,7 +212,19 @@ public class ComplianceDetectionService(
         foreach (var row in latest)
         {
             if (existingDeviceIds.Contains(row.Device.Id)) continue;
-            if (row.Last is null) continue; // no calibration ever — separate concern
+            var installedAt = row.Device.InstalledAt;
+
+            if (row.Last is null)
+            {
+                // No calibration ever recorded — alert only after grace period (gives time to commission).
+                if (installedAt is null || installedAt.Value > graceLine) continue;
+
+                newEvents.Add(ComplianceEvent.ForCalibrationFailure(
+                    Guid.NewGuid(), row.Device.EmissionSourceId!.Value, row.Device.Id,
+                    installedAt.Value, now,
+                    notes: $"No calibration record found; device installed {installedAt.Value:O}"));
+                continue;
+            }
 
             var failed = row.Last.Result == CalibrationResult.Fail;
             var overdue = row.Last.NextDueAt < now;
@@ -265,10 +282,9 @@ public class ComplianceDetectionService(
                 if (!seenSources.Add(t.EmissionSourceId)) continue;
                 if (existingSourceIds.Contains(t.EmissionSourceId)) continue;
                 if (!byKey.TryGetValue((t.EmissionSourceId, t.PollutantId), out var m)) continue;
+                if (m.ExpectedPointsCount == 0) continue; // can't compute availability
 
-                var availability = m.ExpectedPointsCount == 0
-                    ? 0m
-                    : (decimal)m.ValidPointsCount / m.ExpectedPointsCount;
+                var availability = (decimal)m.ValidPointsCount / m.ExpectedPointsCount;
                 if (availability >= _settings.DataAvailabilityThreshold) continue;
 
                 newEvents.Add(ComplianceEvent.ForDataAvailabilityLoss(
