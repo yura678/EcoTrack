@@ -6,7 +6,9 @@ using MediatR;
 
 namespace Application.Features.Role.Commands.UpdateRoleClaimsCommand;
 
-internal class UpdateRoleClaimsCommandHandler(IRoleManagerService roleManagerService)
+internal class UpdateRoleClaimsCommandHandler(
+    IRoleManagerService roleManagerService,
+    ICurrentUserService currentUserService)
     : IRequestHandler<UpdateRoleClaimsCommand, Either<RoleException, bool>>
 {
     public async Task<Either<RoleException, bool>> Handle(
@@ -15,6 +17,18 @@ internal class UpdateRoleClaimsCommandHandler(IRoleManagerService roleManagerSer
     {
         try
         {
+            var roleOption = await roleManagerService.GetRoleByIdAsync(request.RoleId);
+            var role = roleOption.Match(r => r, () => null!);
+            if (role is null)
+                return new RoleNotFoundException(Guid.Empty, request.RoleId);
+
+            if (!currentUserService.IsSuperAdmin())
+            {
+                var currentEnterpriseId = currentUserService.GetCurrentEnterpriseId();
+                if (currentEnterpriseId is null || role.EnterpriseId != currentEnterpriseId)
+                    return new RoleNotFoundException(Guid.Empty, request.RoleId);
+            }
+
             var updateRoleResult = await roleManagerService.ChangeRolePermissionsAsync(
                 new EditRolePermissionsDto()
                 {

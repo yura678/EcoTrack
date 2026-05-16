@@ -21,6 +21,7 @@ public class ApplicationDbContext
         // Bypass tenant isolation for system operations (no HttpContext) and superAdmin
         BypassTenantFilter = userId is null || currentUserService.IsSuperAdmin();
         TenantFilterId = BypassTenantFilter ? null : currentUserService.GetCurrentEnterpriseId();
+        CurrentUserFilterId = BypassTenantFilter ? null : userId;
     }
 
     /// <summary>
@@ -33,6 +34,11 @@ public class ApplicationDbContext
     /// The EnterpriseId used by global query filters when <see cref="BypassTenantFilter"/> is false.
     /// </summary>
     public Guid? TenantFilterId { get; }
+
+    /// <summary>
+    /// The UserId used by user-scoped query filters when <see cref="BypassTenantFilter"/> is false.
+    /// </summary>
+    public Guid? CurrentUserFilterId { get; }
 
     protected override void ConfigureConventions(ModelConfigurationBuilder configurationBuilder)
     {
@@ -88,5 +94,15 @@ public class ApplicationDbContext
             BypassTenantFilter || x.EnterpriseId == TenantFilterId);
         modelBuilder.Entity<DevicePollutantCapability>().HasQueryFilter(x =>
             BypassTenantFilter || x.EnterpriseId == TenantFilterId);
+
+        // Roles: global (EnterpriseId == null, e.g. superAdmin) are visible everywhere; tenant roles
+        // visible only inside their enterprise.
+        modelBuilder.Entity<Role>().HasQueryFilter(x =>
+            BypassTenantFilter || x.EnterpriseId == null || x.EnterpriseId == TenantFilterId);
+
+        // Memberships: row is visible if it belongs to the current user (so cross-tenant flows like
+        // SwitchEnterprise / GetMemberships keep working) or to the current enterprise tenant.
+        modelBuilder.Entity<UserEnterpriseMembership>().HasQueryFilter(x =>
+            BypassTenantFilter || x.UserId == CurrentUserFilterId || x.EnterpriseId == TenantFilterId);
     }
 }

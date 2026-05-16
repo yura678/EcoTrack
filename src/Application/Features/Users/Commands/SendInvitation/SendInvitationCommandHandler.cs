@@ -19,18 +19,19 @@ internal class SendInvitationCommandHandler(
     public async Task<Either<UserException, string>> Handle(SendInvitationCommand request,
         CancellationToken cancellationToken)
     {
-        return await CheckRoleId(request.RoleId)
-            .BindAsync(_ => HandleAsync(request, cancellationToken));
+        var adminEnterpriseId = currentUserService.GetCurrentEnterpriseId();
+        if (adminEnterpriseId is null)
+            return new EnterpriseNotFound(Guid.Empty);
+
+        return await CheckRoleId(request.RoleId, adminEnterpriseId.Value)
+            .BindAsync(_ => HandleAsync(request, adminEnterpriseId.Value, cancellationToken));
     }
 
     private async Task<Either<UserException, string>> HandleAsync(SendInvitationCommand request,
+        Guid adminEnterpriseId,
         CancellationToken cancellationToken)
     {
-        var adminEnterpriseId = currentUserService.GetCurrentEnterpriseId();
-        if (adminEnterpriseId is null)
-            return new EnterpriseNotFound(currentUserService.GetCurrentEnterpriseId() ?? Guid.Empty);
-
-        var invitation = EnterpriseInvitation.Create(adminEnterpriseId.Value, request.Email, request.RoleId);
+        var invitation = EnterpriseInvitation.Create(adminEnterpriseId, request.Email, request.RoleId);
 
         await unitOfWork.InvitationRepository.AddAsync(invitation, cancellationToken);
 
@@ -50,12 +51,14 @@ internal class SendInvitationCommandHandler(
         return invitation.Token;
     }
 
-    private async Task<Either<UserException, Domain.Entities.User.Role>> CheckRoleId(Guid roleId)
+    private async Task<Either<UserException, Domain.Entities.User.Role>> CheckRoleId(Guid roleId, Guid adminEnterpriseId)
     {
         var role = await roleManagerService.GetRoleByIdAsync(roleId);
 
         return role.Match<Either<UserException, Domain.Entities.User.Role>>(
-            r => r,
+            r => r.EnterpriseId == adminEnterpriseId
+                ? r
+                : new UserRoleNotFoundException(Guid.Empty, roleId),
             () => new UserRoleNotFoundException(Guid.Empty, roleId)
         );
     }
