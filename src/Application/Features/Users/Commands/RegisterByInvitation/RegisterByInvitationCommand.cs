@@ -6,6 +6,7 @@ using MediatR;
 using Shared.ValidationBase;
 using Shared.ValidationBase.Interfaces;
 
+
 namespace Application.Features.Users.Commands.RegisterByInvitation;
 
 public record RegisterByInvitationCommand(
@@ -46,7 +47,8 @@ public record RegisterByInvitationCommand(
             .EmailAddress().WithMessage("Email format is invalid");
 
         validator.RuleFor(c => c.Password)
-            .Matches(c => c.RepeatPassword)
+            .NotEmpty()
+            .Equal(c => c.RepeatPassword)
             .WithMessage("Passwords do not match");
 
         return validator;

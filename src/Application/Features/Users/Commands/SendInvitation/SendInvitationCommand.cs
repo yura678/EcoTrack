@@ -1,6 +1,4 @@
-﻿using System.Text.RegularExpressions;
-using Application.Features.Users.Commands.RegisterByInvitation;
-using Application.Features.Users.Exceptions;
+﻿using Application.Features.Users.Exceptions;
 using FluentValidation;
 using LanguageExt;
 using MediatR;

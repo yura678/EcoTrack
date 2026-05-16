@@ -36,7 +36,8 @@ public record RegisterEnterpriseAdminCommand(
             .EmailAddress().WithMessage("Email format is invalid");
 
         validator.RuleFor(c => c.Password)
-            .Matches(c => c.RepeatPassword).WithMessage("passwords do not match");
+            .NotEmpty()
+            .Equal(c => c.RepeatPassword).WithMessage("passwords do not match");
 
         validator.RuleFor(x => x.EnterpriseName)
             .NotEmpty()

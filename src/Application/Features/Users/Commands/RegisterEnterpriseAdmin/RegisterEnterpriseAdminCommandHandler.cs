@@ -30,13 +30,9 @@ internal class RegisterEnterpriseAdminCommandHandler(
         {
             var result = await HandleAsync(request, cancellationToken);
             if (result.IsLeft)
-            {
                 transaction.Rollback();
-            }
             else
-            {
                 transaction.Commit();
-            }
 
             return result;
         }
@@ -56,9 +52,17 @@ internal class RegisterEnterpriseAdminCommandHandler(
         if (userNameExist)
             return new UserNameAlreadyExistsException(Guid.Empty);
 
-        var emailNumberExist = await userManager.IsExistEmail(request.Email);
-        if (emailNumberExist)
+        var emailExist = await userManager.IsExistEmail(request.Email);
+        if (emailExist)
             return new EmailAlreadyExistsException(Guid.Empty);
+
+        var sectorOption = await unitOfWork.SectorRepository.GetByIdAsync(request.SectorId, cancellationToken);
+        if (sectorOption.IsNone)
+            return new SectorNotFoundException(request.SectorId);
+
+        var edrpouTaken = await unitOfWork.EnterpriseRepository.GetByEdrpouAsync(request.Edrpou, cancellationToken);
+        if (edrpouTaken.IsSome)
+            return new EdrpouAlreadyExistsException(request.Edrpou);
 
         var enterpriseId = Guid.NewGuid();
         var enterprise = Enterprise.New(
@@ -121,6 +125,11 @@ internal class RegisterEnterpriseAdminCommandHandler(
             cancellationToken: cancellationToken
         );
 
-        return new UserCreateCommandResult { UserGeneratedKey = user.GeneratedCode };
+        return new UserCreateCommandResult
+        {
+            UserId = user.Id,
+            Email = user.Email!,
+            RequiresEmailConfirmation = true,
+        };
     }
 }

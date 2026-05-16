@@ -16,4 +16,15 @@ internal class InvitationRepository(ApplicationDbContext dbContext)
         return await base.TableNoTracking.FirstOrDefaultAsync(
             i => i.Token == token && !i.IsUsed && i.ExpiresAt > DateTime.UtcNow, cancellationToken);
     }
+
+    public async Task<IReadOnlyList<EnterpriseInvitation>> GetActiveByEnterpriseAndEmailAsync(
+        Guid enterpriseId, string email, CancellationToken cancellationToken)
+    {
+        return await base.Table
+            .Where(i => i.EnterpriseId == enterpriseId
+                        && i.Email == email
+                        && !i.IsUsed
+                        && i.ExpiresAt > DateTime.UtcNow)
+            .ToListAsync(cancellationToken);
+    }
 }

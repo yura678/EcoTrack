@@ -11,7 +11,8 @@ namespace Application.Features.Users.Commands.RegisterByInvitation;
 
 internal class RegisterByInvitationCommandHandler(
     IUnitOfWork unitOfWork,
-    IAppUserManager userManager)
+    IAppUserManager userManager,
+    IRoleManagerService roleManagerService)
     : IRequestHandler<RegisterByInvitationCommand, Either<UserException, UserCreateCommandResult>>
 {
     public async Task<Either<UserException, UserCreateCommandResult>> Handle(RegisterByInvitationCommand request,
@@ -47,12 +48,19 @@ internal class RegisterByInvitationCommandHandler(
         return await invitation.MatchAsync<EnterpriseInvitation, Either<UserException, UserCreateCommandResult>>(
             async i =>
             {
+                if (!string.Equals(i.Email, request.Email, StringComparison.OrdinalIgnoreCase))
+                    return new InvitationEmailMismatchException();
+
+                var roleOption = await roleManagerService.GetRoleByIdAsync(i.RoleId);
+                if (roleOption.IsNone)
+                    return new UserRoleNotFoundException(Guid.Empty, i.RoleId);
+
                 var userNameExist = await userManager.IsExistUserName(request.UserName);
                 if (userNameExist)
                     return new UserNameAlreadyExistsException(Guid.Empty);
 
-                var emailNumberExist = await userManager.IsExistEmail(request.Email);
-                if (emailNumberExist)
+                var emailExist = await userManager.IsExistEmail(request.Email);
+                if (emailExist)
                     return new EmailAlreadyExistsException(Guid.Empty);
 
                 var user = new User
@@ -76,7 +84,12 @@ internal class RegisterByInvitationCommandHandler(
                 unitOfWork.InvitationRepository.Update(i);
 
                 await unitOfWork.SaveChangesAsync(cancellationToken);
-                return new UserCreateCommandResult { UserGeneratedKey = user.GeneratedCode };
+                return new UserCreateCommandResult
+                {
+                    UserId = user.Id,
+                    Email = user.Email!,
+                    RequiresEmailConfirmation = false,
+                };
             },
             () => new InvalidInvitationTokenException(Guid.Empty));
     }

@@ -8,4 +8,6 @@ public interface IInvitationRepository
     Task<EnterpriseInvitation> AddAsync(EnterpriseInvitation entity, CancellationToken cancellationToken);
     EnterpriseInvitation Update(EnterpriseInvitation entity);
     Task<Option<EnterpriseInvitation>> GetValidInvitation(string token, CancellationToken cancellationToken);
+    Task<IReadOnlyList<EnterpriseInvitation>> GetActiveByEnterpriseAndEmailAsync(
+        Guid enterpriseId, string email, CancellationToken cancellationToken);
 }

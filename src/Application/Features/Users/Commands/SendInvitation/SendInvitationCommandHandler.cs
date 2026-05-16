@@ -13,6 +13,7 @@ internal class SendInvitationCommandHandler(
     IUnitOfWork unitOfWork,
     ICurrentUserService currentUserService,
     IRoleManagerService roleManagerService,
+    IAppUserManager userManager,
     IEmailService emailService)
     : IRequestHandler<SendInvitationCommand, Either<UserException, string>>
 {
@@ -31,24 +32,41 @@ internal class SendInvitationCommandHandler(
         Guid adminEnterpriseId,
         CancellationToken cancellationToken)
     {
-        var invitation = EnterpriseInvitation.Create(adminEnterpriseId, request.Email, request.RoleId);
+        var emailExist = await userManager.IsExistEmail(request.Email);
+        if (emailExist)
+            return new EmailAlreadyExistsException(Guid.Empty);
 
+        var existing = await unitOfWork.InvitationRepository
+            .GetActiveByEnterpriseAndEmailAsync(adminEnterpriseId, request.Email, cancellationToken);
+        foreach (var prior in existing)
+        {
+            prior.MarkAsUsed();
+            unitOfWork.InvitationRepository.Update(prior);
+        }
+
+        var invitation = EnterpriseInvitation.Create(adminEnterpriseId, request.Email, request.RoleId);
         await unitOfWork.InvitationRepository.AddAsync(invitation, cancellationToken);
 
-        await unitOfWork.SaveChangesAsync(cancellationToken);
+        using var transaction = await unitOfWork.BeginTransactionAsync(cancellationToken);
+        try
+        {
+            await unitOfWork.SaveChangesAsync(cancellationToken);
 
-        var inviteLink = $"https://ecotrack.com/join?token={invitation.Token}";
+            var inviteLink = $"https://ecotrack.com/join?token={invitation.Token}";
+            await emailService.SendEmailAsync(
+                toEmail: request.Email,
+                subject: "Your Invitation to EcoTrack",
+                body: EmailTemplates.InvitationByEmail(inviteLink),
+                cancellationToken: cancellationToken);
 
-        var emailBody = EmailTemplates.InvitationByEmail(inviteLink);
-
-        await emailService.SendEmailAsync(
-            toEmail: request.Email,
-            subject: "Your Invitation to EcoTrack",
-            body: emailBody,
-            cancellationToken: cancellationToken
-        );
-
-        return invitation.Token;
+            transaction.Commit();
+            return invitation.Token;
+        }
+        catch
+        {
+            transaction.Rollback();
+            throw;
+        }
     }
 
     private async Task<Either<UserException, Domain.Entities.User.Role>> CheckRoleId(Guid roleId, Guid adminEnterpriseId)

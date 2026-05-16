@@ -12,12 +12,14 @@ public static class UserErrorFactory
             UserNotFoundException => StatusCodes.Status404NotFound,
             EnterpriseNotFound => StatusCodes.Status404NotFound,
             UserRoleNotFoundException => StatusCodes.Status404NotFound,
-            
+            SectorNotFoundException => StatusCodes.Status404NotFound,
+
 
             UserCreationException => StatusCodes.Status400BadRequest,
             UserVerificationException => StatusCodes.Status400BadRequest,
             UserRoleAssignmentException => StatusCodes.Status400BadRequest,
             InvalidInvitationTokenException => StatusCodes.Status400BadRequest,
+            InvitationEmailMismatchException => StatusCodes.Status400BadRequest,
 
             InvalidCredentialsException => StatusCodes.Status401Unauthorized,
             InvalidRefreshTokenException => StatusCodes.Status401Unauthorized,
@@ -25,6 +27,7 @@ public static class UserErrorFactory
             PhoneNumberAlreadyExistsException => StatusCodes.Status409Conflict,
             UserNameAlreadyExistsException => StatusCodes.Status409Conflict,
             EmailAlreadyExistsException => StatusCodes.Status409Conflict,
+            EdrpouAlreadyExistsException => StatusCodes.Status409Conflict,
             
             UserIsLockedException => StatusCodes.Status423Locked,
 

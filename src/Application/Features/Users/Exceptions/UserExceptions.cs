@@ -59,6 +59,15 @@ public class EmailAlreadyExistsException(
     Guid userId)
     : UserException(userId, "Email already exists.");
 
+public class EdrpouAlreadyExistsException(string edrpou)
+    : UserException(Guid.Empty, $"Enterprise with EDRPOU '{edrpou}' already exists.");
+
+public class SectorNotFoundException(Guid sectorId)
+    : UserException(Guid.Empty, $"Sector with ID '{sectorId}' was not found.");
+
+public class InvitationEmailMismatchException()
+    : UserException(Guid.Empty, "Invitation is bound to a different email address.");
+
 public class InvalidRefreshTokenException(
     Guid userId)
     : UserException(userId, "Invalid refresh token.");
