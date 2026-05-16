@@ -2,6 +2,16 @@ using Domain.Entities.Monitoring;
 
 namespace Api.Dtos;
 
+public record ComplianceEventListQueryDto(
+    ComplianceEventStatus? Status,
+    ComplianceEventType? EventType,
+    Guid? EmissionSourceId,
+    Guid? DeviceId,
+    DateTime? From,
+    DateTime? To,
+    int Page = 1,
+    int PageSize = 20);
+
 public record ComplianceEventDto(
     Guid Id,
     ComplianceEventType EventType,

@@ -1,5 +1,6 @@
 using Application.Common.Interfaces.Queries.Monitoring;
 using Application.Common.Interfaces.Repositories.Monitoring;
+using Application.Common.Models;
 using Domain.Entities.Monitoring;
 using Infrastructure.Persistence.Repositories.Common;
 using LanguageExt;
@@ -41,5 +42,41 @@ internal class ComplianceEventRepository(ApplicationDbContext context) :
         return await TableNoTracking
             .Where(x => x.EventType == eventType && x.Status == ComplianceEventStatus.Open)
             .ToListAsync(cancellationToken);
+    }
+
+    public async Task<PageResult<ComplianceEvent>> GetPagedAsync(
+        ComplianceEventStatus? status,
+        ComplianceEventType? eventType,
+        Guid? emissionSourceId,
+        Guid? deviceId,
+        DateTime? from,
+        DateTime? to,
+        int page,
+        int pageSize,
+        CancellationToken cancellationToken)
+    {
+        var query = TableNoTracking.AsQueryable();
+
+        if (status.HasValue) query = query.Where(x => x.Status == status.Value);
+        if (eventType.HasValue) query = query.Where(x => x.EventType == eventType.Value);
+        if (emissionSourceId.HasValue) query = query.Where(x => x.EmissionSourceId == emissionSourceId.Value);
+        if (deviceId.HasValue) query = query.Where(x => x.DeviceId == deviceId.Value);
+        if (from.HasValue) query = query.Where(x => x.WindowEnd >= from.Value);
+        if (to.HasValue) query = query.Where(x => x.WindowEnd <= to.Value);
+
+        var total = await query.CountAsync(cancellationToken);
+        var items = await query
+            .OrderByDescending(x => x.DetectedAt)
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
+            .ToListAsync(cancellationToken);
+
+        return new PageResult<ComplianceEvent>
+        {
+            Items = items,
+            TotalCount = total,
+            Page = page,
+            PageSize = pageSize
+        };
     }
 }
