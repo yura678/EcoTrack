@@ -86,6 +86,32 @@ public class Measurement : BaseEntity, ITenantOwned
             validPointsCount, expectedPointsCount,
             Quality.Valid, qualityNote, DateTime.UtcNow, null);
 
+    /// <summary>
+    /// Re-applies a freshly computed aggregate over the same window, used when late-arriving
+    /// raw_measurement data lands in an already-materialized bucket. Resets quality to Valid
+    /// and clears any prior substitution metadata so the caller can re-decide based on the new
+    /// availability.
+    /// </summary>
+    public void RecomputeAggregate(
+        decimal value,
+        decimal? normalizedValue,
+        int validPointsCount,
+        int expectedPointsCount,
+        Guid unitId)
+    {
+        Value = value;
+        NormalizedValue = normalizedValue;
+        ValidPointsCount = validPointsCount;
+        ExpectedPointsCount = expectedPointsCount;
+        UnitId = unitId;
+        Quality = Quality.Valid;
+        QualityNote = null;
+        SubstitutedBy = null;
+        SubstitutionReason = null;
+        SubstitutedAt = null;
+        UpdatedAt = DateTime.UtcNow;
+    }
+
     public void MarkQuality(Quality quality, string? note)
     {
         Quality = quality;

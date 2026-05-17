@@ -16,6 +16,25 @@ internal class MeasurementRepository(ApplicationDbContext context)
         await Entities.AddRangeAsync(entities, cancellationToken);
     }
 
+    public async Task<IReadOnlyList<Measurement>> GetForRescanAsync(
+        IReadOnlyCollection<Guid> sourceIds,
+        IReadOnlyCollection<Guid> pollutantIds,
+        AveragingWindow window,
+        DateTime fromWindowStart,
+        DateTime toWindowStart,
+        CancellationToken cancellationToken)
+    {
+        if (sourceIds.Count == 0 || pollutantIds.Count == 0) return [];
+        return await Entities
+            .Where(m => sourceIds.Contains(m.EmissionSourceId)
+                        && pollutantIds.Contains(m.PollutantId)
+                        && m.Window == window
+                        && m.Aggregation == Aggregation.Average
+                        && m.WindowStart >= fromWindowStart
+                        && m.WindowStart < toWindowStart)
+            .ToListAsync(cancellationToken);
+    }
+
     public async Task<Option<Measurement>> GetByIdAsync(Guid id, CancellationToken cancellationToken)
     {
         var entity = await base.TableNoTracking

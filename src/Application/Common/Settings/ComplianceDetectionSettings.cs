@@ -19,6 +19,15 @@ public class ComplianceDetectionSettings
     public int BackfillWindowsPerTick { get; set; } = 24;
 
     /// <summary>
+    /// Number of most-recent closed windows the materializer re-evaluates on every tick to pick
+    /// up late-arriving raw_measurement data (CEMS buffers, manual corrections, batch uploads).
+    /// Scales with period — e.g. 6 hourly windows ≈ 6h tolerance; 6 minute windows ≈ 6min.
+    /// If the existing Measurement's value/counts change, the record is updated in place and
+    /// IED substitution is re-evaluated.
+    /// </summary>
+    public int LateArrivingRescanWindows { get; set; } = 6;
+
+    /// <summary>
     /// Suppress DeviceOffline and no-calibration alerts for devices installed within this window.
     /// Gives operators time to commission a device + record initial calibration without false alarms.
     /// </summary>

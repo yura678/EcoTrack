@@ -308,6 +308,56 @@ public class MeasurementMaterializationServiceTests : BaseIntegrationTest, IAsyn
             "raw point before ValidFrom must be skipped");
     }
 
+    [Fact]
+    public async Task ShouldRefreshMeasurementWhenLateRawDataLandsInExistingWindow()
+    {
+        var pollutant = PollutantsData.FirstTestPollutant();
+        await Context.Set<Pollutant>().AddAsync(pollutant);
+        var (permit, limit) = ActivePermitWithLimit(pollutant.Id, 1000m);
+        await Context.Set<Permit>().AddAsync(permit);
+        await Context.Set<EmissionLimit>().AddAsync(limit);
+
+        // First pass: 1 raw point at value=20 lands in the current closed hour.
+        // Availability is low → Measurement gets Substituted (no history to use → unchanged value).
+        await Context.Set<RawMeasurement>().AddAsync(RawMeasurement.New(
+            _midWindow, _source.Id, pollutant.Id, _device.Id, _mg.Id, 20m));
+        await SaveChangesAsync();
+        await RefreshCasAsync();
+        await RunMaterializationAsync();
+
+        var firstPass = await Context.Set<Measurement>().AsNoTracking()
+            .FirstAsync(m => m.WindowEnd == _windowEnd && m.PollutantId == pollutant.Id);
+        firstPass.Value.Should().Be(20m);
+        firstPass.ValidPointsCount.Should().Be(1);
+        firstPass.Quality.Should().Be(Quality.Substituted);
+        firstPass.UpdatedAt.Should().NotBeNull("first-pass substitution bumps UpdatedAt");
+        var firstUpdatedAt = firstPass.UpdatedAt!.Value;
+
+        // Late-arriving batch: 49 more points across the same hour bring availability above 75%.
+        // Mean over 50 points = ((20 × 1) + (40 × 49)) / 50 = 39.6.
+        var lateBatch = Enumerable.Range(0, 49).Select(i =>
+            RawMeasurement.New(_windowStart.AddMinutes(i + 5),
+                _source.Id, pollutant.Id, _device.Id, _mg.Id, 40m));
+        await Context.Set<RawMeasurement>().AddRangeAsync(lateBatch);
+        await SaveChangesAsync();
+        await RefreshCasAsync();
+
+        // Wait a tick so UpdatedAt advances visibly.
+        await Task.Delay(50);
+        await RunMaterializationAsync();
+
+        var refreshed = await Context.Set<Measurement>().AsNoTracking()
+            .FirstAsync(m => m.WindowEnd == _windowEnd && m.PollutantId == pollutant.Id);
+        refreshed.Id.Should().Be(firstPass.Id, "rescan must update in place, not insert duplicate");
+        refreshed.Value.Should().BeApproximately(39.6m, 0.1m);
+        refreshed.ValidPointsCount.Should().Be(50);
+        refreshed.Quality.Should().Be(Quality.Valid,
+            "availability is back above threshold → substitution must be cleared");
+        refreshed.SubstitutedAt.Should().BeNull();
+        refreshed.SubstitutionReason.Should().BeNull();
+        refreshed.UpdatedAt.Should().BeAfter(firstUpdatedAt);
+    }
+
     // ─── helpers ─────────────────────────────────────────────────────────────────
 
     private (Permit Permit, EmissionLimit Limit) ActivePermitWithLimit(Guid pollutantId, decimal value)

@@ -40,8 +40,10 @@ public class MeasurementMaterializationService(
             tuples.Select(t => t.PollutantId).Distinct().ToArray(), cancellationToken);
 
         var newMeasurements = new List<Measurement>();
+        var updatedCount = 0;
         var now = DateTime.UtcNow;
         var backfillCap = now - TimeSpan.FromDays(Math.Max(1, _settings.MaxBackfillDays));
+        var rescanWindows = Math.Max(0, _settings.LateArrivingRescanWindows);
 
         foreach (var byPeriod in tuples.GroupBy(t => t.Period))
         {
@@ -56,10 +58,11 @@ public class MeasurementMaterializationService(
                 groupSources, groupPollutants, byPeriod.Key, cancellationToken);
 
             var lastClosedEnd = FloorToPeriod(now, period);
+            var rescanSpan = TimeSpan.FromTicks(period.Ticks * rescanWindows);
 
-            // Per-tuple start: tuples with history continue from their last materialized window;
-            // tuples without history backfill from max(limit.ValidFrom, now − MaxBackfillDays),
-            // floored to the period boundary.
+            // Per-tuple start: tuples with history are extended backwards by rescanSpan so
+            // late-arriving raw data in already-materialized windows is picked up. Tuples
+            // without history backfill from max(limit.ValidFrom, now − MaxBackfillDays).
             var perTupleStart = new Dictionary<(Guid SourceId, Guid PollutantId), DateTime>();
             foreach (var tuple in groupTuples)
             {
@@ -68,7 +71,7 @@ public class MeasurementMaterializationService(
                 DateTime tupleStart;
                 if (lastEnd.HasValue)
                 {
-                    tupleStart = lastEnd.Value;
+                    tupleStart = lastEnd.Value - rescanSpan;
                 }
                 else
                 {
@@ -87,8 +90,15 @@ public class MeasurementMaterializationService(
                 groupSources, groupPollutants, period, earliest, lastClosedEnd, cancellationToken);
             if (buckets.Count == 0) continue;
 
-            // Preload process-parameter averages per (source, window). Required only when a
-            // pollutant in this group has Pollutant.DefaultO2Reference set (NOx, SO2, CO, …).
+            // Preload existing Measurement entities in the rescan span (tracked) so late-data
+            // updates mutate in place rather than violating the unique (source,pollutant,end)
+            // index. Pre-existing records outside rescanSpan are not touched.
+            var existing = await measurementRepository.GetForRescanAsync(
+                groupSources, groupPollutants, byPeriod.Key,
+                fromWindowStart: earliest, toWindowStart: lastClosedEnd, cancellationToken);
+            var existingByKey = existing.ToDictionary(
+                m => (m.EmissionSourceId, m.PollutantId, m.WindowStart));
+
             var needsProcessParams = groupPollutants.Any(p =>
                 o2RefByPollutant.GetValueOrDefault(p).HasValue);
             var paramReadings = needsProcessParams
@@ -103,11 +113,10 @@ public class MeasurementMaterializationService(
 
                 var tupleStart = perTupleStart[(tuple.SourceId, tuple.PollutantId)];
                 var o2Ref = o2RefByPollutant.GetValueOrDefault(tuple.PollutantId);
-                var windowsThisTick = 0;
+                var insertedThisTick = 0;
 
                 foreach (var entry in tupleBuckets.OrderBy(b => b.WindowStart))
                 {
-                    if (windowsThisTick >= _settings.BackfillWindowsPerTick) break;
                     var windowStart = entry.WindowStart;
                     var windowEnd = windowStart + period;
                     if (windowEnd > lastClosedEnd) break;
@@ -119,22 +128,44 @@ public class MeasurementMaterializationService(
                     var validCount = (int)Math.Min(int.MaxValue, entry.ValidCount);
                     var normalizedValue = TryComputeNormalized(
                         entry.Avg.Value, o2Ref, tuple.SourceId, windowStart, paramReadings);
+                    var existingKey = (tuple.SourceId, tuple.PollutantId, windowStart);
 
-                    var measurement = Measurement.New(
-                        Guid.NewGuid(),
-                        windowStart, windowEnd,
-                        tuple.Period, Aggregation.Average,
-                        tuple.SourceId, tuple.PollutantId, deviceId, entry.UnitId,
-                        value: entry.Avg.Value,
-                        validPointsCount: validCount,
-                        expectedPointsCount: expected,
-                        normalizedValue: normalizedValue);
+                    if (existingByKey.TryGetValue(existingKey, out var existingMeasurement))
+                    {
+                        if (existingMeasurement.Value == entry.Avg.Value
+                            && existingMeasurement.NormalizedValue == normalizedValue
+                            && existingMeasurement.ValidPointsCount == validCount
+                            && existingMeasurement.ExpectedPointsCount == expected
+                            && existingMeasurement.UnitId == entry.UnitId)
+                        {
+                            continue;
+                        }
 
-                    await ApplyIedSubstitutionIfNeededAsync(
-                        measurement, tuple, validCount, expected, windowStart, cancellationToken);
+                        existingMeasurement.RecomputeAggregate(
+                            entry.Avg.Value, normalizedValue, validCount, expected, entry.UnitId);
+                        await ApplyIedSubstitutionIfNeededAsync(
+                            existingMeasurement, tuple, validCount, expected, windowStart, cancellationToken);
+                        updatedCount++;
+                    }
+                    else
+                    {
+                        if (insertedThisTick >= _settings.BackfillWindowsPerTick) break;
+                        var measurement = Measurement.New(
+                            Guid.NewGuid(),
+                            windowStart, windowEnd,
+                            tuple.Period, Aggregation.Average,
+                            tuple.SourceId, tuple.PollutantId, deviceId, entry.UnitId,
+                            value: entry.Avg.Value,
+                            validPointsCount: validCount,
+                            expectedPointsCount: expected,
+                            normalizedValue: normalizedValue);
 
-                    newMeasurements.Add(measurement);
-                    windowsThisTick++;
+                        await ApplyIedSubstitutionIfNeededAsync(
+                            measurement, tuple, validCount, expected, windowStart, cancellationToken);
+
+                        newMeasurements.Add(measurement);
+                        insertedThisTick++;
+                    }
                 }
             }
         }
@@ -142,12 +173,15 @@ public class MeasurementMaterializationService(
         if (newMeasurements.Count > 0)
         {
             await measurementRepository.AddRangeAsync(newMeasurements, cancellationToken);
+        }
+        if (newMeasurements.Count > 0 || updatedCount > 0)
+        {
             await unitOfWork.SaveChangesAsync(cancellationToken);
         }
 
         logger.LogInformation(
-            "Materialized {Count} Measurement records in {Ms}ms",
-            newMeasurements.Count, (DateTime.UtcNow - start).TotalMilliseconds);
+            "Materialized {New} new, updated {Updated} Measurement records in {Ms}ms",
+            newMeasurements.Count, updatedCount, (DateTime.UtcNow - start).TotalMilliseconds);
     }
 
     /// <summary>
