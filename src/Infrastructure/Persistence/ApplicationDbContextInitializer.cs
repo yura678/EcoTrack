@@ -551,7 +551,7 @@ public class ApplicationDbContextInitializer(
 
         const int sourceLimit = 12;
         const int days = 3;
-        const int intervalMinutes = 5;
+        const int samplesPerMinute = 6; // every 10s → 1-min CA bucket has 6 points
 
         var pollutantCodes = new[] { "CO", "NO₂", "SO₂" };
         var pollutants = await dbContext.Set<Pollutant>()
@@ -609,7 +609,8 @@ public class ApplicationDbContextInitializer(
         var rng = new Random(42);
         var endTime = DateTime.UtcNow;
         var startTime = endTime.AddDays(-days);
-        var totalSteps = (int)((endTime - startTime).TotalMinutes / intervalMinutes);
+        var totalMinutes = (int)(endTime - startTime).TotalMinutes;
+        var secondsBetweenSamples = 60 / samplesPerMinute;
 
         var batch = new List<RawMeasurement>(capacity: 5000);
         var totalInserted = 0;
@@ -628,30 +629,35 @@ public class ApplicationDbContextInitializer(
             {
                 var baseline = baselineByCode.GetValueOrDefault(pollutant.Code, 10m);
 
-                for (var step = 0; step < totalSteps; step++)
+                for (var minute = 0; minute < totalMinutes; minute++)
                 {
-                    var time = startTime.AddMinutes(step * intervalMinutes);
+                    var minuteStart = startTime.AddMinutes(minute);
 
-                    // Daily sinusoidal cycle (peak around midday)
-                    var hourOfDay = time.Hour + time.Minute / 60.0;
+                    // Daily sinusoidal cycle — same across the minute (peak around midday)
+                    var hourOfDay = minuteStart.Hour + minuteStart.Minute / 60.0;
                     var dailyCycle = (decimal)Math.Sin((hourOfDay - 6) / 24.0 * 2 * Math.PI) * 0.3m;
 
-                    // Random noise ±15%
-                    var noise = (decimal)((rng.NextDouble() - 0.5) * 0.3);
+                    // Occasional 2x spike at minute granularity (~0.5% of minutes)
+                    var spike = rng.NextDouble() < 0.005 ? 1m : 0m;
 
-                    // Occasional 2x spike (~1% chance)
-                    var spike = rng.NextDouble() < 0.01 ? 1m : 0m;
-
-                    var multiplier = 1m + dailyCycle + noise + sourceOffset + spike;
-                    var value = Math.Round(baseline * Math.Max(0.1m, multiplier), 3);
-
-                    batch.Add(RawMeasurement.New(
-                        time, source.Id, pollutant.Id, deviceId, unit.Id, value));
-
-                    if (batch.Count >= 5000)
+                    for (var sample = 0; sample < samplesPerMinute; sample++)
                     {
-                        totalInserted += await rawMeasurementWriter.WriteBatchAsync(batch, CancellationToken.None);
-                        batch.Clear();
+                        var time = minuteStart.AddSeconds(sample * secondsBetweenSamples);
+
+                        // Per-sample noise ±15% — gives within-minute spread for min/max
+                        var noise = (decimal)((rng.NextDouble() - 0.5) * 0.3);
+
+                        var multiplier = 1m + dailyCycle + noise + sourceOffset + spike;
+                        var value = Math.Round(baseline * Math.Max(0.1m, multiplier), 3);
+
+                        batch.Add(RawMeasurement.New(
+                            time, source.Id, pollutant.Id, deviceId, unit.Id, value));
+
+                        if (batch.Count >= 5000)
+                        {
+                            totalInserted += await rawMeasurementWriter.WriteBatchAsync(batch, CancellationToken.None);
+                            batch.Clear();
+                        }
                     }
                 }
             }
@@ -668,7 +674,8 @@ public class ApplicationDbContextInitializer(
             "CALL refresh_continuous_aggregate('measurement_1m', NULL, NULL);");
 
         logger.LogInformation(
-            "Seeded raw_measurement: {Rows} rows across {Sources} sources × {Pollutants} pollutants over {Days} days.",
-            totalInserted, sources.Count, pollutants.Count, days);
+            "Seeded raw_measurement: {Rows} rows across {Sources} sources × {Pollutants} pollutants " +
+            "over {Days} days at {Samples}/min.",
+            totalInserted, sources.Count, pollutants.Count, days, samplesPerMinute);
     }
 }
