@@ -1,3 +1,4 @@
+using Application.Common.Interfaces.Identity;
 using Application.Common.Interfaces.Persistence;
 using Application.Features.ComplianceEvents.Exceptions;
 using Domain.Entities.Monitoring;
@@ -6,7 +7,9 @@ using MediatR;
 
 namespace Application.Features.ComplianceEvents.Commands.CloseComplianceEvent;
 
-public class CloseComplianceEventCommandHandler(IUnitOfWork unitOfWork)
+public class CloseComplianceEventCommandHandler(
+    IUnitOfWork unitOfWork,
+    ICurrentUserService currentUserService)
     : IRequestHandler<CloseComplianceEventCommand,
         Either<ComplianceEventException, ComplianceEvent>>
 {
@@ -21,7 +24,15 @@ public class CloseComplianceEventCommandHandler(IUnitOfWork unitOfWork)
             return await entityOption.MatchAsync<ComplianceEvent, Either<ComplianceEventException, ComplianceEvent>>(
                 async entity =>
                 {
-                    entity.ChangeStatus(ComplianceEventStatus.Closed);
+                    if (entity.Status != ComplianceEventStatus.Open
+                        && entity.Status != ComplianceEventStatus.Investigating)
+                    {
+                        return new ComplianceEventInvalidStatusException(
+                            request.Id, entity.Status,
+                            "Only Open or Investigating events can be closed.");
+                    }
+
+                    entity.Close(request.Reason, request.Note, currentUserService.GetCurrentUserId());
                     unitOfWork.ComplianceEventRepository.Update(entity);
                     await unitOfWork.SaveChangesAsync(cancellationToken);
                     return entity;

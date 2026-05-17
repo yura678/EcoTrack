@@ -32,6 +32,10 @@ public class ComplianceEvent : BaseEntity, ITenantOwned
     public string? Notes { get; private set; }
     public DateTime? UpdatedAt { get; private set; }
 
+    public ResolutionReason? ResolutionReason { get; private set; }
+    public string? ResolutionNote { get; private set; }
+    public Guid? ResolvedByUserId { get; private set; }
+
     private ComplianceEvent(Guid id, ComplianceEventType eventType, Guid emissionSourceId,
         Guid? measurementId, Guid? limitId, Guid? deviceId,
         DateTime windowStart, DateTime windowEnd, decimal? ratio,
@@ -92,9 +96,37 @@ public class ComplianceEvent : BaseEntity, ITenantOwned
 
     public void ChangeStatus(ComplianceEventStatus status)
     {
-        Status = status;
         if (status == ComplianceEventStatus.Closed)
-            ClosedAt = DateTime.UtcNow;
+            throw new InvalidOperationException(
+                "Use Close(reason, note, userId) — closing always requires a resolution reason.");
+
+        Status = status;
+        if (Status == ComplianceEventStatus.Open)
+        {
+            // Reopen path: clear resolution metadata so it can't outlive the closure it belonged to.
+            ClosedAt = null;
+            ResolutionReason = null;
+            ResolutionNote = null;
+            ResolvedByUserId = null;
+        }
+        UpdatedAt = DateTime.UtcNow;
+    }
+
+    /// <summary>
+    /// Closes the event with a regulator-meaningful classification. ResolutionNote is mandatory
+    /// when reason is Other so the audit trail isn't left empty for free-form cases.
+    /// </summary>
+    public void Close(ResolutionReason reason, string? note, Guid? resolvedByUserId)
+    {
+        if (reason == Monitoring.ResolutionReason.Other && string.IsNullOrWhiteSpace(note))
+            throw new ArgumentException(
+                "ResolutionNote is required when ResolutionReason is Other.", nameof(note));
+
+        Status = ComplianceEventStatus.Closed;
+        ClosedAt = DateTime.UtcNow;
+        ResolutionReason = reason;
+        ResolutionNote = string.IsNullOrWhiteSpace(note) ? null : note.Trim();
+        ResolvedByUserId = resolvedByUserId;
         UpdatedAt = DateTime.UtcNow;
     }
 

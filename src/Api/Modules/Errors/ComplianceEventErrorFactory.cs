@@ -12,6 +12,7 @@ public static class ComplianceEventErrorFactory
             StatusCode = error switch
             {
                 ComplianceEventNotFoundException => StatusCodes.Status404NotFound,
+                ComplianceEventInvalidStatusException => StatusCodes.Status409Conflict,
                 UnhandledComplianceEventException => StatusCodes.Status500InternalServerError,
                 _ => throw new NotImplementedException("Compliance event error handler is not implemented.")
             }

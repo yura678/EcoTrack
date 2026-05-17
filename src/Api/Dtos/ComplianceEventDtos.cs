@@ -12,6 +12,10 @@ public record ComplianceEventListQueryDto(
     int Page = 1,
     int PageSize = 20);
 
+public record CloseComplianceEventDto(
+    ResolutionReason Reason,
+    string? Note);
+
 public record ComplianceEventDto(
     Guid Id,
     ComplianceEventType EventType,
@@ -27,7 +31,10 @@ public record ComplianceEventDto(
     DateTime? ClosedAt,
     DateTime? UpdatedAt,
     string? Notes,
-    bool? IsCurrentlyViolating)
+    bool? IsCurrentlyViolating,
+    ResolutionReason? ResolutionReason,
+    string? ResolutionNote,
+    Guid? ResolvedByUserId)
 {
     public static ComplianceEventDto FromDomainModel(ComplianceEvent ev, bool? isCurrentlyViolating = null)
     {
@@ -46,7 +53,10 @@ public record ComplianceEventDto(
             ev.ClosedAt,
             ev.UpdatedAt,
             ev.Notes,
-            isCurrentlyViolating
+            isCurrentlyViolating,
+            ev.ResolutionReason,
+            ev.ResolutionNote,
+            ev.ResolvedByUserId
         );
     }
 }

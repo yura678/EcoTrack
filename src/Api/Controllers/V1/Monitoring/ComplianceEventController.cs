@@ -87,9 +87,17 @@ public class ComplianceEventController(
 
     [HttpPatch("compliance-events/{id:guid}/close")]
     [ProducesOkApiResponseType<ComplianceEventDto>]
-    public async Task<IActionResult> Close(Guid id, CancellationToken cancellationToken)
+    public async Task<IActionResult> Close(
+        Guid id,
+        [FromBody] CloseComplianceEventDto body,
+        CancellationToken cancellationToken)
     {
-        var input = new CloseComplianceEventCommand { Id = id };
+        var input = new CloseComplianceEventCommand
+        {
+            Id = id,
+            Reason = body.Reason,
+            Note = body.Note
+        };
         var result = await sender.Send(input, cancellationToken);
         return result.Match(
             ev => Ok(ComplianceEventDto.FromDomainModel(ev)),

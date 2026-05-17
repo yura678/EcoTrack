@@ -48,6 +48,17 @@ public class ComplianceEventConfiguration : IEntityTypeConfiguration<ComplianceE
             .HasMaxLength(1000)
             .IsRequired(false);
 
+        builder.Property(x => x.ResolutionReason)
+            .HasConversion<int?>()
+            .IsRequired(false);
+
+        builder.Property(x => x.ResolutionNote)
+            .HasMaxLength(1000)
+            .IsRequired(false);
+
+        builder.Property(x => x.ResolvedByUserId)
+            .IsRequired(false);
+
         builder.HasOne(x => x.EmissionSource)
             .WithMany()
             .HasForeignKey(x => x.EmissionSourceId)

@@ -1,3 +1,5 @@
+using Domain.Entities.Monitoring;
+
 namespace Application.Features.ComplianceEvents.Exceptions;
 
 public abstract class ComplianceEventException(
@@ -11,6 +13,11 @@ public abstract class ComplianceEventException(
 
 public class ComplianceEventNotFoundException(Guid id)
     : ComplianceEventException(id, $"Compliance event with ID '{id}' was not found.");
+
+public class ComplianceEventInvalidStatusException(
+    Guid id, ComplianceEventStatus currentStatus, string message)
+    : ComplianceEventException(id,
+        $"Compliance event '{id}' is {currentStatus}. {message}");
 
 public class UnhandledComplianceEventException(Guid id, Exception innerException)
     : ComplianceEventException(id,

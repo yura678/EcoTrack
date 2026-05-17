@@ -67,3 +67,12 @@ public enum ComplianceEventStatus
     Investigating = 1,
     Closed = 2
 }
+
+public enum ResolutionReason
+{
+    SensorFault = 0,
+    DataGap = 1,
+    TrueExceedance = 2,
+    OperatorAction = 3,
+    Other = 4
+}
