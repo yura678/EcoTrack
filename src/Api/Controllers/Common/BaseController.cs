@@ -10,5 +10,4 @@ public class BaseController : ControllerBase
     protected Guid UserId => User.Identity.GetUserId<Guid>();
     protected string UserEmail => User.Identity.FindFirstValue(ClaimTypes.Email);
     protected string UserRole => User.Identity.FindFirstValue(ClaimTypes.Role);
-    protected string UserKey => User.FindFirstValue(ClaimTypes.UserData);
 }

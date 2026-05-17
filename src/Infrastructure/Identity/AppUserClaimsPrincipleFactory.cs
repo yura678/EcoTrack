@@ -16,25 +16,8 @@ public class AppUserClaimsPrincipleFactory : UserClaimsPrincipalFactory<User, Ro
     {
     }
 
-    protected override async Task<ClaimsIdentity> GenerateClaimsAsync(User user)
+    protected override Task<ClaimsIdentity> GenerateClaimsAsync(User user)
     {
-        // var userRoles = await UserManager.GetRolesAsync(user);
-
-        var claimsIdentity = await base.GenerateClaimsAsync(user);
-
-        //claimsIdentity.AddClaim(new Claim(ClaimTypes.Email,user?.Email));
-        //claimsIdentity.AddClaim(new Claim(ClaimTypes.MobilePhone,user.PhoneNumber));
-
-        claimsIdentity.AddClaim(new Claim(ClaimTypes.UserData, user.GeneratedCode));
-
-
-        // foreach (var roles in userRoles)
-        // {
-        //     claimsIdentity.AddClaim(new Claim(ClaimTypes.Role, roles));
-        // }
-
-        //claimsIdentity.AddClaim(new Claim(ClaimTypes.Role,RoleManager.GetRoleNameAsync(user.Roles)));
-
-        return claimsIdentity;
+        return base.GenerateClaimsAsync(user);
     }
 }

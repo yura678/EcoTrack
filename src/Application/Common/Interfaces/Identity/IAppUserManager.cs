@@ -15,7 +15,6 @@ public interface IAppUserManager
     Task<string> GeneratePhoneNumberConfirmationToken(User user, string phoneNumber);
     Task<string> GenerateEmailConfirmationToken(User user, string email);
 
-    Task<Option<User>> GetUserByCode(string code);
     Task<IdentityResult> ChangePhoneNumber(User user, string phoneNumber, string code);
     public Task<IdentityResult> ChangeEmail(User user, string email, string code);
 

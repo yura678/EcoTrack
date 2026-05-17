@@ -46,11 +46,6 @@ public class AppUserManagerImplementation(AppUserManager userManager, ICurrentUs
     {
         return await userManager.GenerateChangeEmailTokenAsync(user, email);
     }
-    public async Task<Option<User>> GetUserByCode(string code)
-    {
-        return await userManager.Users.FirstOrDefaultAsync(c => c.GeneratedCode.Equals(code));
-    }
-
     public Task<IdentityResult> ChangePhoneNumber(User user, string phoneNumber, string code)
     {
         return userManager.ChangePhoneNumberAsync(user, phoneNumber, code);
