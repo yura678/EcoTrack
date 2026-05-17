@@ -257,6 +257,57 @@ public class MeasurementMaterializationServiceTests : BaseIntegrationTest, IAsyn
         measurement!.NormalizedValue.Should().BeNull();
     }
 
+    [Fact]
+    public async Task ShouldBackfillFromLimitValidFromBeyondDefaultHorizon()
+    {
+        var pollutant = PollutantsData.FirstTestPollutant();
+        await Context.Set<Pollutant>().AddAsync(pollutant);
+
+        // ValidFrom = 7 days ago — well beyond the old 3-day fallback horizon.
+        var permitId = Guid.NewGuid();
+        var validFrom = DateTime.UtcNow.AddDays(-7);
+        var limit = EmissionLimit.New(
+            Guid.NewGuid(), 1000m, LimitType.Concentration, AveragingWindow.Hour1,
+            permitId, _mg.Id, pollutant.Id,
+            emissionSourceId: _source.Id, installationId: null,
+            validFrom: validFrom, validTo: null);
+        var permit = Permit.New(
+            permitId, _installation.Id,
+            number: "P-BACK", permitType: PermitType.Air,
+            issuedAt: DateTime.UtcNow.AddDays(-10),
+            validUntil: DateTime.UtcNow.AddYears(1),
+            authority: "Test", notes: null,
+            emissionLimits: [limit]);
+        permit.ChangeStatus(PermitStatus.Active);
+        await Context.Set<Permit>().AddAsync(permit);
+
+        // Inside ValidFrom but outside the old 3-day default — new logic must materialize this.
+        var fiveDaysAgo = DateTime.UtcNow.AddDays(-5);
+        await Context.Set<RawMeasurement>().AddAsync(RawMeasurement.New(
+            fiveDaysAgo, _source.Id, pollutant.Id, _device.Id, _mg.Id, 50m));
+
+        // Before ValidFrom — must be skipped even though raw data exists.
+        var tenDaysAgo = DateTime.UtcNow.AddDays(-10);
+        await Context.Set<RawMeasurement>().AddAsync(RawMeasurement.New(
+            tenDaysAgo, _source.Id, pollutant.Id, _device.Id, _mg.Id, 50m));
+
+        await SaveChangesAsync();
+        await RefreshCasAsync();
+
+        await RunMaterializationAsync();
+
+        var measurements = await Context.Set<Measurement>().AsNoTracking()
+            .Where(m => m.EmissionSourceId == _source.Id && m.PollutantId == pollutant.Id)
+            .ToListAsync();
+
+        measurements.Should().Contain(m =>
+            m.WindowStart <= fiveDaysAgo && m.WindowEnd > fiveDaysAgo,
+            "raw point inside ValidFrom must produce a Measurement");
+        measurements.Should().NotContain(m =>
+            m.WindowStart <= tenDaysAgo && m.WindowEnd > tenDaysAgo,
+            "raw point before ValidFrom must be skipped");
+    }
+
     // ─── helpers ─────────────────────────────────────────────────────────────────
 
     private (Permit Permit, EmissionLimit Limit) ActivePermitWithLimit(Guid pollutantId, decimal value)

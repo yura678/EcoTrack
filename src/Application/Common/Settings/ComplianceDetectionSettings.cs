@@ -7,7 +7,15 @@ public class ComplianceDetectionSettings
     public int DeviceOfflineThresholdMinutes { get; set; } = 30;
     public decimal DataAvailabilityThreshold { get; set; } = 0.75m;
     public int MissingMeasurementWindowMinutes { get; set; } = 60;
-    public int BackfillDays { get; set; } = 3;
+
+    /// <summary>
+    /// Upper bound on how far back materialization will reach when a tuple has no Measurement
+    /// history. The actual start is max(limit.ValidFrom, now − MaxBackfillDays), so a new permit
+    /// with a recent ValidFrom backfills only from that date, while a permit pointing far into
+    /// the past is capped here to avoid scanning years of measurement_1m in one tick.
+    /// </summary>
+    public int MaxBackfillDays { get; set; } = 90;
+
     public int BackfillWindowsPerTick { get; set; } = 24;
 
     /// <summary>

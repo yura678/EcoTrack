@@ -72,7 +72,7 @@ internal class ComplianceDetectionQueries(ApplicationDbContext context) : ICompl
                         && (l.ValidTo == null || l.ValidTo >= now)
                         && l.Permit!.PermitStatus == PermitStatus.Active
                         && l.Permit!.ValidUntil >= now)
-            .Select(l => new { l.EmissionSourceId, l.InstallationId, l.PollutantId, l.Period })
+            .Select(l => new { l.EmissionSourceId, l.InstallationId, l.PollutantId, l.Period, l.ValidFrom })
             .ToListAsync(ct);
 
         var sourcesByInstallation = await GetSourcesByInstallationAsync(
@@ -82,21 +82,35 @@ internal class ComplianceDetectionQueries(ApplicationDbContext context) : ICompl
                 .ToArray(),
             ct);
 
-        var tuples = new HashSet<MaterializationTuple>();
+        // Multiple limits can target the same (source, pollutant, period); take the earliest
+        // ValidFrom so backfill reaches the oldest active obligation.
+        var earliestByKey = new Dictionary<(Guid SourceId, Guid PollutantId, AveragingWindow Period), DateTime>();
+
+        void Record(Guid sourceId, Guid pollutantId, AveragingWindow period, DateTime validFrom)
+        {
+            var key = (sourceId, pollutantId, period);
+            if (!earliestByKey.TryGetValue(key, out var existing) || validFrom < existing)
+                earliestByKey[key] = validFrom;
+        }
+
         foreach (var l in limits)
         {
             if (l.EmissionSourceId.HasValue)
             {
-                tuples.Add(new MaterializationTuple(l.EmissionSourceId.Value, l.PollutantId, l.Period));
+                Record(l.EmissionSourceId.Value, l.PollutantId, l.Period, l.ValidFrom);
             }
             else if (l.InstallationId.HasValue
                      && sourcesByInstallation.TryGetValue(l.InstallationId.Value, out var sids))
             {
                 foreach (var sid in sids)
-                    tuples.Add(new MaterializationTuple(sid, l.PollutantId, l.Period));
+                    Record(sid, l.PollutantId, l.Period, l.ValidFrom);
             }
         }
-        return tuples.ToList();
+
+        return earliestByKey
+            .Select(kvp => new MaterializationTuple(
+                kvp.Key.SourceId, kvp.Key.PollutantId, kvp.Key.Period, kvp.Value))
+            .ToList();
     }
 
     private async Task<Dictionary<Guid, List<Guid>>> GetSourcesByInstallationAsync(

@@ -18,7 +18,8 @@ public record LimitTarget(
 public record MaterializationTuple(
     Guid SourceId,
     Guid PollutantId,
-    AveragingWindow Period);
+    AveragingWindow Period,
+    DateTime EarliestValidFrom);
 
 public record UnitInfo(
     string Symbol,

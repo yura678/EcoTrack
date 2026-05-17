@@ -41,7 +41,7 @@ public class MeasurementMaterializationService(
 
         var newMeasurements = new List<Measurement>();
         var now = DateTime.UtcNow;
-        var fallbackEarliest = now - TimeSpan.FromDays(Math.Max(1, _settings.BackfillDays));
+        var backfillCap = now - TimeSpan.FromDays(Math.Max(1, _settings.MaxBackfillDays));
 
         foreach (var byPeriod in tuples.GroupBy(t => t.Period))
         {
@@ -55,13 +55,32 @@ public class MeasurementMaterializationService(
             var lastEnds = await queries.GetLastWindowEndsAsync(
                 groupSources, groupPollutants, byPeriod.Key, cancellationToken);
 
-            var earliest = lastEnds.Values
-                .Where(v => v.HasValue)
-                .Select(v => v!.Value)
-                .DefaultIfEmpty(fallbackEarliest)
-                .Min();
-
             var lastClosedEnd = FloorToPeriod(now, period);
+
+            // Per-tuple start: tuples with history continue from their last materialized window;
+            // tuples without history backfill from max(limit.ValidFrom, now − MaxBackfillDays),
+            // floored to the period boundary.
+            var perTupleStart = new Dictionary<(Guid SourceId, Guid PollutantId), DateTime>();
+            foreach (var tuple in groupTuples)
+            {
+                var key = (tuple.SourceId, tuple.PollutantId);
+                var lastEnd = lastEnds.GetValueOrDefault(key);
+                DateTime tupleStart;
+                if (lastEnd.HasValue)
+                {
+                    tupleStart = lastEnd.Value;
+                }
+                else
+                {
+                    var floor = tuple.EarliestValidFrom > backfillCap
+                        ? tuple.EarliestValidFrom
+                        : backfillCap;
+                    tupleStart = FloorToPeriod(floor, period);
+                }
+                perTupleStart[key] = tupleStart;
+            }
+
+            var earliest = perTupleStart.Values.DefaultIfEmpty(lastClosedEnd).Min();
             if (earliest >= lastClosedEnd) continue;
 
             var buckets = await queries.GetReBucketedBulkAsync(
@@ -82,7 +101,7 @@ public class MeasurementMaterializationService(
                 if (!deviceLookup.TryGetValue(tuple.SourceId, out var deviceId)) continue;
                 if (!buckets.TryGetValue((tuple.SourceId, tuple.PollutantId), out var tupleBuckets)) continue;
 
-                var tupleLastEnd = lastEnds.GetValueOrDefault((tuple.SourceId, tuple.PollutantId));
+                var tupleStart = perTupleStart[(tuple.SourceId, tuple.PollutantId)];
                 var o2Ref = o2RefByPollutant.GetValueOrDefault(tuple.PollutantId);
                 var windowsThisTick = 0;
 
@@ -92,7 +111,7 @@ public class MeasurementMaterializationService(
                     var windowStart = entry.WindowStart;
                     var windowEnd = windowStart + period;
                     if (windowEnd > lastClosedEnd) break;
-                    if (tupleLastEnd.HasValue && windowEnd <= tupleLastEnd.Value) continue;
+                    if (windowEnd <= tupleStart) continue;
 
                     if (entry.SampleCount == 0 || entry.Avg is null) continue;
 
