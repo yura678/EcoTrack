@@ -103,7 +103,7 @@ public class ComplianceDetectionService(
                 .Select(m => new
                 {
                     m.Id, m.EmissionSourceId, m.PollutantId,
-                    m.Value, m.UnitId, m.Quality, m.WindowStart, m.WindowEnd
+                    m.Value, m.NormalizedValue, m.UnitId, m.Quality, m.WindowStart, m.WindowEnd
                 })
                 .ToListAsync(ct);
 
@@ -115,6 +115,21 @@ public class ComplianceDetectionService(
                 .ToArray();
             var units = await LoadUnitsAsync(unitIds, ct);
 
+            // Pre-fetch volumetric flow for the window if any MassFlow limit might need
+            // to be derived from a MassConcentration measurement.
+            var needsFlow = byPeriod.Any(t =>
+                units.TryGetValue(t.UnitId, out var u)
+                && u.Dimension == MeasureUnitDimension.MassFlow);
+            var flowByKey = needsFlow
+                ? await GetVolumetricFlowForWindowAsync(sourceIds, byPeriod.Key, to, ct)
+                : new Dictionary<Guid, (decimal Value, Guid UnitId)>();
+            if (flowByKey.Count > 0)
+            {
+                var flowUnitIds = flowByKey.Values.Select(v => v.UnitId).Distinct().ToArray();
+                var flowUnits = await LoadUnitsAsync(flowUnitIds, ct);
+                foreach (var (uid, info) in flowUnits) units.TryAdd(uid, info);
+            }
+
             foreach (var t in byPeriod)
             {
                 if (existingKeys.Contains((t.LimitId, t.EmissionSourceId))) continue;
@@ -125,23 +140,45 @@ public class ComplianceDetectionService(
 
                 if (limitUnit.Dimension != measurementUnit.Dimension)
                 {
-                    logger.LogWarning(
-                        "Limit {LimitId} ({LimitDim}) and measurement {MeasurementId} ({MeasDim}) " +
-                        "use incompatible dimensions; skipping.",
-                        t.LimitId, limitUnit.Dimension, m.Id, measurementUnit.Dimension);
+                    var derived = TryDeriveMassFlow(t, m.Value, limitUnit, measurementUnit, flowByKey, units);
+                    if (derived is null)
+                    {
+                        logger.LogWarning(
+                            "Limit {LimitId} ({LimitDim}) and measurement {MeasurementId} ({MeasDim}) " +
+                            "use incompatible dimensions and no derivation path applies; skipping.",
+                            t.LimitId, limitUnit.Dimension, m.Id, measurementUnit.Dimension);
+                        continue;
+                    }
+                    if (derived.MassFlowKgPerH <= derived.LimitKgPerH) continue;
+
+                    var derivedRatio = Math.Round(derived.MassFlowKgPerH / derived.LimitKgPerH, 4);
+                    newEvents.Add(ComplianceEvent.ForLimitExceedance(
+                        Guid.NewGuid(), t.EmissionSourceId,
+                        measurementId: m.Id, t.LimitId, derivedRatio, m.WindowStart, m.WindowEnd,
+                        notes: $"Derived mass flow {derived.MassFlowKgPerH:0.###} kg/h " +
+                               $"({m.Value:0.###} {measurementUnit.Symbol} × " +
+                               $"{derived.FlowDescription}) > " +
+                               $"{t.Value:0.###} {limitUnit.Symbol} (ratio {derivedRatio:0.##})"));
                     continue;
                 }
 
-                var measuredBase = m.Value * measurementUnit.ToBaseFactor;
+                // For Concentration limits, regulator expresses limits at reference conditions
+                // (e.g. "200 mg/m³ NOx @ 6% O₂"). Prefer NormalizedValue when available;
+                // MassFlow/AnnualLoad rates are unaffected by normalization, so still use Value
+                // (but those go through derived-mass-flow path above, never here).
+                var effectiveValue = m.NormalizedValue ?? m.Value;
+                var measuredBase = effectiveValue * measurementUnit.ToBaseFactor;
                 var limitBase = t.Value * limitUnit.ToBaseFactor;
                 if (measuredBase <= limitBase) continue;
 
                 var ratio = Math.Round(measuredBase / limitBase, 4);
+                var valueLabel = m.NormalizedValue.HasValue
+                    ? $"{effectiveValue:0.###} {measurementUnit.Symbol} (normalized)"
+                    : $"{m.Value:0.###} {measurementUnit.Symbol}";
                 newEvents.Add(ComplianceEvent.ForLimitExceedance(
                     Guid.NewGuid(), t.EmissionSourceId,
                     measurementId: m.Id, t.LimitId, ratio, m.WindowStart, m.WindowEnd,
-                    notes: $"{m.Value:0.###} {measurementUnit.Symbol} > " +
-                           $"{t.Value:0.###} {limitUnit.Symbol} (ratio {ratio:0.##})"));
+                    notes: $"{valueLabel} > {t.Value:0.###} {limitUnit.Symbol} (ratio {ratio:0.##})"));
             }
         }
 
@@ -158,6 +195,79 @@ public class ComplianceDetectionService(
             .Select(u => new { u.Id, u.Symbol, u.Dimension, u.ToBaseFactor })
             .ToDictionaryAsync(u => u.Id,
                 u => new UnitInfo(u.Symbol, u.Dimension, u.ToBaseFactor), ct);
+    }
+
+    private record DerivedMassFlow(decimal MassFlowKgPerH, decimal LimitKgPerH, string FlowDescription);
+
+    /// <summary>
+    /// Computes mass flow on the fly from a concentration measurement + volumetric flow process
+    /// parameter. Supports the common CEMS setup where the device only reports concentration
+    /// (mg/m³) and a separate Pitot/anemometer provides flow (m³/h).
+    /// Returns null if derivation is impossible (unsupported dim combo, no flow data,
+    /// or flow unit dimension mismatch).
+    /// </summary>
+    private static DerivedMassFlow? TryDeriveMassFlow(
+        LimitTarget t, decimal measurementValue,
+        UnitInfo limitUnit, UnitInfo measurementUnit,
+        IReadOnlyDictionary<Guid, (decimal Value, Guid UnitId)> flowByKey,
+        IReadOnlyDictionary<Guid, UnitInfo> units)
+    {
+        if (limitUnit.Dimension != MeasureUnitDimension.MassFlow) return null;
+        if (measurementUnit.Dimension != MeasureUnitDimension.MassConcentration) return null;
+        if (!flowByKey.TryGetValue(t.EmissionSourceId, out var flow)) return null;
+        if (!units.TryGetValue(flow.UnitId, out var flowUnit)) return null;
+        if (flowUnit.Dimension != MeasureUnitDimension.VolumetricFlow) return null;
+
+        // measurement (mg/m³ base) × flow (m³/h base) = mg/h → /1e6 = kg/h
+        var concBase = measurementValue * measurementUnit.ToBaseFactor;
+        var flowBase = flow.Value * flowUnit.ToBaseFactor;
+        var massFlowKgPerH = (concBase * flowBase) / 1_000_000m;
+        var limitKgPerH = t.Value * limitUnit.ToBaseFactor;
+
+        return new DerivedMassFlow(
+            MassFlowKgPerH: Math.Round(massFlowKgPerH, 6),
+            LimitKgPerH: limitKgPerH,
+            FlowDescription: $"{flow.Value:0.###} {flowUnit.Symbol}");
+    }
+
+    private Task<Dictionary<Guid, (decimal Value, Guid UnitId)>> GetVolumetricFlowForWindowAsync(
+        Guid[] sourceIds, AveragingWindow period, DateTime windowEnd, CancellationToken ct)
+    {
+        var periodSpan = PeriodToTimeSpan(period);
+        return GetVolumetricFlowForRangeAsync(sourceIds, windowEnd - periodSpan, windowEnd, ct);
+    }
+
+    private async Task<Dictionary<Guid, (decimal Value, Guid UnitId)>> GetVolumetricFlowForRangeAsync(
+        Guid[] sourceIds, DateTime from, DateTime to, CancellationToken ct)
+    {
+        var sql = @"
+            SELECT
+                emission_source_id,
+                (SUM(valid_sum) / NULLIF(SUM(valid_count), 0))::numeric(18,6) AS avg_flow,
+                (array_agg(unit_id))[1] AS unit_id
+            FROM process_parameter_1m
+            WHERE emission_source_id = ANY(@source_ids)
+              AND parameter_type = 4  -- ParameterType.VolumetricFlow
+              AND bucket >= @from
+              AND bucket < @to
+            GROUP BY emission_source_id
+            HAVING SUM(valid_count) > 0";
+
+        await using var command = await CreateCommandAsync(sql, ct);
+        AddParam(command, "source_ids", NpgsqlDbType.Array | NpgsqlDbType.Uuid, sourceIds);
+        AddParam(command, "from", NpgsqlDbType.TimestampTz, EnsureUtc(from));
+        AddParam(command, "to", NpgsqlDbType.TimestampTz, EnsureUtc(to));
+
+        var dict = new Dictionary<Guid, (decimal, Guid)>();
+        await using var reader = await command.ExecuteReaderAsync(ct);
+        while (await reader.ReadAsync(ct))
+        {
+            var sourceId = reader.GetGuid(0);
+            var value = reader.GetDecimal(1);
+            var unitId = reader.GetGuid(2);
+            dict[sourceId] = (value, unitId);
+        }
+        return dict;
     }
 
     // ─── AnnualLoad (rolling rate average against rate limit) ────────────────────
@@ -200,6 +310,21 @@ public class ComplianceDetectionService(
                 .ToArray();
             var units = await LoadUnitsAsync(unitIds, ct);
 
+            // Pre-fetch volumetric flow over the same rolling window so MassFlow limits with
+            // concentration measurements can be derived.
+            var needsFlow = byPeriod.Any(t =>
+                units.TryGetValue(t.UnitId, out var u)
+                && u.Dimension == MeasureUnitDimension.MassFlow);
+            var flowByKey = needsFlow
+                ? await GetVolumetricFlowForRangeAsync(sourceIds, from, now, ct)
+                : new Dictionary<Guid, (decimal Value, Guid UnitId)>();
+            if (flowByKey.Count > 0)
+            {
+                var flowUnitIds = flowByKey.Values.Select(v => v.UnitId).Distinct().ToArray();
+                var flowUnits = await LoadUnitsAsync(flowUnitIds, ct);
+                foreach (var (uid, info) in flowUnits) units.TryAdd(uid, info);
+            }
+
             foreach (var t in byPeriod)
             {
                 if (existingKeys.Contains((t.LimitId, t.EmissionSourceId))) continue;
@@ -209,10 +334,25 @@ public class ComplianceDetectionService(
 
                 if (limitUnit.Dimension != measurementUnit.Dimension)
                 {
-                    logger.LogWarning(
-                        "AnnualLoad limit {LimitId} ({LimitDim}) and measurement unit {MeasUnit} ({MeasDim}) " +
-                        "use incompatible dimensions; skipping.",
-                        t.LimitId, limitUnit.Dimension, r.UnitId, measurementUnit.Dimension);
+                    var derived = TryDeriveMassFlow(t, r.AvgRate, limitUnit, measurementUnit, flowByKey, units);
+                    if (derived is null)
+                    {
+                        logger.LogWarning(
+                            "AnnualLoad limit {LimitId} ({LimitDim}) and measurement unit {MeasUnit} ({MeasDim}) " +
+                            "use incompatible dimensions and no derivation path applies; skipping.",
+                            t.LimitId, limitUnit.Dimension, r.UnitId, measurementUnit.Dimension);
+                        continue;
+                    }
+                    if (derived.MassFlowKgPerH <= derived.LimitKgPerH) continue;
+
+                    var derivedRatio = Math.Round(derived.MassFlowKgPerH / derived.LimitKgPerH, 4);
+                    newEvents.Add(ComplianceEvent.ForLimitExceedance(
+                        Guid.NewGuid(), t.EmissionSourceId,
+                        measurementId: null, t.LimitId, derivedRatio, from, now,
+                        notes: $"AnnualLoad derived: {derived.MassFlowKgPerH:0.###} kg/h " +
+                               $"({r.AvgRate:0.###} {measurementUnit.Symbol} × {derived.FlowDescription}) " +
+                               $"over last {window.TotalDays:0}d > {t.Value:0.###} {limitUnit.Symbol} " +
+                               $"(ratio {derivedRatio:0.##})"));
                     continue;
                 }
 
@@ -519,15 +659,19 @@ public class ComplianceDetectionService(
             .Distinct()
             .ToArray();
 
-        var sourcesByInstallation = installationIds.Length == 0
-            ? new Dictionary<Guid, List<Guid>>()
-            : await context.Set<EmissionSource>()
+        var sourcesByInstallation = new Dictionary<Guid, List<Guid>>();
+
+        if (installationIds.Length > 0)
+        {
+            var sources = await context.Set<EmissionSource>()
                 .Where(s => installationIds.Contains(s.InstallationId))
                 .Select(s => new { s.Id, s.InstallationId })
-                .ToListAsync(ct)
-                .ContinueWith(t => t.Result
-                    .GroupBy(s => s.InstallationId)
-                    .ToDictionary(g => g.Key, g => g.Select(x => x.Id).ToList()), ct);
+                .ToListAsync(ct);
+
+            sourcesByInstallation = sources
+                .GroupBy(s => s.InstallationId)
+                .ToDictionary(g => g.Key, g => g.Select(x => x.Id).ToList());
+        }
 
         var result = new List<LimitTarget>();
         foreach (var l in limits)

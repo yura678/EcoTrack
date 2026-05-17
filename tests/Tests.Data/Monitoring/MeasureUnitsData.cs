@@ -45,4 +45,11 @@ public static class MeasureUnitsData
             symbol: "%-test",
             dimension: MeasureUnitDimension.Dimensionless,
             toBaseFactor: 1m);
+
+    public static MeasureUnit CubicMetersPerHour()
+        => MeasureUnit.New(
+            Guid.NewGuid(),
+            symbol: "m3/h-test",
+            dimension: MeasureUnitDimension.VolumetricFlow,
+            toBaseFactor: 1m);
 }

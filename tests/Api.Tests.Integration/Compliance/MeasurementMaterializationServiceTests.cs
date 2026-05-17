@@ -60,7 +60,7 @@ public class MeasurementMaterializationServiceTests : BaseIntegrationTest, IAsyn
         await Context.Set<Permit>().AddAsync(permit);
         await Context.Set<EmissionLimit>().AddAsync(limit);
 
-        // 100 mg/m³ measurement at 10% O2 → normalized to 6% O2:
+        // 100 mg/m³ measurement at 10% O2 → normalized to 6% O2: 
         // 100 × (21 - 6) / (21 - 10) = 100 × 15 / 11 ≈ 136.363636
         await Context.Set<RawMeasurement>().AddAsync(RawMeasurement.New(
             _midWindow, _source.Id, pollutant.Id, _device.Id, _mg.Id, 100m));
@@ -127,6 +127,40 @@ public class MeasurementMaterializationServiceTests : BaseIntegrationTest, IAsyn
             .FirstOrDefaultAsync(m => m.WindowEnd == _windowEnd && m.PollutantId == pollutant.Id);
         measurement.Should().NotBeNull();
         measurement!.NormalizedValue.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task ShouldApplyFullNormalizationWhenAllProcessParamsPresent()
+    {
+        var pollutant = PollutantsData.WithO2Reference(6m);
+        await Context.Set<Pollutant>().AddAsync(pollutant);
+        var (permit, limit) = ActivePermitWithLimit(pollutant.Id, 1000m);
+        await Context.Set<Permit>().AddAsync(permit);
+        await Context.Set<EmissionLimit>().AddAsync(limit);
+
+        // Measured 100 mg/m³ at: O2=10%, T=200°C, P=98 kPa, H2O=5%
+        // → 100 × (21-6)/(21-10) × (200+273.15)/273.15 × 101.325/98 × 1/(1-0.05) ≈ 257.07
+        await Context.Set<RawMeasurement>().AddAsync(RawMeasurement.New(
+            _midWindow, _source.Id, pollutant.Id, _device.Id, _mg.Id, 100m));
+        await Context.Set<RawProcessParameter>().AddRangeAsync(
+            RawProcessParameter.New(_midWindow, _source.Id, _device.Id,
+                ParameterType.O2Content, 10m, _percent.Id),
+            RawProcessParameter.New(_midWindow, _source.Id, _device.Id,
+                ParameterType.StackTemperature, 200m, _percent.Id),
+            RawProcessParameter.New(_midWindow, _source.Id, _device.Id,
+                ParameterType.StackPressure, 98m, _percent.Id),
+            RawProcessParameter.New(_midWindow, _source.Id, _device.Id,
+                ParameterType.MoistureContent, 5m, _percent.Id));
+        await SaveChangesAsync();
+        await RefreshCasAsync();
+
+        await RunMaterializationAsync();
+
+        var measurement = await Context.Set<Measurement>().AsNoTracking()
+            .FirstOrDefaultAsync(m => m.WindowEnd == _windowEnd && m.PollutantId == pollutant.Id);
+        measurement.Should().NotBeNull();
+        measurement!.NormalizedValue.Should().NotBeNull();
+        measurement.NormalizedValue!.Value.Should().BeApproximately(257.07m, 0.5m);
     }
 
     [Fact]

@@ -64,13 +64,13 @@ public class MeasurementMaterializationService(
                 groupSources, groupPollutants, period, earliest, lastClosedEnd, cancellationToken);
             if (buckets.Count == 0) continue;
 
-            // Pre-load O2 averages per (source, window) for the same range. Used only by
-            // pollutants whose Pollutant.DefaultO2Reference is set (e.g. NOx, SO2, CO).
-            var needsO2 = groupPollutants.Any(p =>
+            // Pre-load process-parameter averages per (source, window) for the same range.
+            // Required when a pollutant has Pollutant.DefaultO2Reference set (NOx, SO2, CO, …).
+            var needsProcessParams = groupPollutants.Any(p =>
                 o2RefByPollutant.GetValueOrDefault(p).HasValue);
-            var o2Averages = needsO2
-                ? await GetO2AveragesPerWindowAsync(groupSources, period, earliest, lastClosedEnd, cancellationToken)
-                : new Dictionary<(Guid, DateTime), decimal>();
+            var paramReadings = needsProcessParams
+                ? await GetProcessParameterAveragesAsync(groupSources, period, earliest, lastClosedEnd, cancellationToken)
+                : new Dictionary<(Guid, DateTime), ProcessParamReadings>();
 
             foreach (var tuple in groupTuples)
             {
@@ -93,7 +93,7 @@ public class MeasurementMaterializationService(
 
                     var expected = (int)period.TotalMinutes;
                     var normalizedValue = TryComputeNormalized(
-                        entry.Avg.Value, o2Ref, tuple.SourceId, windowStart, o2Averages);
+                        entry.Avg.Value, o2Ref, tuple.SourceId, windowStart, paramReadings);
 
                     var measurement = Measurement.New(
                         Guid.NewGuid(),
@@ -200,44 +200,77 @@ public class MeasurementMaterializationService(
             .ToDictionaryAsync(p => p.Id, p => p.DefaultO2Reference, ct);
     }
 
+    private record ProcessParamReadings(
+        decimal? O2Percent,
+        decimal? TemperatureCelsius,
+        decimal? PressureKPa,
+        decimal? MoisturePercent);
+
     /// <summary>
-    /// IED Annex V O2 correction: C_norm = C × (21 - O2_ref) / (21 - O2_actual).
-    /// Returns null when normalization is not applicable: pollutant has no reference,
-    /// no O2 data for the window, or measured O2 is in a sensor-fault range.
+    /// IED Annex V Part 2 §7 full normalization to standard conditions
+    /// (273.15 K, 101.325 kPa, dry gas, reference O₂).
     /// </summary>
+    /// <remarks>
+    /// Formula: C_norm = C × (T_actual/T_ref) × (P_ref/P_actual)
+    ///                 × 1/(1−H2O_fraction) × (21−O2_ref)/(21−O2_actual).
+    /// Missing process parameters fall back to their reference value (correction factor = 1).
+    /// O₂ correction is required when the pollutant has a DefaultO2Reference;
+    /// if O₂ data is absent or in sensor-fault range, returns null.
+    /// Assumes T input is °C, P input is kPa, H2O input is percent — the project
+    /// does not yet auto-convert between dimensional units for these.
+    /// </remarks>
     private static decimal? TryComputeNormalized(
         decimal measuredValue,
         decimal? o2Reference,
         Guid sourceId,
         DateTime windowStart,
-        IReadOnlyDictionary<(Guid, DateTime), decimal> o2Averages)
+        IReadOnlyDictionary<(Guid, DateTime), ProcessParamReadings> paramReadings)
     {
         if (o2Reference is null) return null;
-        if (!o2Averages.TryGetValue((sourceId, windowStart), out var o2Actual)) return null;
-        // O2 ≥ 21% means sensor is reading ambient air (probably disconnected).
-        // O2 very low (< 0.5%) means ranges close to denominator zero → unstable.
-        if (o2Actual >= 21m || o2Actual < 0.5m) return null;
+        if (!paramReadings.TryGetValue((sourceId, windowStart), out var p)) return null;
+        if (p.O2Percent is null || p.O2Percent >= 21m || p.O2Percent < 0.5m) return null;
 
-        var divisor = 21m - o2Actual;
-        return Math.Round(measuredValue * (21m - o2Reference.Value) / divisor, 6);
+        const decimal tRefKelvin = 273.15m;
+        const decimal pRefKPa = 101.325m;
+
+        var normalized = measuredValue
+                         * (21m - o2Reference.Value) / (21m - p.O2Percent.Value);
+
+        if (p.TemperatureCelsius is { } tC && tC > -273.15m)
+        {
+            normalized *= (tC + 273.15m) / tRefKelvin;
+        }
+        if (p.PressureKPa is { } pKPa && pKPa > 0m)
+        {
+            normalized *= pRefKPa / pKPa;
+        }
+        if (p.MoisturePercent is { } h2OPct && h2OPct >= 0m && h2OPct < 100m)
+        {
+            var moistureFraction = h2OPct / 100m;
+            normalized *= 1m / (1m - moistureFraction);
+        }
+
+        return Math.Round(normalized, 6);
     }
 
-    private async Task<Dictionary<(Guid, DateTime), decimal>> GetO2AveragesPerWindowAsync(
+    private async Task<Dictionary<(Guid, DateTime), ProcessParamReadings>> GetProcessParameterAveragesAsync(
         Guid[] sourceIds, TimeSpan period,
         DateTime from, DateTime to, CancellationToken ct)
     {
         var periodLiteral = PeriodToPgInterval(period);
+        // ParameterType enum: O2Content=2, StackTemperature=0, StackPressure=1, MoistureContent=3.
         var sql = $@"
             SELECT
                 emission_source_id,
+                parameter_type,
                 time_bucket(INTERVAL '{periodLiteral}', bucket) AS window_start,
-                (SUM(valid_sum) / NULLIF(SUM(valid_count), 0))::numeric(18,6) AS o2_avg
+                (SUM(valid_sum) / NULLIF(SUM(valid_count), 0))::numeric(18,6) AS avg_value
             FROM process_parameter_1m
             WHERE emission_source_id = ANY(@source_ids)
-              AND parameter_type = 2  -- ParameterType.O2Content
+              AND parameter_type = ANY(ARRAY[0, 1, 2, 3])
               AND bucket >= @from
               AND bucket < @to
-            GROUP BY emission_source_id, window_start
+            GROUP BY emission_source_id, parameter_type, window_start
             HAVING SUM(valid_count) > 0";
 
         var connection = (NpgsqlConnection)context.Database.GetDbConnection();
@@ -251,16 +284,35 @@ public class MeasurementMaterializationService(
         AddParam(command, "from", NpgsqlDbType.TimestampTz, EnsureUtc(from));
         AddParam(command, "to", NpgsqlDbType.TimestampTz, EnsureUtc(to));
 
-        var dict = new Dictionary<(Guid, DateTime), decimal>();
+        // Per (source, window): collect per-type avg, then assemble ProcessParamReadings.
+        var byKey = new Dictionary<(Guid, DateTime), Dictionary<int, decimal>>();
         await using var reader = await command.ExecuteReaderAsync(ct);
         while (await reader.ReadAsync(ct))
         {
             var sourceId = reader.GetGuid(0);
-            var windowStart = DateTime.SpecifyKind(reader.GetDateTime(1), DateTimeKind.Utc);
-            var o2 = reader.GetDecimal(2);
-            dict[(sourceId, windowStart)] = o2;
+            var paramType = reader.GetInt32(1);
+            var windowStart = DateTime.SpecifyKind(reader.GetDateTime(2), DateTimeKind.Utc);
+            var avg = reader.GetDecimal(3);
+
+            var key = (sourceId, windowStart);
+            if (!byKey.TryGetValue(key, out var perType))
+            {
+                perType = new Dictionary<int, decimal>();
+                byKey[key] = perType;
+            }
+            perType[paramType] = avg;
         }
-        return dict;
+
+        var result = new Dictionary<(Guid, DateTime), ProcessParamReadings>(byKey.Count);
+        foreach (var (key, perType) in byKey)
+        {
+            result[key] = new ProcessParamReadings(
+                O2Percent: perType.TryGetValue(2, out var o2) ? o2 : null,
+                TemperatureCelsius: perType.TryGetValue(0, out var t) ? t : null,
+                PressureKPa: perType.TryGetValue(1, out var p) ? p : null,
+                MoisturePercent: perType.TryGetValue(3, out var h) ? h : null);
+        }
+        return result;
     }
 
     private async Task<Dictionary<(Guid SourceId, Guid PollutantId), DateTime?>> GetLastWindowEndsAsync(
