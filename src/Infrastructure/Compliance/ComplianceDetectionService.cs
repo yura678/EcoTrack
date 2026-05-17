@@ -337,10 +337,22 @@ public class ComplianceDetectionService(
                 foreach (var (uid, info) in extra) units.TryAdd(uid, info);
             }
 
+            // For Concentration AnnualLoad limits, regulator references "@O₂_ref" basis.
+            // Pre-fetch year-averaged O₂ per source + pollutant O₂ refs to apply IED normalization.
+            var pollutantO2Refs = await queries.GetPollutantO2ReferencesAsync(pollutantIds, ct);
+            var needsNormalization = pollutantO2Refs.Values.Any(v => v.HasValue)
+                && byPeriod.Any(t =>
+                    units.TryGetValue(t.UnitId, out var u)
+                    && u.Dimension == MeasureUnitDimension.MassConcentration);
+            var o2Avgs = needsNormalization
+                ? await queries.GetO2AverageForRangeAsync(sourceIds, from, now, ct)
+                : new Dictionary<Guid, decimal>();
+
             // Installation-level AnnualLoad: sum rolling-average rates across all sources of
             // the installation and compare once.
             var aggregateLimitIds = ProcessAnnualLoadAggregates(
-                byPeriod.ToList(), rolling, units, existingKeys, from, now, window, newEvents);
+                byPeriod.ToList(), rolling, units, existingKeys,
+                pollutantO2Refs, o2Avgs, from, now, window, newEvents);
 
             foreach (var t in byPeriod)
             {
@@ -374,20 +386,50 @@ public class ComplianceDetectionService(
                     continue;
                 }
 
-                var measuredBase = r.AvgRate * measurementUnit.ToBaseFactor;
+                var normalizationApplied = false;
+                var effectiveRate = r.AvgRate;
+                if (limitUnit.Dimension == MeasureUnitDimension.MassConcentration)
+                {
+                    var normalized = TryComputeAnnualO2Normalization(
+                        r.AvgRate, pollutantO2Refs.GetValueOrDefault(t.PollutantId),
+                        o2Avgs.GetValueOrDefault(t.EmissionSourceId));
+                    if (normalized.HasValue)
+                    {
+                        effectiveRate = normalized.Value;
+                        normalizationApplied = true;
+                    }
+                }
+
+                var measuredBase = effectiveRate * measurementUnit.ToBaseFactor;
                 var limitBase = t.Value * limitUnit.ToBaseFactor;
                 if (measuredBase <= limitBase) continue;
 
                 var ratio = Math.Round(measuredBase / limitBase, 4);
+                var label = normalizationApplied
+                    ? $"avg {effectiveRate:0.###} {measurementUnit.Symbol} (normalized)"
+                    : $"avg {r.AvgRate:0.###} {measurementUnit.Symbol}";
                 newEvents.Add(ComplianceEvent.ForLimitExceedance(
                     Guid.NewGuid(), t.EmissionSourceId,
                     measurementId: null, t.LimitId, ratio, from, now,
-                    notes: $"AnnualLoad: avg {r.AvgRate:0.###} {measurementUnit.Symbol} " +
-                           $"over last {window.TotalDays:0}d > limit {t.Value:0.###} {limitUnit.Symbol} " +
-                           $"(ratio {ratio:0.##}, {r.Samples} samples)"));
+                    notes: $"AnnualLoad: {label} over last {window.TotalDays:0}d > " +
+                           $"limit {t.Value:0.###} {limitUnit.Symbol} (ratio {ratio:0.##}, {r.Samples} samples)"));
             }
         }
         return newEvents;
+    }
+
+    /// <summary>
+    /// Year-averaged IED O₂ correction for AnnualLoad concentration limits.
+    /// Less precise than per-minute normalisation (since O₂ varies during the year) but
+    /// is the standard practice for long-window averages.
+    /// </summary>
+    private static decimal? TryComputeAnnualO2Normalization(
+        decimal rawAvgRate, decimal? o2Reference, decimal o2Actual)
+    {
+        if (o2Reference is null) return null;
+        if (o2Actual >= 21m || o2Actual < 0.5m) return null;
+        if (o2Actual == 0m) return null;
+        return Math.Round(rawAvgRate * (21m - o2Reference.Value) / (21m - o2Actual), 6);
     }
 
     /// <summary>
@@ -400,6 +442,8 @@ public class ComplianceDetectionService(
         IReadOnlyDictionary<(Guid, Guid), RollingAverage> rollingByKey,
         IReadOnlyDictionary<Guid, UnitInfo> units,
         HashSet<(Guid LimitId, Guid EmissionSourceId)> existingKeys,
+        IReadOnlyDictionary<Guid, decimal?> pollutantO2Refs,
+        IReadOnlyDictionary<Guid, decimal> o2Avgs,
         DateTime from, DateTime to, TimeSpan window,
         List<ComplianceEvent> sink)
     {
@@ -419,6 +463,7 @@ public class ComplianceDetectionService(
             decimal sumBase = 0m;
             var contributingSources = new List<Guid>();
             long totalSamples = 0;
+            var anyNormalized = false;
 
             foreach (var t in byLimit)
             {
@@ -434,7 +479,21 @@ public class ComplianceDetectionService(
                     break;
                 }
 
-                sumBase += r.AvgRate * measurementUnit.ToBaseFactor;
+                var rateForSource = r.AvgRate;
+                if (limitUnit.Dimension == MeasureUnitDimension.MassConcentration)
+                {
+                    var normalized = TryComputeAnnualO2Normalization(
+                        r.AvgRate,
+                        pollutantO2Refs.GetValueOrDefault(t.PollutantId),
+                        o2Avgs.GetValueOrDefault(t.EmissionSourceId));
+                    if (normalized.HasValue)
+                    {
+                        rateForSource = normalized.Value;
+                        anyNormalized = true;
+                    }
+                }
+
+                sumBase += rateForSource * measurementUnit.ToBaseFactor;
                 totalSamples += r.Samples;
                 contributingSources.Add(t.EmissionSourceId);
             }
@@ -445,6 +504,7 @@ public class ComplianceDetectionService(
             if (sumBase <= limitBase) continue;
 
             var ratio = Math.Round(sumBase / limitBase, 4);
+            var normalizedLabel = anyNormalized ? " (normalized)" : "";
             sink.Add(ComplianceEvent.ForLimitExceedance(
                 Guid.NewGuid(),
                 emissionSourceId: contributingSources[0],
@@ -453,7 +513,7 @@ public class ComplianceDetectionService(
                 ratio: ratio,
                 windowStart: from,
                 windowEnd: to,
-                notes: $"AnnualLoad installation aggregate: sum {sumBase:0.###} {limitUnit.Symbol} " +
+                notes: $"AnnualLoad installation aggregate: sum {sumBase:0.###} {limitUnit.Symbol}{normalizedLabel} " +
                        $"across {contributingSources.Count} source(s) over last {window.TotalDays:0}d > " +
                        $"{primary.Value:0.###} {limitUnit.Symbol} (ratio {ratio:0.##}, {totalSamples} samples)"));
         }

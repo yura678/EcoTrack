@@ -27,6 +27,7 @@ public class ComplianceDetectionServiceTests : BaseIntegrationTest, IAsyncLifeti
     private readonly MeasureUnit _g;
     private readonly MeasureUnit _kgh;
     private readonly MeasureUnit _m3h;
+    private readonly MeasureUnit _percent;
     private readonly MonitoringDevice _device;
 
     private readonly DateTime _lastClosedHourStart;
@@ -47,6 +48,7 @@ public class ComplianceDetectionServiceTests : BaseIntegrationTest, IAsyncLifeti
         _g = MeasureUnitsData.GPerM3();
         _kgh = MeasureUnitsData.KgPerHour();
         _m3h = MeasureUnitsData.CubicMetersPerHour();
+        _percent = MeasureUnitsData.Percent();
         _device = MonitoringDevicesData.FirstTestDevice(_source.Id, _installation.Id);
         // Backdate so default tests aren't suppressed by NewDeviceGraceDays.
         BackdateInstall(_device, TimeSpan.FromDays(60));
@@ -545,6 +547,49 @@ public class ComplianceDetectionServiceTests : BaseIntegrationTest, IAsyncLifeti
     }
 
     [Fact]
+    public async Task ShouldNormalizeRollingConcentrationForAnnualLoadDetection()
+    {
+        // Pollutant with O2 reference 6%; AnnualLoad limit 50 mg/m³, raw avg 40 mg/m³.
+        // At 10% O2 actual: normalized = 40 × (21-6)/(21-10) = 40 × 15/11 ≈ 54.55 > 50.
+        var pollutant = PollutantsData.WithO2Reference(6m);
+        await Context.Set<Pollutant>().AddAsync(pollutant);
+
+        var (permit, limit) = ActivePermitWithLimit(
+            value: 50m, unitId: _mg.Id,
+            limitType: LimitType.AnnualLoad,
+            period: AveragingWindow.Month1,
+            pollutantIdOverride: pollutant.Id);
+        await Context.Set<Permit>().AddAsync(permit);
+        await Context.Set<EmissionLimit>().AddAsync(limit);
+
+        var now = DateTime.UtcNow;
+        await Context.Set<RawMeasurement>().AddRangeAsync(
+            Enumerable.Range(0, 10).Select(i => RawMeasurement.New(
+                time: now.AddMinutes(-i - 1),
+                emissionSourceId: _source.Id,
+                pollutantId: pollutant.Id,
+                deviceId: _device.Id,
+                unitId: _mg.Id,
+                rawValue: 40m)));
+        await Context.Set<RawProcessParameter>().AddRangeAsync(
+            Enumerable.Range(0, 10).Select(i => RawProcessParameter.New(
+                time: now.AddMinutes(-i - 1),
+                emissionSourceId: _source.Id,
+                deviceId: _device.Id,
+                parameterType: ParameterType.O2Content,
+                value: 10m,
+                unitId: _percent.Id)));
+        await SaveChangesAsync();
+
+        await RunDetectionAsync();
+
+        var events = await GetEventsAsync(ComplianceEventType.LimitExceedance, limit.Id);
+        events.Should().HaveCount(1);
+        events[0].Ratio.Should().BeApproximately(1.0909m, 0.001m); // 54.545/50
+        events[0].Notes.Should().Contain("normalized");
+    }
+
+    [Fact]
     public async Task ShouldNotDetectAnnualLoadExceedanceWhenRateWithinLimit()
     {
         var (permit, limit) = ActivePermitWithLimit(
@@ -650,13 +695,15 @@ public class ComplianceDetectionServiceTests : BaseIntegrationTest, IAsyncLifeti
     private (Permit Permit, EmissionLimit Limit) ActivePermitWithLimit(
         decimal value, Guid unitId,
         LimitType limitType = LimitType.Concentration,
-        AveragingWindow period = AveragingWindow.Hour1)
-        => PermitWithLimit(value, unitId, PermitStatus.Active, limitType, period);
+        AveragingWindow period = AveragingWindow.Hour1,
+        Guid? pollutantIdOverride = null)
+        => PermitWithLimit(value, unitId, PermitStatus.Active, limitType, period, pollutantIdOverride);
 
     private (Permit Permit, EmissionLimit Limit) PermitWithLimit(
         decimal value, Guid unitId, PermitStatus status,
         LimitType limitType = LimitType.Concentration,
-        AveragingWindow period = AveragingWindow.Hour1)
+        AveragingWindow period = AveragingWindow.Hour1,
+        Guid? pollutantIdOverride = null)
     {
         var permitId = Guid.NewGuid();
         var limit = EmissionLimit.New(
@@ -666,7 +713,7 @@ public class ComplianceDetectionServiceTests : BaseIntegrationTest, IAsyncLifeti
             period,
             permitId,
             unitId,
-            _pollutant.Id,
+            pollutantIdOverride ?? _pollutant.Id,
             emissionSourceId: _source.Id,
             installationId: null,
             validFrom: DateTime.UtcNow.AddDays(-1),
@@ -813,7 +860,7 @@ public class ComplianceDetectionServiceTests : BaseIntegrationTest, IAsyncLifeti
         await Context.Set<Installation>().AddAsync(_installation);
         await Context.Set<EmissionSource>().AddAsync(_source);
         await Context.Set<Pollutant>().AddAsync(_pollutant);
-        await Context.Set<MeasureUnit>().AddRangeAsync(_mg, _g, _kgh, _m3h);
+        await Context.Set<MeasureUnit>().AddRangeAsync(_mg, _g, _kgh, _m3h, _percent);
         await Context.Set<MonitoringDevice>().AddAsync(_device);
         await SaveChangesAsync();
     }

@@ -398,6 +398,36 @@ internal class ComplianceDetectionQueries(ApplicationDbContext context) : ICompl
         return result;
     }
 
+    public async Task<Dictionary<Guid, decimal>> GetO2AverageForRangeAsync(
+        IReadOnlyCollection<Guid> sourceIds, DateTime from, DateTime to, CancellationToken ct)
+    {
+        if (sourceIds.Count == 0) return [];
+        var sql = @"
+            SELECT
+                emission_source_id,
+                (SUM(valid_sum) / NULLIF(SUM(valid_count), 0))::numeric(18,6) AS avg_o2
+            FROM process_parameter_1m
+            WHERE emission_source_id = ANY(@source_ids)
+              AND parameter_type = 2  -- ParameterType.O2Content
+              AND bucket >= @from
+              AND bucket < @to
+            GROUP BY emission_source_id
+            HAVING SUM(valid_count) > 0";
+
+        await using var command = await CreateCommandAsync(sql, ct);
+        AddParam(command, "source_ids", NpgsqlDbType.Array | NpgsqlDbType.Uuid, sourceIds.ToArray());
+        AddParam(command, "from", NpgsqlDbType.TimestampTz, EnsureUtc(from));
+        AddParam(command, "to", NpgsqlDbType.TimestampTz, EnsureUtc(to));
+
+        var dict = new Dictionary<Guid, decimal>();
+        await using var reader = await command.ExecuteReaderAsync(ct);
+        while (await reader.ReadAsync(ct))
+        {
+            dict[reader.GetGuid(0)] = reader.GetDecimal(1);
+        }
+        return dict;
+    }
+
     public async Task<Dictionary<Guid, FlowReading>> GetVolumetricFlowForRangeAsync(
         IReadOnlyCollection<Guid> sourceIds, DateTime from, DateTime to, CancellationToken ct)
     {

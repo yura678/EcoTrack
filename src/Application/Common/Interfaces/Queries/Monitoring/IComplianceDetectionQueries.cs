@@ -154,6 +154,16 @@ public interface IComplianceDetectionQueries
         DateTime to,
         CancellationToken ct);
 
+    /// <summary>
+    /// Single rolling-window O2 average per source (not bucketed). Used for IED normalization
+    /// of long-window concentration averages (AnnualLoad).
+    /// </summary>
+    Task<Dictionary<Guid, decimal>> GetO2AverageForRangeAsync(
+        IReadOnlyCollection<Guid> sourceIds,
+        DateTime from,
+        DateTime to,
+        CancellationToken ct);
+
     // ── Raw counts & long-window rolling stats ──────────────────────────────
     Task<Dictionary<(Guid SourceId, Guid PollutantId), long>> GetRawMeasurementCountsAsync(
         IReadOnlyCollection<Guid> sourceIds,
