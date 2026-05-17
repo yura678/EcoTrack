@@ -113,11 +113,15 @@ public class DeviceHmacAuthenticationHandler(
 
         memoryCache.Set(nonceKey, true, DeviceHmacAuthDefaults.MaxClockSkew.Add(TimeSpan.FromMinutes(1)));
 
+        // CompanyId is what ApplicationDbContext reads to scope tenant query filters. Without
+        // it, downstream EF reads on tenant-owned tables (DevicePollutantCapability, ...)
+        // collapse to "EnterpriseId == null" and return nothing for this device's owner.
         var claims = new[]
         {
             new Claim(ClaimTypes.NameIdentifier, device.Id.ToString()),
             new Claim("DeviceSerial", device.SerialNumber),
             new Claim("DeviceId", device.Id.ToString()),
+            new Claim("CompanyId", device.EnterpriseId.ToString()),
         };
         var identity = new ClaimsIdentity(claims, DeviceHmacAuthDefaults.Scheme);
         var ticket = new AuthenticationTicket(new ClaimsPrincipal(identity), DeviceHmacAuthDefaults.Scheme);

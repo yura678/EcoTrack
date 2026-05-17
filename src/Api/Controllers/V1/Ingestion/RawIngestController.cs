@@ -1,11 +1,11 @@
 using Api.Attributes;
 using Api.Dtos;
-using Api.Modules.Validators.RawIngest;
-using Application.Common.Interfaces.Ingestion;
+using Api.Modules.Errors;
+using Application.Features.RawIngest.Commands.IngestMeasurements;
+using Application.Features.RawIngest.Commands.IngestProcessParameters;
 using Asp.Versioning;
-using Domain.Entities.Monitoring;
-using FluentValidation;
 using Infrastructure.Identity.Ingestion;
+using MediatR;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
@@ -15,9 +15,7 @@ namespace Api.Controllers.V1.Ingestion;
 [Authorize(AuthenticationSchemes = DeviceHmacAuthDefaults.Scheme)]
 [Route("api/v{version:apiVersion}/ingest")]
 [ApiController]
-public class RawIngestController(
-    IRawMeasurementWriter measurementWriter,
-    IRawProcessParameterWriter parameterWriter) : ControllerBase
+public class RawIngestController(ISender sender) : ControllerBase
 {
     private Guid CurrentDeviceId =>
         Guid.Parse(User.FindFirst("DeviceId")!.Value);
@@ -25,38 +23,38 @@ public class RawIngestController(
     [HttpPost("measurements")]
     [ProducesOkApiResponseType<IngestBatchResult>]
     public async Task<IActionResult> IngestMeasurements(
-        [FromBody] IReadOnlyList<RawMeasurementIngestDto> batch,
+        [FromBody] List<RawMeasurementIngestDto> batch,
         CancellationToken cancellationToken)
     {
-        var validation = await new RawMeasurementBatchValidator().ValidateAsync(batch, cancellationToken);
-        if (!validation.IsValid)
-            return BadRequest(validation.Errors.Select(e => new { e.PropertyName, e.ErrorMessage }));
+        var command = new IngestMeasurementsCommand
+        {
+            DeviceId = CurrentDeviceId,
+            Batch = batch.Select(b => new IngestMeasurementInput(
+                b.Time, b.EmissionSourceId, b.PollutantId, b.UnitId, b.RawValue, b.Quality)).ToList()
+        };
 
-        var deviceId = CurrentDeviceId;
-        var entities = batch.Select(b => RawMeasurement.New(
-            b.Time.ToUniversalTime(), b.EmissionSourceId, b.PollutantId, deviceId,
-            b.UnitId, b.RawValue, b.Quality));
-
-        var inserted = await measurementWriter.WriteBatchAsync(entities, cancellationToken);
-        return Accepted(new IngestBatchResult(inserted));
+        var result = await sender.Send(command, cancellationToken);
+        return result.Match<IActionResult>(
+            ok => Accepted(new IngestBatchResult(ok.InsertedCount)),
+            err => err.ToObjectResult());
     }
 
     [HttpPost("process-parameters")]
     [ProducesOkApiResponseType<IngestBatchResult>]
     public async Task<IActionResult> IngestProcessParameters(
-        [FromBody] IReadOnlyList<RawProcessParameterIngestDto> batch,
+        [FromBody] List<RawProcessParameterIngestDto> batch,
         CancellationToken cancellationToken)
     {
-        var validation = await new RawProcessParameterBatchValidator().ValidateAsync(batch, cancellationToken);
-        if (!validation.IsValid)
-            return BadRequest(validation.Errors.Select(e => new { e.PropertyName, e.ErrorMessage }));
+        var command = new IngestProcessParametersCommand
+        {
+            DeviceId = CurrentDeviceId,
+            Batch = batch.Select(b => new IngestProcessParameterInput(
+                b.Time, b.EmissionSourceId, b.ParameterType, b.Value, b.UnitId, b.Quality)).ToList()
+        };
 
-        var deviceId = CurrentDeviceId;
-        var entities = batch.Select(b => RawProcessParameter.New(
-            b.Time.ToUniversalTime(), b.EmissionSourceId, deviceId,
-            b.ParameterType, b.Value, b.UnitId, b.Quality));
-
-        var inserted = await parameterWriter.WriteBatchAsync(entities, cancellationToken);
-        return Accepted(new IngestBatchResult(inserted));
+        var result = await sender.Send(command, cancellationToken);
+        return result.Match<IActionResult>(
+            ok => Accepted(new IngestBatchResult(ok.InsertedCount)),
+            err => err.ToObjectResult());
     }
 }

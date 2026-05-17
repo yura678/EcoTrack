@@ -49,11 +49,16 @@ public class IntegrationTestWebFactory: WebApplicationFactory<Program>, IAsyncLi
     private void RegisterDatabase(IServiceCollection services)
     {
         services.RemoveServiceByType(typeof(DbContextOptions<ApplicationDbContext>));
+        // Replace the singleton NpgsqlDataSource too — the raw ingest writers connect through
+        // it directly (COPY), so without this they would still hit the production-config DB.
+        services.RemoveServiceByType(typeof(NpgsqlDataSource));
 
         var dataSourceBuilder = new NpgsqlDataSourceBuilder(_dbContainer.GetConnectionString());
         dataSourceBuilder.EnableDynamicJson();
         dataSourceBuilder.UseNetTopologySuite();
         var dataSource = dataSourceBuilder.Build();
+
+        services.AddSingleton(dataSource);
 
         services.AddDbContext<ApplicationDbContext>(options => options
             .UseNpgsql(

@@ -1,3 +1,4 @@
+using Application.Common.Interfaces.Identity;
 using Application.Common.Interfaces.Persistence;
 using Application.Features.Measurements.Exceptions;
 using Domain.Entities.Monitoring;
@@ -7,7 +8,8 @@ using MediatR;
 namespace Application.Features.Measurements.Command;
 
 public class RejectMeasurementCommandHandler(
-    IUnitOfWork unitOfWork)
+    IUnitOfWork unitOfWork,
+    ICurrentUserService currentUserService)
     : IRequestHandler<RejectMeasurementCommand, Either<MeasurementException, Measurement>>
 {
     public async Task<Either<MeasurementException, Measurement>> Handle(
@@ -58,23 +60,29 @@ public class RejectMeasurementCommandHandler(
         entity.MarkQuality(Quality.Invalid, request.Reason);
         unitOfWork.MeasurementRepository.Update(entity);
         await unitOfWork.SaveChangesAsync(cancellationToken);
-        await InvalidateLinkedComplianceEvents(entity.Id, cancellationToken);
+        await InvalidateLinkedComplianceEvents(entity.Id, request.Reason, cancellationToken);
 
         return entity;
     }
 
     private async Task InvalidateLinkedComplianceEvents(
         Guid measurementId,
+        string rejectionReason,
         CancellationToken cancellationToken)
     {
         var events =
             await unitOfWork.ComplianceEventRepository.GetByMeasurementIdAsync(measurementId, cancellationToken);
 
+        var userId = currentUserService.GetCurrentUserId();
+        var note = $"Auto-closed: source measurement rejected. {rejectionReason}".Trim();
+
         foreach (var ev in events)
         {
             if (ev.Status != ComplianceEventStatus.Closed)
             {
-                ev.ChangeStatus(ComplianceEventStatus.Closed);
+                // Operator rejecting the underlying measurement means this exceedance was
+                // computed on bad data → DataGap is the regulator-meaningful classification.
+                ev.Close(ResolutionReason.DataGap, note, userId);
 
                 unitOfWork.ComplianceEventRepository.Update(ev);
                 await unitOfWork.SaveChangesAsync(cancellationToken);

@@ -39,4 +39,17 @@ internal class DevicePollutantCapabilityRepository(ApplicationDbContext context)
             .Where(x => x.DeviceId == deviceId)
             .ToListAsync(cancellationToken);
     }
+
+    public async Task<System.Collections.Generic.HashSet<Guid>> GetConfiguredPollutantsForDeviceAsync(
+        Guid deviceId,
+        IReadOnlyCollection<Guid> pollutantIds,
+        CancellationToken cancellationToken)
+    {
+        if (pollutantIds.Count == 0) return [];
+        var rows = await TableNoTracking
+            .Where(x => x.DeviceId == deviceId && pollutantIds.Contains(x.PollutantId))
+            .Select(x => x.PollutantId)
+            .ToListAsync(cancellationToken);
+        return rows.ToHashSet();
+    }
 }

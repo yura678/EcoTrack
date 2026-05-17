@@ -35,7 +35,10 @@ public class RawProcessParameterIngestDtoValidator : AbstractValidator<RawProces
     }
 }
 
-public class RawMeasurementBatchValidator : AbstractValidator<IReadOnlyList<RawMeasurementIngestDto>>
+// Generic argument matches the controller's [FromBody] parameter runtime type — the global
+// ModelStateValidationAttribute does an exact-type lookup of IValidator<T> via the runtime
+// type of each action argument, so List<T> here must mirror the controller signature.
+public class RawMeasurementBatchValidator : AbstractValidator<List<RawMeasurementIngestDto>>
 {
     public RawMeasurementBatchValidator()
     {
@@ -46,7 +49,7 @@ public class RawMeasurementBatchValidator : AbstractValidator<IReadOnlyList<RawM
     }
 }
 
-public class RawProcessParameterBatchValidator : AbstractValidator<IReadOnlyList<RawProcessParameterIngestDto>>
+public class RawProcessParameterBatchValidator : AbstractValidator<List<RawProcessParameterIngestDto>>
 {
     public RawProcessParameterBatchValidator()
     {
