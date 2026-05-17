@@ -15,4 +15,10 @@ public class ComplianceDetectionSettings
     /// Gives operators time to commission a device + record initial calibration without false alarms.
     /// </summary>
     public int NewDeviceGraceDays { get; set; } = 7;
+
+    /// <summary>
+    /// Cadence for AnnualLoad detection. Annual/monthly running averages change very slowly,
+    /// so running them every fast tick wastes CPU and DB I/O.
+    /// </summary>
+    public int AnnualLoadIntervalHours { get; set; } = 24;
 }

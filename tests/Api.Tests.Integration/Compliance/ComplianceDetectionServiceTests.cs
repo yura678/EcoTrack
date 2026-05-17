@@ -379,6 +379,48 @@ public class ComplianceDetectionServiceTests : BaseIntegrationTest, IAsyncLifeti
         events.Should().BeEmpty();
     }
 
+    // ─── AnnualLoad detection ────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task ShouldDetectAnnualLoadExceedanceWhenAverageRateAboveLimit()
+    {
+        var (permit, limit) = ActivePermitWithLimit(
+            value: 50m, unitId: _kgh.Id,
+            limitType: LimitType.AnnualLoad,
+            period: AveragingWindow.Month1);
+        await Context.Set<Permit>().AddAsync(permit);
+        await Context.Set<EmissionLimit>().AddAsync(limit);
+
+        await SeedRollingRawAsync(ratePerHour: 80m);
+        await SaveChangesAsync();
+
+        await RunDetectionAsync();
+
+        var events = await GetEventsAsync(ComplianceEventType.LimitExceedance, limit.Id);
+        events.Should().HaveCount(1);
+        events[0].Ratio.Should().BeApproximately(1.6m, 0.0001m);
+        events[0].Notes.Should().Contain("AnnualLoad");
+    }
+
+    [Fact]
+    public async Task ShouldNotDetectAnnualLoadExceedanceWhenRateWithinLimit()
+    {
+        var (permit, limit) = ActivePermitWithLimit(
+            value: 50m, unitId: _kgh.Id,
+            limitType: LimitType.AnnualLoad,
+            period: AveragingWindow.Month1);
+        await Context.Set<Permit>().AddAsync(permit);
+        await Context.Set<EmissionLimit>().AddAsync(limit);
+
+        await SeedRollingRawAsync(ratePerHour: 30m);
+        await SaveChangesAsync();
+
+        await RunDetectionAsync();
+
+        var events = await GetEventsAsync(ComplianceEventType.LimitExceedance, limit.Id);
+        events.Should().BeEmpty();
+    }
+
     [Fact]
     public async Task ShouldSkipLimitWhenMeasurementDimensionDiffers()
     {
@@ -417,19 +459,22 @@ public class ComplianceDetectionServiceTests : BaseIntegrationTest, IAsyncLifeti
     // ─── Helpers ─────────────────────────────────────────────────────────────────
 
     private (Permit Permit, EmissionLimit Limit) ActivePermitWithLimit(
-        decimal value, Guid unitId, LimitType limitType = LimitType.Concentration)
-        => PermitWithLimit(value, unitId, PermitStatus.Active, limitType);
+        decimal value, Guid unitId,
+        LimitType limitType = LimitType.Concentration,
+        AveragingWindow period = AveragingWindow.Hour1)
+        => PermitWithLimit(value, unitId, PermitStatus.Active, limitType, period);
 
     private (Permit Permit, EmissionLimit Limit) PermitWithLimit(
         decimal value, Guid unitId, PermitStatus status,
-        LimitType limitType = LimitType.Concentration)
+        LimitType limitType = LimitType.Concentration,
+        AveragingWindow period = AveragingWindow.Hour1)
     {
         var permitId = Guid.NewGuid();
         var limit = EmissionLimit.New(
             Guid.NewGuid(),
             value,
             limitType,
-            AveragingWindow.Hour1,
+            period,
             permitId,
             unitId,
             _pollutant.Id,
@@ -505,6 +550,19 @@ public class ComplianceDetectionServiceTests : BaseIntegrationTest, IAsyncLifeti
             rawValue: 10m));
     }
 
+    private async Task SeedRollingRawAsync(decimal ratePerHour)
+    {
+        var now = DateTime.UtcNow;
+        var rows = Enumerable.Range(0, 10).Select(i => RawMeasurement.New(
+            time: now.AddMinutes(-i),
+            emissionSourceId: _source.Id,
+            pollutantId: _pollutant.Id,
+            deviceId: _device.Id,
+            unitId: _kgh.Id,
+            rawValue: ratePerHour));
+        await Context.Set<RawMeasurement>().AddRangeAsync(rows);
+    }
+
     private async Task<List<ComplianceEvent>> GetEventsAsync(
         ComplianceEventType type, Guid? limitId = null)
     {
@@ -516,9 +574,16 @@ public class ComplianceDetectionServiceTests : BaseIntegrationTest, IAsyncLifeti
 
     private async Task RunDetectionAsync()
     {
+        // Force-materialise the continuous aggregate so detectors that read measurement_1m
+        // see test data inserted via raw_measurement just before this call. Production code
+        // relies on Timescale's real-time aggregation + scheduled refresh policy.
+        await Context.Database.ExecuteSqlRawAsync(
+            "CALL refresh_continuous_aggregate('measurement_1m', NULL, NULL);");
+
         using var scope = _factory.Services.CreateScope();
         var service = scope.ServiceProvider.GetRequiredService<ComplianceDetectionService>();
         await service.RunAsync(CancellationToken.None);
+        await service.RunAnnualLoadAsync(CancellationToken.None);
     }
 
     // ─── Lifecycle ───────────────────────────────────────────────────────────────

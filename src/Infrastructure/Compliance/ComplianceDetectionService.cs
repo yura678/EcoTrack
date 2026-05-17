@@ -24,6 +24,9 @@ public class ComplianceDetectionService(
 {
     private readonly ComplianceDetectionSettings _settings = options.Value;
 
+    /// <summary>
+    /// Fast-cadence detectors. Run every tick (5 min by default).
+    /// </summary>
     public async Task RunAsync(CancellationToken cancellationToken)
     {
         var start = DateTime.UtcNow;
@@ -35,35 +38,34 @@ public class ComplianceDetectionService(
         newEvents.AddRange(await DetectDataAvailabilityLossAsync(cancellationToken));
         newEvents.AddRange(await DetectMissingMeasurementAsync(cancellationToken));
 
-        if (newEvents.Count > 0)
-        {
-            await complianceEventRepository.AddRangeAsync(newEvents, cancellationToken);
-            await unitOfWork.SaveChangesAsync(cancellationToken);
-        }
-
-        await WarnIfAnnualLoadLimitsPresentAsync(cancellationToken);
+        await PersistAsync(newEvents, cancellationToken);
 
         logger.LogInformation(
             "Compliance detection: {New} new events in {Ms}ms",
             newEvents.Count, (DateTime.UtcNow - start).TotalMilliseconds);
     }
 
-    private async Task WarnIfAnnualLoadLimitsPresentAsync(CancellationToken ct)
+    /// <summary>
+    /// Slow-cadence detectors that scan large historical windows.
+    /// AnnualLoad averages move slowly; running this every fast tick wastes CPU.
+    /// </summary>
+    public async Task RunAnnualLoadAsync(CancellationToken cancellationToken)
     {
-        var now = DateTime.UtcNow;
-        var count = await context.Set<EmissionLimit>()
-            .CountAsync(l => l.LimitType == LimitType.AnnualLoad
-                             && l.ValidFrom <= now
-                             && (l.ValidTo == null || l.ValidTo >= now)
-                             && l.Permit!.PermitStatus == PermitStatus.Active,
-                ct);
-        if (count > 0)
-        {
-            logger.LogWarning(
-                "{Count} active AnnualLoad limit(s) found; AnnualLoad detection is not yet implemented. " +
-                "Use the compliance-audit endpoint to manually simulate.",
-                count);
-        }
+        var start = DateTime.UtcNow;
+        var newEvents = await DetectAnnualLoadExceedancesAsync(cancellationToken);
+
+        await PersistAsync(newEvents, cancellationToken);
+
+        logger.LogInformation(
+            "AnnualLoad detection: {New} new events in {Ms}ms",
+            newEvents.Count, (DateTime.UtcNow - start).TotalMilliseconds);
+    }
+
+    private async Task PersistAsync(List<ComplianceEvent> events, CancellationToken ct)
+    {
+        if (events.Count == 0) return;
+        await complianceEventRepository.AddRangeAsync(events, ct);
+        await unitOfWork.SaveChangesAsync(ct);
     }
 
     // ─── LimitExceedance ─────────────────────────────────────────────────────────
@@ -157,6 +159,133 @@ public class ComplianceDetectionService(
             .ToDictionaryAsync(u => u.Id,
                 u => new UnitInfo(u.Symbol, u.Dimension, u.ToBaseFactor), ct);
     }
+
+    // ─── AnnualLoad (rolling rate average against rate limit) ────────────────────
+
+    private async Task<List<ComplianceEvent>> DetectAnnualLoadExceedancesAsync(CancellationToken ct)
+    {
+        var targets = await GetActiveLimitTargetsAsync([LimitType.AnnualLoad], ct);
+        if (targets.Count == 0) return [];
+
+        var existing = await complianceEventQueries.GetOpenByTypeAsync(
+            ComplianceEventType.LimitExceedance, ct);
+        var existingKeys = existing
+            .Where(e => e.LimitId.HasValue)
+            .Select(e => (e.LimitId!.Value, e.EmissionSourceId))
+            .ToHashSet();
+
+        var newEvents = new List<ComplianceEvent>();
+        var now = DateTime.UtcNow;
+
+        foreach (var byPeriod in targets.GroupBy(t => t.Period))
+        {
+            var window = AnnualLoadPeriodToTimeSpan(byPeriod.Key);
+            if (window == TimeSpan.Zero)
+            {
+                logger.LogWarning(
+                    "AnnualLoad limit uses unsupported period {Period}; skipping.", byPeriod.Key);
+                continue;
+            }
+
+            var from = now - window;
+            var sourceIds = byPeriod.Select(t => t.EmissionSourceId).Distinct().ToArray();
+            var pollutantIds = byPeriod.Select(t => t.PollutantId).Distinct().ToArray();
+
+            var rolling = await GetRollingAverageRateAsync(sourceIds, pollutantIds, from, now, ct);
+            if (rolling.Count == 0) continue;
+
+            var unitIds = byPeriod.Select(t => t.UnitId)
+                .Concat(rolling.Values.Select(r => r.UnitId))
+                .Distinct()
+                .ToArray();
+            var units = await LoadUnitsAsync(unitIds, ct);
+
+            foreach (var t in byPeriod)
+            {
+                if (existingKeys.Contains((t.LimitId, t.EmissionSourceId))) continue;
+                if (!rolling.TryGetValue((t.EmissionSourceId, t.PollutantId), out var r)) continue;
+                if (!units.TryGetValue(t.UnitId, out var limitUnit)
+                    || !units.TryGetValue(r.UnitId, out var measurementUnit)) continue;
+
+                if (limitUnit.Dimension != measurementUnit.Dimension)
+                {
+                    logger.LogWarning(
+                        "AnnualLoad limit {LimitId} ({LimitDim}) and measurement unit {MeasUnit} ({MeasDim}) " +
+                        "use incompatible dimensions; skipping.",
+                        t.LimitId, limitUnit.Dimension, r.UnitId, measurementUnit.Dimension);
+                    continue;
+                }
+
+                var measuredBase = r.AvgRate * measurementUnit.ToBaseFactor;
+                var limitBase = t.Value * limitUnit.ToBaseFactor;
+                if (measuredBase <= limitBase) continue;
+
+                var ratio = Math.Round(measuredBase / limitBase, 4);
+                newEvents.Add(ComplianceEvent.ForLimitExceedance(
+                    Guid.NewGuid(), t.EmissionSourceId,
+                    measurementId: null, t.LimitId, ratio, from, now,
+                    notes: $"AnnualLoad: avg {r.AvgRate:0.###} {measurementUnit.Symbol} " +
+                           $"over last {window.TotalDays:0}d > limit {t.Value:0.###} {limitUnit.Symbol} " +
+                           $"(ratio {ratio:0.##}, {r.Samples} samples)"));
+            }
+        }
+
+        return newEvents;
+    }
+
+    private record RollingAverage(decimal AvgRate, long Samples, Guid UnitId);
+
+    private async Task<Dictionary<(Guid SourceId, Guid PollutantId), RollingAverage>>
+        GetRollingAverageRateAsync(
+            Guid[] sourceIds, Guid[] pollutantIds,
+            DateTime from, DateTime to, CancellationToken ct)
+    {
+        // Reads from measurement_1m (pre-aggregated 1-minute buckets) for ~60× faster annual
+        // scans vs raw_measurement. The CA stores valid_sum (Quality=0 only) and valid_count,
+        // so we get true valid-only averages without scanning raw data.
+        var sql = @"
+            SELECT
+                m.emission_source_id,
+                m.pollutant_id,
+                (SUM(m.valid_sum) / NULLIF(SUM(m.valid_count), 0))::numeric(18,6) AS avg_rate,
+                COALESCE(SUM(m.valid_count), 0)::bigint AS samples,
+                (array_agg(m.unit_id))[1] AS unit_id
+            FROM measurement_1m m
+            JOIN emission_source es ON es.id = m.emission_source_id
+            WHERE m.emission_source_id = ANY(@source_ids)
+              AND m.pollutant_id = ANY(@pollutant_ids)
+              AND m.bucket >= @from
+              AND m.bucket < @to
+              AND es.deleted_at IS NULL
+            GROUP BY m.emission_source_id, m.pollutant_id
+            HAVING SUM(m.valid_count) > 0";
+
+        await using var command = await CreateCommandAsync(sql, ct);
+        AddParam(command, "source_ids", NpgsqlDbType.Array | NpgsqlDbType.Uuid, sourceIds);
+        AddParam(command, "pollutant_ids", NpgsqlDbType.Array | NpgsqlDbType.Uuid, pollutantIds);
+        AddParam(command, "from", NpgsqlDbType.TimestampTz, EnsureUtc(from));
+        AddParam(command, "to", NpgsqlDbType.TimestampTz, EnsureUtc(to));
+
+        var dict = new Dictionary<(Guid, Guid), RollingAverage>();
+        await using var reader = await command.ExecuteReaderAsync(ct);
+        while (await reader.ReadAsync(ct))
+        {
+            var sourceId = reader.GetGuid(0);
+            var pollutantId = reader.GetGuid(1);
+            var avg = reader.GetDecimal(2);
+            var samples = reader.GetInt64(3);
+            var unitId = reader.GetGuid(4);
+            dict[(sourceId, pollutantId)] = new RollingAverage(avg, samples, unitId);
+        }
+        return dict;
+    }
+
+    private static TimeSpan AnnualLoadPeriodToTimeSpan(AveragingWindow period) => period switch
+    {
+        AveragingWindow.Month1 => TimeSpan.FromDays(30),
+        AveragingWindow.Year1 => TimeSpan.FromDays(365),
+        _ => TimeSpan.Zero
+    };
 
     // ─── DeviceOffline ───────────────────────────────────────────────────────────
 

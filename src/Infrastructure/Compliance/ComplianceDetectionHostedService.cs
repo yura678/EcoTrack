@@ -31,6 +31,9 @@ public class ComplianceDetectionHostedService(
         try { await Task.Delay(TimeSpan.FromSeconds(30), stoppingToken); }
         catch (OperationCanceledException) { return; }
 
+        var annualLoadInterval = TimeSpan.FromHours(Math.Max(1, _settings.AnnualLoadIntervalHours));
+        var lastAnnualLoadRun = DateTime.MinValue;
+
         do
         {
             try
@@ -52,6 +55,12 @@ public class ComplianceDetectionHostedService(
                 var detection = scope.ServiceProvider
                     .GetRequiredService<ComplianceDetectionService>();
                 await detection.RunAsync(stoppingToken);
+
+                if (DateTime.UtcNow - lastAnnualLoadRun >= annualLoadInterval)
+                {
+                    await detection.RunAnnualLoadAsync(stoppingToken);
+                    lastAnnualLoadRun = DateTime.UtcNow;
+                }
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
