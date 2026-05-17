@@ -1,29 +1,33 @@
 using Application.Common.Interfaces.Persistence;
+using Application.Common.Interfaces.Queries.Monitoring;
+using Application.Common.Interfaces.Repositories.Monitoring;
 using Application.Common.Settings;
-using Domain.Entities.EmissionSources;
-using Domain.Entities.Enterprises;
 using Domain.Entities.Monitoring;
-using Infrastructure.Persistence;
-using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
-using Npgsql;
-using NpgsqlTypes;
 
 namespace Infrastructure.Compliance;
 
+/// <summary>
+/// Builds Measurement aggregate records from measurement_1m for each closed window of every
+/// (source, pollutant, period) tuple covered by an active limit. Applies IED Annex V Part 2 §7
+/// normalization (O₂ + T + P + H₂O) when matching process parameters are available.
+/// All DB reads go through IComplianceDetectionQueries; writes through IMeasurementRepository.
+/// </summary>
 public class MeasurementMaterializationService(
-    ApplicationDbContext context,
+    IComplianceDetectionQueries queries,
+    IMeasurementRepository measurementRepository,
     IUnitOfWork unitOfWork,
     IOptions<ComplianceDetectionSettings> options,
     ILogger<MeasurementMaterializationService> logger)
 {
+    private static readonly LimitType[] RateBasedLimits = [LimitType.Concentration, LimitType.MassFlow];
     private readonly ComplianceDetectionSettings _settings = options.Value;
 
     public async Task RunAsync(CancellationToken cancellationToken)
     {
         var start = DateTime.UtcNow;
-        var tuples = await GetMaterializationTuplesAsync(cancellationToken);
+        var tuples = await queries.GetActiveMaterializationTuplesAsync(RateBasedLimits, cancellationToken);
         if (tuples.Count == 0)
         {
             logger.LogDebug("Materialization skipped: no active limits.");
@@ -31,8 +35,8 @@ public class MeasurementMaterializationService(
         }
 
         var sourceIds = tuples.Select(t => t.SourceId).Distinct().ToArray();
-        var deviceLookup = await GetFirstDevicePerSourceAsync(sourceIds, cancellationToken);
-        var o2RefByPollutant = await GetPollutantO2ReferencesAsync(
+        var deviceLookup = await queries.GetFirstDevicePerSourceAsync(sourceIds, cancellationToken);
+        var o2RefByPollutant = await queries.GetPollutantO2ReferencesAsync(
             tuples.Select(t => t.PollutantId).Distinct().ToArray(), cancellationToken);
 
         var newMeasurements = new List<Measurement>();
@@ -48,7 +52,7 @@ public class MeasurementMaterializationService(
             var groupSources = groupTuples.Select(t => t.SourceId).Distinct().ToArray();
             var groupPollutants = groupTuples.Select(t => t.PollutantId).Distinct().ToArray();
 
-            var lastEnds = await GetLastWindowEndsAsync(
+            var lastEnds = await queries.GetLastWindowEndsAsync(
                 groupSources, groupPollutants, byPeriod.Key, cancellationToken);
 
             var earliest = lastEnds.Values
@@ -60,16 +64,17 @@ public class MeasurementMaterializationService(
             var lastClosedEnd = FloorToPeriod(now, period);
             if (earliest >= lastClosedEnd) continue;
 
-            var buckets = await GetReBucketedBulkAsync(
+            var buckets = await queries.GetReBucketedBulkAsync(
                 groupSources, groupPollutants, period, earliest, lastClosedEnd, cancellationToken);
             if (buckets.Count == 0) continue;
 
-            // Pre-load process-parameter averages per (source, window) for the same range.
-            // Required when a pollutant has Pollutant.DefaultO2Reference set (NOx, SO2, CO, …).
+            // Preload process-parameter averages per (source, window). Required only when a
+            // pollutant in this group has Pollutant.DefaultO2Reference set (NOx, SO2, CO, …).
             var needsProcessParams = groupPollutants.Any(p =>
                 o2RefByPollutant.GetValueOrDefault(p).HasValue);
             var paramReadings = needsProcessParams
-                ? await GetProcessParameterAveragesAsync(groupSources, period, earliest, lastClosedEnd, cancellationToken)
+                ? await queries.GetProcessParameterAveragesAsync(
+                    groupSources, period, earliest, lastClosedEnd, cancellationToken)
                 : new Dictionary<(Guid, DateTime), ProcessParamReadings>();
 
             foreach (var tuple in groupTuples)
@@ -113,7 +118,7 @@ public class MeasurementMaterializationService(
 
         if (newMeasurements.Count > 0)
         {
-            await context.Set<Measurement>().AddRangeAsync(newMeasurements, cancellationToken);
+            await measurementRepository.AddRangeAsync(newMeasurements, cancellationToken);
             await unitOfWork.SaveChangesAsync(cancellationToken);
         }
 
@@ -122,92 +127,8 @@ public class MeasurementMaterializationService(
             newMeasurements.Count, (DateTime.UtcNow - start).TotalMilliseconds);
     }
 
-    // ─── Tuples + lookups ────────────────────────────────────────────────────────
-
-    private record Tuple(Guid SourceId, Guid PollutantId, AveragingWindow Period);
-
-    private async Task<List<Tuple>> GetMaterializationTuplesAsync(CancellationToken ct)
-    {
-        var now = DateTime.UtcNow;
-        // Materialise for rate-based limits (Concentration + MassFlow). AnnualLoad is sum-based
-        // over long periods and needs a separate running-total path (not yet implemented).
-        var limits = await context.Set<EmissionLimit>()
-            .Where(l => (l.LimitType == LimitType.Concentration || l.LimitType == LimitType.MassFlow)
-                        && l.ValidFrom <= now
-                        && (l.ValidTo == null || l.ValidTo >= now)
-                        && l.Permit!.PermitStatus == PermitStatus.Active
-                        && l.Permit!.ValidUntil >= now)
-            .Select(l => new
-            {
-                l.EmissionSourceId, l.InstallationId, l.PollutantId, l.Period
-            })
-            .ToListAsync(ct);
-
-        var installationIds = limits
-            .Where(l => l.EmissionSourceId == null && l.InstallationId != null)
-            .Select(l => l.InstallationId!.Value)
-            .Distinct()
-            .ToArray();
-
-        var sourcesByInstallation = installationIds.Length == 0
-            ? new Dictionary<Guid, List<Guid>>()
-            : (await context.Set<EmissionSource>()
-                    .Where(s => installationIds.Contains(s.InstallationId))
-                    .Select(s => new { s.Id, s.InstallationId })
-                    .ToListAsync(ct))
-                .GroupBy(s => s.InstallationId)
-                .ToDictionary(g => g.Key, g => g.Select(x => x.Id).ToList());
-
-        var tuples = new HashSet<Tuple>();
-        foreach (var l in limits)
-        {
-            if (PeriodToTimeSpan(l.Period) == TimeSpan.Zero) continue;
-
-            if (l.EmissionSourceId.HasValue)
-            {
-                tuples.Add(new Tuple(l.EmissionSourceId.Value, l.PollutantId, l.Period));
-            }
-            else if (l.InstallationId.HasValue
-                     && sourcesByInstallation.TryGetValue(l.InstallationId.Value, out var sids))
-            {
-                foreach (var sid in sids)
-                    tuples.Add(new Tuple(sid, l.PollutantId, l.Period));
-            }
-        }
-        return tuples.ToList();
-    }
-
-    private async Task<Dictionary<Guid, Guid>> GetFirstDevicePerSourceAsync(
-        Guid[] sourceIds, CancellationToken ct)
-    {
-        var rows = await context.Set<MonitoringDevice>()
-            .Where(d => d.EmissionSourceId != null && sourceIds.Contains(d.EmissionSourceId!.Value))
-            .Select(d => new { d.Id, SourceId = d.EmissionSourceId!.Value })
-            .ToListAsync(ct);
-
-        return rows
-            .GroupBy(d => d.SourceId)
-            .ToDictionary(g => g.Key, g => g.First().Id);
-    }
-
-    private async Task<Dictionary<Guid, decimal?>> GetPollutantO2ReferencesAsync(
-        Guid[] pollutantIds, CancellationToken ct)
-    {
-        if (pollutantIds.Length == 0) return [];
-        return await context.Set<Domain.Entities.EmissionSources.Pollutant>()
-            .Where(p => pollutantIds.Contains(p.Id))
-            .Select(p => new { p.Id, p.DefaultO2Reference })
-            .ToDictionaryAsync(p => p.Id, p => p.DefaultO2Reference, ct);
-    }
-
-    private record ProcessParamReadings(
-        decimal? O2Percent,
-        decimal? TemperatureCelsius,
-        decimal? PressureKPa,
-        decimal? MoisturePercent);
-
     /// <summary>
-    /// IED Annex V Part 2 §7 full normalization to standard conditions
+    /// IED Annex V Part 2 §7 normalization to standard conditions
     /// (273.15 K, 101.325 kPa, dry gas, reference O₂).
     /// </summary>
     /// <remarks>
@@ -216,8 +137,8 @@ public class MeasurementMaterializationService(
     /// Missing process parameters fall back to their reference value (correction factor = 1).
     /// O₂ correction is required when the pollutant has a DefaultO2Reference;
     /// if O₂ data is absent or in sensor-fault range, returns null.
-    /// Assumes T input is °C, P input is kPa, H2O input is percent — the project
-    /// does not yet auto-convert between dimensional units for these.
+    /// Assumes T input is °C, P input is kPa, H₂O input is percent — the project does not yet
+    /// auto-convert between dimensional units for these.
     /// </remarks>
     private static decimal? TryComputeNormalized(
         decimal measuredValue,
@@ -233,9 +154,7 @@ public class MeasurementMaterializationService(
         const decimal tRefKelvin = 273.15m;
         const decimal pRefKPa = 101.325m;
 
-        var normalized = measuredValue
-                         * (21m - o2Reference.Value) / (21m - p.O2Percent.Value);
-
+        var normalized = measuredValue * (21m - o2Reference.Value) / (21m - p.O2Percent.Value);
         if (p.TemperatureCelsius is { } tC && tC > -273.15m)
         {
             normalized *= (tC + 273.15m) / tRefKelvin;
@@ -249,170 +168,8 @@ public class MeasurementMaterializationService(
             var moistureFraction = h2OPct / 100m;
             normalized *= 1m / (1m - moistureFraction);
         }
-
         return Math.Round(normalized, 6);
     }
-
-    private async Task<Dictionary<(Guid, DateTime), ProcessParamReadings>> GetProcessParameterAveragesAsync(
-        Guid[] sourceIds, TimeSpan period,
-        DateTime from, DateTime to, CancellationToken ct)
-    {
-        var periodLiteral = PeriodToPgInterval(period);
-        // ParameterType enum: O2Content=2, StackTemperature=0, StackPressure=1, MoistureContent=3.
-        var sql = $@"
-            SELECT
-                emission_source_id,
-                parameter_type,
-                time_bucket(INTERVAL '{periodLiteral}', bucket) AS window_start,
-                (SUM(valid_sum) / NULLIF(SUM(valid_count), 0))::numeric(18,6) AS avg_value
-            FROM process_parameter_1m
-            WHERE emission_source_id = ANY(@source_ids)
-              AND parameter_type = ANY(ARRAY[0, 1, 2, 3])
-              AND bucket >= @from
-              AND bucket < @to
-            GROUP BY emission_source_id, parameter_type, window_start
-            HAVING SUM(valid_count) > 0";
-
-        var connection = (NpgsqlConnection)context.Database.GetDbConnection();
-        if (connection.State != System.Data.ConnectionState.Open)
-        {
-            await connection.OpenAsync(ct);
-        }
-
-        await using var command = new NpgsqlCommand(sql, connection);
-        AddParam(command, "source_ids", NpgsqlDbType.Array | NpgsqlDbType.Uuid, sourceIds);
-        AddParam(command, "from", NpgsqlDbType.TimestampTz, EnsureUtc(from));
-        AddParam(command, "to", NpgsqlDbType.TimestampTz, EnsureUtc(to));
-
-        // Per (source, window): collect per-type avg, then assemble ProcessParamReadings.
-        var byKey = new Dictionary<(Guid, DateTime), Dictionary<int, decimal>>();
-        await using var reader = await command.ExecuteReaderAsync(ct);
-        while (await reader.ReadAsync(ct))
-        {
-            var sourceId = reader.GetGuid(0);
-            var paramType = reader.GetInt32(1);
-            var windowStart = DateTime.SpecifyKind(reader.GetDateTime(2), DateTimeKind.Utc);
-            var avg = reader.GetDecimal(3);
-
-            var key = (sourceId, windowStart);
-            if (!byKey.TryGetValue(key, out var perType))
-            {
-                perType = new Dictionary<int, decimal>();
-                byKey[key] = perType;
-            }
-            perType[paramType] = avg;
-        }
-
-        var result = new Dictionary<(Guid, DateTime), ProcessParamReadings>(byKey.Count);
-        foreach (var (key, perType) in byKey)
-        {
-            result[key] = new ProcessParamReadings(
-                O2Percent: perType.TryGetValue(2, out var o2) ? o2 : null,
-                TemperatureCelsius: perType.TryGetValue(0, out var t) ? t : null,
-                PressureKPa: perType.TryGetValue(1, out var p) ? p : null,
-                MoisturePercent: perType.TryGetValue(3, out var h) ? h : null);
-        }
-        return result;
-    }
-
-    private async Task<Dictionary<(Guid SourceId, Guid PollutantId), DateTime?>> GetLastWindowEndsAsync(
-        Guid[] sourceIds, Guid[] pollutantIds, AveragingWindow period, CancellationToken ct)
-    {
-        var rows = await context.Set<Measurement>()
-            .Where(m => sourceIds.Contains(m.EmissionSourceId)
-                        && pollutantIds.Contains(m.PollutantId)
-                        && m.Window == period
-                        && m.Aggregation == Aggregation.Average)
-            .GroupBy(m => new { m.EmissionSourceId, m.PollutantId })
-            .Select(g => new
-            {
-                g.Key.EmissionSourceId,
-                g.Key.PollutantId,
-                LastEnd = g.Max(x => x.WindowEnd)
-            })
-            .ToListAsync(ct);
-
-        return rows.ToDictionary(
-            r => (r.EmissionSourceId, r.PollutantId),
-            r => (DateTime?)r.LastEnd);
-    }
-
-    // ─── Re-bucket measurement_1m to the limit's Period (bulk) ───────────────────
-
-    private record AggregateBucket(
-        DateTime WindowStart, decimal? Avg,
-        long ValidCount, long SampleCount, Guid UnitId);
-
-    private async Task<Dictionary<(Guid, Guid), List<AggregateBucket>>> GetReBucketedBulkAsync(
-        Guid[] sourceIds, Guid[] pollutantIds, TimeSpan period,
-        DateTime from, DateTime to, CancellationToken ct)
-    {
-        var periodLiteral = PeriodToPgInterval(period);
-        var sql = $@"
-            SELECT
-                emission_source_id,
-                pollutant_id,
-                time_bucket(INTERVAL '{periodLiteral}', bucket) AS window_start,
-                (SUM(sum_value) / NULLIF(SUM(sample_count), 0))::numeric(18,6) AS avg,
-                COALESCE(SUM(valid_count), 0)::bigint AS valid_count,
-                COALESCE(SUM(sample_count), 0)::bigint AS sample_count,
-                (array_agg(unit_id))[1] AS unit_id
-            FROM measurement_1m
-            WHERE emission_source_id = ANY(@source_ids)
-              AND pollutant_id = ANY(@pollutant_ids)
-              AND bucket >= @from
-              AND bucket < @to
-            GROUP BY emission_source_id, pollutant_id, window_start
-            ORDER BY emission_source_id, pollutant_id, window_start";
-
-        var connection = (NpgsqlConnection)context.Database.GetDbConnection();
-        if (connection.State != System.Data.ConnectionState.Open)
-        {
-            await connection.OpenAsync(ct);
-        }
-
-        await using var command = new NpgsqlCommand(sql, connection);
-        AddParam(command, "source_ids", NpgsqlDbType.Array | NpgsqlDbType.Uuid, sourceIds);
-        AddParam(command, "pollutant_ids", NpgsqlDbType.Array | NpgsqlDbType.Uuid, pollutantIds);
-        AddParam(command, "from", NpgsqlDbType.TimestampTz, EnsureUtc(from));
-        AddParam(command, "to", NpgsqlDbType.TimestampTz, EnsureUtc(to));
-
-        var dict = new Dictionary<(Guid, Guid), List<AggregateBucket>>();
-        await using var reader = await command.ExecuteReaderAsync(ct);
-        while (await reader.ReadAsync(ct))
-        {
-            var sourceId = reader.GetGuid(0);
-            var pollutantId = reader.GetGuid(1);
-            var windowStart = DateTime.SpecifyKind(reader.GetDateTime(2), DateTimeKind.Utc);
-            var avg = reader.IsDBNull(3) ? (decimal?)null : reader.GetDecimal(3);
-            var validCount = reader.GetInt64(4);
-            var sampleCount = reader.GetInt64(5);
-            var unitId = reader.GetGuid(6);
-
-            var key = (sourceId, pollutantId);
-            if (!dict.TryGetValue(key, out var list))
-            {
-                list = new List<AggregateBucket>();
-                dict[key] = list;
-            }
-            list.Add(new AggregateBucket(windowStart, avg, validCount, sampleCount, unitId));
-        }
-        return dict;
-    }
-
-    // ─── Helpers ─────────────────────────────────────────────────────────────────
-
-    private static void AddParam(NpgsqlCommand command, string name, NpgsqlDbType type, object value)
-    {
-        var p = command.CreateParameter();
-        p.ParameterName = name;
-        p.NpgsqlDbType = type;
-        p.Value = value;
-        command.Parameters.Add(p);
-    }
-
-    private static DateTime EnsureUtc(DateTime dt) =>
-        dt.Kind == DateTimeKind.Utc ? dt : DateTime.SpecifyKind(dt.ToUniversalTime(), DateTimeKind.Utc);
 
     private static DateTime FloorToPeriod(DateTime t, TimeSpan period)
     {
@@ -429,14 +186,4 @@ public class MeasurementMaterializationService(
         AveragingWindow.Hour24 => TimeSpan.FromHours(24),
         _ => TimeSpan.Zero
     };
-
-    private static string PeriodToPgInterval(TimeSpan period)
-    {
-        if (period == TimeSpan.FromMinutes(1)) return "1 minute";
-        if (period == TimeSpan.FromMinutes(10)) return "10 minutes";
-        if (period == TimeSpan.FromMinutes(30)) return "30 minutes";
-        if (period == TimeSpan.FromHours(1)) return "1 hour";
-        if (period == TimeSpan.FromHours(24)) return "1 day";
-        throw new ArgumentOutOfRangeException(nameof(period), period, null);
-    }
 }

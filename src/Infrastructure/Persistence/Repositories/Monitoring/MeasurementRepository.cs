@@ -11,6 +11,11 @@ namespace Infrastructure.Persistence.Repositories.Monitoring;
 internal class MeasurementRepository(ApplicationDbContext context)
     : BaseAsyncRepository<Measurement>(context), IMeasurementRepository, IMeasurementQueries
 {
+    public async Task AddRangeAsync(IEnumerable<Measurement> entities, CancellationToken cancellationToken)
+    {
+        await Entities.AddRangeAsync(entities, cancellationToken);
+    }
+
     public async Task<Option<Measurement>> GetByIdAsync(Guid id, CancellationToken cancellationToken)
     {
         var entity = await base.TableNoTracking

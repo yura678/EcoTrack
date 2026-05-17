@@ -694,6 +694,7 @@ public class ComplianceDetectionServiceTests : BaseIntegrationTest, IAsyncLifeti
         var service = scope.ServiceProvider.GetRequiredService<ComplianceDetectionService>();
         await service.RunAsync(CancellationToken.None);
         await service.RunAnnualLoadAsync(CancellationToken.None);
+        await service.RunCalibrationChecksAsync(CancellationToken.None);
     }
 
     // ─── Lifecycle ───────────────────────────────────────────────────────────────

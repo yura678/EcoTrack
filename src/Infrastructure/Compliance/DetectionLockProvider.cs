@@ -4,23 +4,20 @@ using Npgsql;
 namespace Infrastructure.Compliance;
 
 /// <summary>
-/// Acquires a Postgres advisory lock so only one instance runs compliance detection at a time.
+/// Acquires a Postgres advisory lock so only one instance runs a given compliance job at a time.
 /// The lock is held on a dedicated connection for the full tick and released on Dispose.
 /// </summary>
 public class DetectionLockProvider(
     NpgsqlDataSource dataSource,
     ILogger<DetectionLockProvider> logger)
 {
-    // Arbitrary constant — must be stable across instances. Different services should use different keys.
-    private const long LockKey = 0x4543_4F44_4554_4543; // "ECODETEC"
-
-    public async Task<IAsyncDisposable?> TryAcquireAsync(CancellationToken cancellationToken)
+    public async Task<IAsyncDisposable?> TryAcquireAsync(long key, CancellationToken cancellationToken)
     {
         var connection = await dataSource.OpenConnectionAsync(cancellationToken);
         try
         {
             await using var cmd = new NpgsqlCommand("SELECT pg_try_advisory_lock(@key)", connection);
-            cmd.Parameters.AddWithValue("@key", LockKey);
+            cmd.Parameters.AddWithValue("@key", key);
 
             var result = await cmd.ExecuteScalarAsync(cancellationToken);
             var acquired = result is bool b && b;
@@ -31,7 +28,7 @@ public class DetectionLockProvider(
                 return null;
             }
 
-            return new LockHandle(connection, LockKey, logger);
+            return new LockHandle(connection, key, logger);
         }
         catch
         {
@@ -52,7 +49,7 @@ public class DetectionLockProvider(
             }
             catch (Exception ex)
             {
-                logger.LogWarning(ex, "Failed to release detection advisory lock.");
+                logger.LogWarning(ex, "Failed to release detection advisory lock (key={Key}).", key);
             }
             finally
             {

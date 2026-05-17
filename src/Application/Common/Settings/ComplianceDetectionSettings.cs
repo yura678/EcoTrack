@@ -21,4 +21,10 @@ public class ComplianceDetectionSettings
     /// so running them every fast tick wastes CPU and DB I/O.
     /// </summary>
     public int AnnualLoadIntervalHours { get; set; } = 24;
+
+    /// <summary>
+    /// Cadence for calibration-status checks. Calibration records are added weekly/monthly
+    /// and overdue status only crosses once per day, so checking every fast tick is wasteful.
+    /// </summary>
+    public int CalibrationCheckIntervalHours { get; set; } = 6;
 }

@@ -75,7 +75,9 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<DetectionLockProvider>();
         services.AddScoped<MeasurementMaterializationService>();
         services.AddScoped<ComplianceDetectionService>();
-        services.AddHostedService<ComplianceDetectionHostedService>();
+        services.AddHostedService<FastDetectionHostedService>();
+        services.AddHostedService<AnnualLoadHostedService>();
+        services.AddHostedService<CalibrationCheckHostedService>();
 
         return services;
     }
@@ -119,6 +121,7 @@ public static class ServiceCollectionExtensions
 
         services.AddScoped<IRawMeasurementQueries, RawMeasurementQueries>();
         services.AddScoped<IRawProcessParameterQueries, RawProcessParameterQueries>();
+        services.AddScoped<IComplianceDetectionQueries, ComplianceDetectionQueries>();
         
         services.AddScoped<MonitoringDeviceRepository>();
         services.AddScoped<IMonitoringDeviceRepository>(provider => provider.GetRequiredService<MonitoringDeviceRepository>());

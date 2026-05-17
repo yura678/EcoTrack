@@ -11,5 +11,6 @@ public interface IMeasurementRepository
         Guid emissionSourceId, CancellationToken cancellationToken);
 
     Task<Measurement> AddAsync(Measurement entity, CancellationToken cancellationToken);
+    Task AddRangeAsync(IEnumerable<Measurement> entities, CancellationToken cancellationToken);
     Measurement Update(Measurement entity);
 }
