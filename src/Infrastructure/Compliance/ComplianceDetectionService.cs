@@ -127,7 +127,7 @@ public class ComplianceDetectionService(
             // Installation-level MassFlow: sum mass-flow values across all sources, compare once.
             // Concentration installation-level stays per-source (concentration is intensive).
             var aggregateLimitIds = ProcessInstallationAggregates(
-                byPeriod.ToList(), byKey, units, existingKeys, to, newEvents);
+                byPeriod.ToList(), byKey, units, flowByKey, existingKeys, to, newEvents);
 
             foreach (var t in byPeriod)
             {
@@ -186,15 +186,18 @@ public class ComplianceDetectionService(
 
     /// <summary>
     /// Handles installation-level MassFlow limits by summing values across all sources of the
-    /// installation and comparing the total with the limit. Returns the set of LimitIds it
-    /// processed so the caller can skip them in the per-source loop.
-    /// Concentration limits are skipped (intensive — handled per-source instead).
-    /// Cross-dimension derivation (concentration × flow then sum) is not supported in v1.
+    /// installation and comparing the total with the limit. Sources reporting MassConcentration
+    /// instead of MassFlow are derived via TryDeriveMassFlow (concentration × volumetric flow).
+    /// Sources that can be neither matched nor derived are excluded from the sum but the rest
+    /// of the aggregate still proceeds, matching the per-source detector's behaviour.
+    /// Returns the set of LimitIds it processed so the caller can skip them in the per-source
+    /// loop. Concentration limits are skipped (intensive — handled per-source instead).
     /// </summary>
     private HashSet<Guid> ProcessInstallationAggregates(
         IReadOnlyList<LimitTarget> targetsInPeriod,
         IReadOnlyDictionary<(Guid, Guid), MeasurementSnapshot> measurementByKey,
         IReadOnlyDictionary<Guid, UnitInfo> units,
+        IReadOnlyDictionary<Guid, FlowReading> flowByKey,
         HashSet<(Guid LimitId, Guid EmissionSourceId)> existingKeys,
         DateTime windowEnd,
         List<ComplianceEvent> sink)
@@ -214,6 +217,8 @@ public class ComplianceDetectionService(
 
             decimal sumBase = 0m;
             var contributingSources = new List<Guid>();
+            var derivedCount = 0;
+            var excludedCount = 0;
             DateTime? windowStart = null;
 
             foreach (var t in byLimit)
@@ -221,19 +226,32 @@ public class ComplianceDetectionService(
                 if (!measurementByKey.TryGetValue((t.EmissionSourceId, t.PollutantId), out var m)) continue;
                 if (m.Quality != Quality.Valid && m.Quality != Quality.Substituted) continue;
                 if (!units.TryGetValue(m.UnitId, out var measurementUnit)) continue;
-                if (measurementUnit.Dimension != limitUnit.Dimension)
+
+                if (measurementUnit.Dimension == limitUnit.Dimension)
                 {
-                    logger.LogWarning(
-                        "Installation-aggregate limit {LimitId} requires uniform dimension; " +
-                        "source {SourceId} measurement is {MeasDim} vs limit {LimitDim} — skipping aggregate.",
-                        primary.LimitId, t.EmissionSourceId, measurementUnit.Dimension, limitUnit.Dimension);
-                    contributingSources.Clear();
-                    break;
+                    var effectiveValue = m.NormalizedValue ?? m.Value;
+                    sumBase += effectiveValue * measurementUnit.ToBaseFactor;
+                    contributingSources.Add(t.EmissionSourceId);
+                    windowStart = m.WindowStart;
+                    continue;
                 }
 
-                var effectiveValue = m.NormalizedValue ?? m.Value;
-                sumBase += effectiveValue * measurementUnit.ToBaseFactor;
+                var derived = TryDeriveMassFlow(t, m.Value, limitUnit, measurementUnit, flowByKey, units);
+                if (derived is null)
+                {
+                    logger.LogWarning(
+                        "Installation-aggregate limit {LimitId}: source {SourceId} uses {MeasDim} " +
+                        "with no derivation path to {LimitDim}; excluded from sum.",
+                        primary.LimitId, t.EmissionSourceId, measurementUnit.Dimension, limitUnit.Dimension);
+                    excludedCount++;
+                    continue;
+                }
+
+                // TryDeriveMassFlow already returns kg/h (the MassFlow base unit), so no further
+                // factor conversion is needed.
+                sumBase += derived.MassFlowKgPerH;
                 contributingSources.Add(t.EmissionSourceId);
+                derivedCount++;
                 windowStart = m.WindowStart;
             }
 
@@ -243,6 +261,7 @@ public class ComplianceDetectionService(
             if (sumBase <= limitBase) continue;
 
             var ratio = Math.Round(sumBase / limitBase, 4);
+            var fidelityTail = AggregateFidelityNote(contributingSources.Count, derivedCount, excludedCount);
             sink.Add(ComplianceEvent.ForLimitExceedance(
                 Guid.NewGuid(),
                 emissionSourceId: contributingSources[0], // representative; events require a single source
@@ -252,11 +271,20 @@ public class ComplianceDetectionService(
                 windowStart: windowStart!.Value,
                 windowEnd: windowEnd,
                 notes: $"Installation aggregate: sum {sumBase:0.###} {limitUnit.Symbol} " +
-                       $"across {contributingSources.Count} source(s) > " +
+                       $"across {contributingSources.Count} source(s){fidelityTail} > " +
                        $"{primary.Value:0.###} {limitUnit.Symbol} (ratio {ratio:0.##})"));
         }
 
         return processed;
+    }
+
+    private static string AggregateFidelityNote(int contributing, int derived, int excluded)
+    {
+        if (derived == 0 && excluded == 0) return "";
+        var parts = new List<string>();
+        if (derived > 0) parts.Add($"{derived} derived from concentration×flow");
+        if (excluded > 0) parts.Add($"{excluded} excluded (no derivation data)");
+        return $" [{string.Join("; ", parts)}]";
     }
 
     private record DerivedMassFlow(decimal MassFlowKgPerH, decimal LimitKgPerH, string FlowDescription);
@@ -351,7 +379,7 @@ public class ComplianceDetectionService(
             // Installation-level AnnualLoad: sum rolling-average rates across all sources of
             // the installation and compare once.
             var aggregateLimitIds = ProcessAnnualLoadAggregates(
-                byPeriod.ToList(), rolling, units, existingKeys,
+                byPeriod.ToList(), rolling, units, flowByKey, existingKeys,
                 pollutantO2Refs, o2Avgs, from, now, window, newEvents);
 
             foreach (var t in byPeriod)
@@ -441,6 +469,7 @@ public class ComplianceDetectionService(
         IReadOnlyList<LimitTarget> targetsInPeriod,
         IReadOnlyDictionary<(Guid, Guid), RollingAverage> rollingByKey,
         IReadOnlyDictionary<Guid, UnitInfo> units,
+        IReadOnlyDictionary<Guid, FlowReading> flowByKey,
         HashSet<(Guid LimitId, Guid EmissionSourceId)> existingKeys,
         IReadOnlyDictionary<Guid, decimal?> pollutantO2Refs,
         IReadOnlyDictionary<Guid, decimal> o2Avgs,
@@ -464,38 +493,52 @@ public class ComplianceDetectionService(
             var contributingSources = new List<Guid>();
             long totalSamples = 0;
             var anyNormalized = false;
+            var derivedCount = 0;
+            var excludedCount = 0;
 
             foreach (var t in byLimit)
             {
                 if (!rollingByKey.TryGetValue((t.EmissionSourceId, t.PollutantId), out var r)) continue;
                 if (!units.TryGetValue(r.UnitId, out var measurementUnit)) continue;
-                if (measurementUnit.Dimension != limitUnit.Dimension)
+
+                if (measurementUnit.Dimension == limitUnit.Dimension)
+                {
+                    var rateForSource = r.AvgRate;
+                    if (limitUnit.Dimension == MeasureUnitDimension.MassConcentration)
+                    {
+                        var normalized = TryComputeAnnualO2Normalization(
+                            r.AvgRate,
+                            pollutantO2Refs.GetValueOrDefault(t.PollutantId),
+                            o2Avgs.GetValueOrDefault(t.EmissionSourceId));
+                        if (normalized.HasValue)
+                        {
+                            rateForSource = normalized.Value;
+                            anyNormalized = true;
+                        }
+                    }
+
+                    sumBase += rateForSource * measurementUnit.ToBaseFactor;
+                    totalSamples += r.Samples;
+                    contributingSources.Add(t.EmissionSourceId);
+                    continue;
+                }
+
+                // Cross-dimension: try derivation (only MassConcentration → MassFlow path supported).
+                var derived = TryDeriveMassFlow(t, r.AvgRate, limitUnit, measurementUnit, flowByKey, units);
+                if (derived is null)
                 {
                     logger.LogWarning(
-                        "AnnualLoad aggregate {LimitId} requires uniform dimension; source {SourceId} " +
-                        "measurement {MeasDim} vs limit {LimitDim} — skipping aggregate.",
+                        "AnnualLoad aggregate {LimitId}: source {SourceId} uses {MeasDim} with no " +
+                        "derivation path to {LimitDim}; excluded from sum.",
                         primary.LimitId, t.EmissionSourceId, measurementUnit.Dimension, limitUnit.Dimension);
-                    contributingSources.Clear();
-                    break;
+                    excludedCount++;
+                    continue;
                 }
 
-                var rateForSource = r.AvgRate;
-                if (limitUnit.Dimension == MeasureUnitDimension.MassConcentration)
-                {
-                    var normalized = TryComputeAnnualO2Normalization(
-                        r.AvgRate,
-                        pollutantO2Refs.GetValueOrDefault(t.PollutantId),
-                        o2Avgs.GetValueOrDefault(t.EmissionSourceId));
-                    if (normalized.HasValue)
-                    {
-                        rateForSource = normalized.Value;
-                        anyNormalized = true;
-                    }
-                }
-
-                sumBase += rateForSource * measurementUnit.ToBaseFactor;
+                sumBase += derived.MassFlowKgPerH;
                 totalSamples += r.Samples;
                 contributingSources.Add(t.EmissionSourceId);
+                derivedCount++;
             }
 
             if (contributingSources.Count == 0) continue;
@@ -505,6 +548,7 @@ public class ComplianceDetectionService(
 
             var ratio = Math.Round(sumBase / limitBase, 4);
             var normalizedLabel = anyNormalized ? " (normalized)" : "";
+            var fidelityTail = AggregateFidelityNote(contributingSources.Count, derivedCount, excludedCount);
             sink.Add(ComplianceEvent.ForLimitExceedance(
                 Guid.NewGuid(),
                 emissionSourceId: contributingSources[0],
@@ -514,7 +558,7 @@ public class ComplianceDetectionService(
                 windowStart: from,
                 windowEnd: to,
                 notes: $"AnnualLoad installation aggregate: sum {sumBase:0.###} {limitUnit.Symbol}{normalizedLabel} " +
-                       $"across {contributingSources.Count} source(s) over last {window.TotalDays:0}d > " +
+                       $"across {contributingSources.Count} source(s){fidelityTail} over last {window.TotalDays:0}d > " +
                        $"{primary.Value:0.###} {limitUnit.Symbol} (ratio {ratio:0.##}, {totalSamples} samples)"));
         }
 

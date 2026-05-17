@@ -457,6 +457,49 @@ public class ComplianceDetectionServiceTests : BaseIntegrationTest, IAsyncLifeti
     }
 
     [Fact]
+    public async Task ShouldDetectInstallationAggregateExceedanceWithMixedDerivedMassFlow()
+    {
+        // Two sources on same installation, MassFlow limit 8 kg/h.
+        // Source A reports 3 kg/h directly.
+        // Source B reports 100 mg/m³ + 60000 m³/h flow → derived 6 kg/h.
+        // Sum = 9 kg/h > 8 → ratio 1.125.
+        var secondSource = EmissionSourcesData.SecondTestAirEmissionSource(_installation.Id);
+        await Context.Set<EmissionSource>().AddAsync(secondSource);
+        var secondDevice = MonitoringDevicesData.SecondTestDevice(secondSource.Id, _installation.Id);
+        SetDeviceStatus(secondDevice, DeviceStatus.Operational);
+        BackdateInstall(secondDevice, TimeSpan.FromDays(60));
+        await Context.Set<MonitoringDevice>().AddAsync(secondDevice);
+
+        var (permit, limit) = ActivePermitWithInstallationLimit(
+            value: 8m, unitId: _kgh.Id, limitType: LimitType.MassFlow);
+        await Context.Set<Permit>().AddAsync(permit);
+        await Context.Set<EmissionLimit>().AddAsync(limit);
+
+        await Context.Set<Measurement>().AddRangeAsync(
+            HourlyMeasurement(value: 3m, unitId: _kgh.Id),
+            HourlyMeasurementForSource(secondSource.Id, secondDevice.Id, value: 100m, unitId: _mg.Id));
+
+        // Volumetric flow for the concentration-reporting source only.
+        await Context.Set<RawProcessParameter>().AddAsync(RawProcessParameter.New(
+            time: _lastClosedHourStart.AddMinutes(30),
+            emissionSourceId: secondSource.Id,
+            deviceId: secondDevice.Id,
+            parameterType: ParameterType.VolumetricFlow,
+            value: 60000m,
+            unitId: _m3h.Id));
+
+        await SaveChangesAsync();
+        await RunDetectionAsync();
+
+        var events = await GetEventsAsync(ComplianceEventType.LimitExceedance, limit.Id);
+        events.Should().HaveCount(1);
+        events[0].Ratio.Should().BeApproximately(1.125m, 0.0001m);
+        events[0].Notes.Should().Contain("Installation aggregate");
+        events[0].Notes.Should().Contain("2 source");
+        events[0].Notes.Should().Contain("derived from concentration");
+    }
+
+    [Fact]
     public async Task ShouldNotDetectInstallationAggregateForConcentrationLimit()
     {
         // Concentration installation-level limit stays per-source (intensive — doesn't sum).
