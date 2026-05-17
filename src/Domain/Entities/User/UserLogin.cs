@@ -7,7 +7,7 @@ public class UserLogin : IdentityUserLogin<Guid>, IEntity
 {
     public UserLogin()
     {
-        LoggedOn = DateTime.Now;
+        LoggedOn = DateTime.UtcNow;
     }
 
     public User? User { get; set; }
