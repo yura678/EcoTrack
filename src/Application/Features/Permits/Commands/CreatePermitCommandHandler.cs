@@ -4,6 +4,7 @@ using Domain.Entities.Enterprises;
 using Domain.Entities.Monitoring;
 using LanguageExt;
 using MediatR;
+using DimensionRules = Domain.Entities.Monitoring.LimitTypeDimensionRules;
 using Unit = LanguageExt.Unit;
 
 namespace Application.Features.Permits.Commands;
@@ -35,6 +36,7 @@ public class CreatePermitCommandHandler(
             .BindAsync(_ => CheckPollutantIds(pollutantIds, cancellationToken))
             .BindAsync(_ => CheckEmissionSourceIds(request.InstallationId, emissionSourceIds, cancellationToken))
             .BindAsync(_ => CheckMeasureUnitIds(unitIds, cancellationToken))
+            .BindAsync(_ => CheckLimitDimensions(request, cancellationToken))
             .BindAsync(_ => CheckLimitDateRanges(request))
             .BindAsync(_ => CreateEntity(request, cancellationToken));
     }
@@ -109,6 +111,28 @@ public class CreatePermitCommandHandler(
         return missingMeasureUnits.Any()
             ? new MeasureUnitNotFoundException(Guid.Empty, missingMeasureUnits)
             : Unit.Default;
+    }
+
+    private async Task<Either<PermitException, Unit>> CheckLimitDimensions(
+        CreatePermitCommand request,
+        CancellationToken cancellationToken)
+    {
+        var unitIds = request.EmissionLimits.Select(l => l.UnitId).Distinct().ToList();
+        var units = await unitOfWork.MeasureUnitRepository.GetByIdsAsync(unitIds, cancellationToken);
+        var byId = units.ToDictionary(u => u.Id, u => u.Dimension);
+
+        foreach (var limit in request.EmissionLimits)
+        {
+            if (!byId.TryGetValue(limit.UnitId, out var dim)) continue; // already covered above
+            if (!DimensionRules.IsCompatible(limit.LimitType, dim))
+            {
+                return new IncompatibleLimitUnitDimensionException(
+                    Guid.Empty, limit.LimitType, dim,
+                    DimensionRules.AllowedDimensions(limit.LimitType));
+            }
+        }
+
+        return Unit.Default;
     }
 
     private Either<PermitException, Unit> CheckLimitDateRanges(CreatePermitCommand request)

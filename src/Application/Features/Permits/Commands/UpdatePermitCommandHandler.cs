@@ -3,6 +3,7 @@ using Application.Features.Permits.Exceptions;
 using Domain.Entities.Enterprises;
 using LanguageExt;
 using MediatR;
+using DimensionRules = Domain.Entities.Monitoring.LimitTypeDimensionRules;
 
 namespace Application.Features.Permits.Commands;
 
@@ -57,6 +58,7 @@ public class UpdatePermitCommandHandler(
             .BindAsync(p => CheckPollutantIds(p, pollutantIds, cancellationToken))
             .BindAsync(p => CheckEmissionSourceIds(p, emissionSourceIds, cancellationToken))
             .BindAsync(p => CheckMeasureUnitIds(p, unitIds, cancellationToken))
+            .BindAsync(p => CheckLimitDimensions(p, request, cancellationToken))
             .BindAsync(p => CheckLimitDateRanges(p, request))
             .BindAsync(p => UpdateEntity(p, request, cancellationToken));
     }
@@ -131,6 +133,29 @@ public class UpdatePermitCommandHandler(
         return missingEmissionSources.Any()
             ? new EmissionSourceNotFoundException(entity.Id, missingEmissionSources)
             : entity;
+    }
+
+    private async Task<Either<PermitException, Permit>> CheckLimitDimensions(
+        Permit entity,
+        UpdatePermitCommand request,
+        CancellationToken cancellationToken)
+    {
+        var unitIds = request.EmissionLimits.Select(l => l.UnitId).Distinct().ToList();
+        var units = await unitOfWork.MeasureUnitRepository.GetByIdsAsync(unitIds, cancellationToken);
+        var byId = units.ToDictionary(u => u.Id, u => u.Dimension);
+
+        foreach (var limit in request.EmissionLimits)
+        {
+            if (!byId.TryGetValue(limit.UnitId, out var dim)) continue;
+            if (!DimensionRules.IsCompatible(limit.LimitType, dim))
+            {
+                return new IncompatibleLimitUnitDimensionException(
+                    entity.Id, limit.LimitType, dim,
+                    DimensionRules.AllowedDimensions(limit.LimitType));
+            }
+        }
+
+        return entity;
     }
 
     private Either<PermitException, Permit> CheckLimitDateRanges(

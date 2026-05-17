@@ -1,4 +1,5 @@
 ﻿using Domain.Entities.Enterprises;
+using Domain.Entities.Monitoring;
 
 namespace Application.Features.Permits.Exceptions;
 
@@ -60,6 +61,15 @@ public class ActivePermitAlreadyExistsException(
     : PermitException(
         permitId,
         $"Active permit already exists with ID '{permitId}' for this installation.");
+
+public class IncompatibleLimitUnitDimensionException(
+    Guid permitId,
+    LimitType limitType,
+    MeasureUnitDimension actualDimension,
+    IReadOnlyCollection<MeasureUnitDimension> allowedDimensions)
+    : PermitException(permitId,
+        $"Limit of type '{limitType}' requires a unit with dimension " +
+        $"[{string.Join(", ", allowedDimensions)}] but got '{actualDimension}'.");
 
 public class UnhandledPermitException(
     Guid permitId,

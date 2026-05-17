@@ -25,6 +25,7 @@ public class PermitControllerTests : BaseIntegrationTest, IAsyncLifetime
     private readonly MeasureUnit _mg;
     private readonly MeasureUnit _g;
     private readonly MeasureUnit _ug;
+    private readonly MeasureUnit _kgh;
 
     private readonly EmissionSource _source1;
     private readonly Pollutant _pollutant1;
@@ -53,6 +54,7 @@ public class PermitControllerTests : BaseIntegrationTest, IAsyncLifetime
         _mg = MeasureUnitsData.MgPerM3();
         _g = MeasureUnitsData.GPerM3();
         _ug = MeasureUnitsData.UgPerM3();
+        _kgh = MeasureUnitsData.KgPerHour();
 
         var draft = PermitsBundlesData.DraftBundle(_installation.Id, _source1.Id, _pollutant1.Id, _mg.Id);
         _draftPermit = draft.Permit;
@@ -178,6 +180,41 @@ public class PermitControllerTests : BaseIntegrationTest, IAsyncLifetime
             request);
 
         response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+
+    [Fact]
+    public async Task ShouldRejectCreatePermit_WhenUnitDimensionDoesNotMatchLimitType()
+    {
+        // Concentration limit must use MassConcentration unit; kg/h is MassFlow → reject.
+        var request = new CreatePermitDto(
+            Number: "TEST-BAD-DIM",
+            PermitType: PermitType.Air,
+            Authority: "Authority X",
+            Notes: null,
+            IssuedAt: DateTime.UtcNow.AddDays(-3),
+            ValidUntil: DateTime.UtcNow.AddYears(2),
+            EmissionLimits:
+            [
+                new CreateEmissionLimitDto(
+                    Value: 50,
+                    LimitType: LimitType.Concentration,
+                    Period: AveragingWindow.Hour1,
+                    PollutantId: _pollutant1.Id,
+                    EmissionSourceId: _source1.Id,
+                    InstallationId: null,
+                    UnitId: _kgh.Id,
+                    ValidFrom: DateTime.UtcNow.AddDays(-3),
+                    ValidTo: DateTime.UtcNow.AddYears(1))
+            ]
+        );
+
+        var response = await Client.PostAsJsonAsync(
+            $"{BaseRoute}/installations/{_installation.Id}/permits",
+            request);
+
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        var body = await response.Content.ReadAsStringAsync();
+        body.Should().Contain("Concentration").And.Contain("MassFlow");
     }
 
     [Fact]
@@ -308,7 +345,7 @@ public class PermitControllerTests : BaseIntegrationTest, IAsyncLifetime
 
         await Context.Set<EmissionSource>().AddAsync(_source1);
         await Context.Set<Pollutant>().AddAsync(_pollutant1);
-        await Context.Set<MeasureUnit>().AddRangeAsync(_mg, _g, _ug);
+        await Context.Set<MeasureUnit>().AddRangeAsync(_mg, _g, _ug, _kgh);
         await Context.Set<Permit>().AddRangeAsync(_draftPermit, _activePermit, _archivedPermit);
         await Context.Set<EmissionLimit>().AddRangeAsync(
             _draftLimits.Concat(_activeLimits).Concat(_archivedLimits));

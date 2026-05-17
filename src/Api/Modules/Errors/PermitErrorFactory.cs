@@ -20,7 +20,8 @@ public static class PermitErrorFactory
                 ActivePermitAlreadyExistsException
                     or PermitInvalidStatusException
                     or PermitNumberAlreadyExistsException => StatusCodes.Status409Conflict,
-                InvalidEmissionLimitDateRangeException => StatusCodes.Status400BadRequest,
+                InvalidEmissionLimitDateRangeException
+                    or IncompatibleLimitUnitDimensionException => StatusCodes.Status400BadRequest,
                 UnhandledPermitException => StatusCodes.Status500InternalServerError,
                 _ => throw new NotImplementedException("Permit error handler does not implemented.")
             }
