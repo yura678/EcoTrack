@@ -32,6 +32,8 @@ public class MeasurementMaterializationService(
 
         var sourceIds = tuples.Select(t => t.SourceId).Distinct().ToArray();
         var deviceLookup = await GetFirstDevicePerSourceAsync(sourceIds, cancellationToken);
+        var o2RefByPollutant = await GetPollutantO2ReferencesAsync(
+            tuples.Select(t => t.PollutantId).Distinct().ToArray(), cancellationToken);
 
         var newMeasurements = new List<Measurement>();
         var now = DateTime.UtcNow;
@@ -62,12 +64,21 @@ public class MeasurementMaterializationService(
                 groupSources, groupPollutants, period, earliest, lastClosedEnd, cancellationToken);
             if (buckets.Count == 0) continue;
 
+            // Pre-load O2 averages per (source, window) for the same range. Used only by
+            // pollutants whose Pollutant.DefaultO2Reference is set (e.g. NOx, SO2, CO).
+            var needsO2 = groupPollutants.Any(p =>
+                o2RefByPollutant.GetValueOrDefault(p).HasValue);
+            var o2Averages = needsO2
+                ? await GetO2AveragesPerWindowAsync(groupSources, period, earliest, lastClosedEnd, cancellationToken)
+                : new Dictionary<(Guid, DateTime), decimal>();
+
             foreach (var tuple in groupTuples)
             {
                 if (!deviceLookup.TryGetValue(tuple.SourceId, out var deviceId)) continue;
                 if (!buckets.TryGetValue((tuple.SourceId, tuple.PollutantId), out var tupleBuckets)) continue;
 
                 var tupleLastEnd = lastEnds.GetValueOrDefault((tuple.SourceId, tuple.PollutantId));
+                var o2Ref = o2RefByPollutant.GetValueOrDefault(tuple.PollutantId);
                 var windowsThisTick = 0;
 
                 foreach (var entry in tupleBuckets.OrderBy(b => b.WindowStart))
@@ -81,6 +92,9 @@ public class MeasurementMaterializationService(
                     if (entry.SampleCount == 0 || entry.Avg is null) continue;
 
                     var expected = (int)period.TotalMinutes;
+                    var normalizedValue = TryComputeNormalized(
+                        entry.Avg.Value, o2Ref, tuple.SourceId, windowStart, o2Averages);
+
                     var measurement = Measurement.New(
                         Guid.NewGuid(),
                         windowStart, windowEnd,
@@ -88,7 +102,8 @@ public class MeasurementMaterializationService(
                         tuple.SourceId, tuple.PollutantId, deviceId, entry.UnitId,
                         value: entry.Avg.Value,
                         validPointsCount: (int)Math.Min(int.MaxValue, entry.ValidCount),
-                        expectedPointsCount: expected);
+                        expectedPointsCount: expected,
+                        normalizedValue: normalizedValue);
 
                     newMeasurements.Add(measurement);
                     windowsThisTick++;
@@ -173,6 +188,79 @@ public class MeasurementMaterializationService(
         return rows
             .GroupBy(d => d.SourceId)
             .ToDictionary(g => g.Key, g => g.First().Id);
+    }
+
+    private async Task<Dictionary<Guid, decimal?>> GetPollutantO2ReferencesAsync(
+        Guid[] pollutantIds, CancellationToken ct)
+    {
+        if (pollutantIds.Length == 0) return [];
+        return await context.Set<Domain.Entities.EmissionSources.Pollutant>()
+            .Where(p => pollutantIds.Contains(p.Id))
+            .Select(p => new { p.Id, p.DefaultO2Reference })
+            .ToDictionaryAsync(p => p.Id, p => p.DefaultO2Reference, ct);
+    }
+
+    /// <summary>
+    /// IED Annex V O2 correction: C_norm = C × (21 - O2_ref) / (21 - O2_actual).
+    /// Returns null when normalization is not applicable: pollutant has no reference,
+    /// no O2 data for the window, or measured O2 is in a sensor-fault range.
+    /// </summary>
+    private static decimal? TryComputeNormalized(
+        decimal measuredValue,
+        decimal? o2Reference,
+        Guid sourceId,
+        DateTime windowStart,
+        IReadOnlyDictionary<(Guid, DateTime), decimal> o2Averages)
+    {
+        if (o2Reference is null) return null;
+        if (!o2Averages.TryGetValue((sourceId, windowStart), out var o2Actual)) return null;
+        // O2 ≥ 21% means sensor is reading ambient air (probably disconnected).
+        // O2 very low (< 0.5%) means ranges close to denominator zero → unstable.
+        if (o2Actual >= 21m || o2Actual < 0.5m) return null;
+
+        var divisor = 21m - o2Actual;
+        return Math.Round(measuredValue * (21m - o2Reference.Value) / divisor, 6);
+    }
+
+    private async Task<Dictionary<(Guid, DateTime), decimal>> GetO2AveragesPerWindowAsync(
+        Guid[] sourceIds, TimeSpan period,
+        DateTime from, DateTime to, CancellationToken ct)
+    {
+        var periodLiteral = PeriodToPgInterval(period);
+        var sql = $@"
+            SELECT
+                emission_source_id,
+                time_bucket(INTERVAL '{periodLiteral}', bucket) AS window_start,
+                (SUM(valid_sum) / NULLIF(SUM(valid_count), 0))::numeric(18,6) AS o2_avg
+            FROM process_parameter_1m
+            WHERE emission_source_id = ANY(@source_ids)
+              AND parameter_type = 2  -- ParameterType.O2Content
+              AND bucket >= @from
+              AND bucket < @to
+            GROUP BY emission_source_id, window_start
+            HAVING SUM(valid_count) > 0";
+
+        var connection = (NpgsqlConnection)context.Database.GetDbConnection();
+        if (connection.State != System.Data.ConnectionState.Open)
+        {
+            await connection.OpenAsync(ct);
+        }
+
+        await using var command = new NpgsqlCommand(sql, connection);
+        AddParam(command, "source_ids", NpgsqlDbType.Array | NpgsqlDbType.Uuid, sourceIds);
+        AddParam(command, "from", NpgsqlDbType.TimestampTz, EnsureUtc(from));
+        AddParam(command, "to", NpgsqlDbType.TimestampTz, EnsureUtc(to));
+
+        var dict = new Dictionary<(Guid, DateTime), decimal>();
+        await using var reader = await command.ExecuteReaderAsync(ct);
+        while (await reader.ReadAsync(ct))
+        {
+            var sourceId = reader.GetGuid(0);
+            var windowStart = DateTime.SpecifyKind(reader.GetDateTime(1), DateTimeKind.Utc);
+            var o2 = reader.GetDecimal(2);
+            dict[(sourceId, windowStart)] = o2;
+        }
+        return dict;
     }
 
     private async Task<Dictionary<(Guid SourceId, Guid PollutantId), DateTime?>> GetLastWindowEndsAsync(

@@ -23,4 +23,14 @@ public static class PollutantsData
             category: PollutantCategory.Gas,
             media: PollutantMedia.Air,
             defaultDimension: MeasureUnitDimension.MassConcentration);
+
+    public static Pollutant WithO2Reference(decimal o2Ref)
+        => Pollutant.New(
+            Guid.NewGuid(),
+            code: "NOX-O2",
+            name: "Test NOX with O2 reference",
+            category: PollutantCategory.Gas,
+            media: PollutantMedia.Air,
+            defaultDimension: MeasureUnitDimension.MassConcentration,
+            defaultO2Reference: o2Ref);
 }
