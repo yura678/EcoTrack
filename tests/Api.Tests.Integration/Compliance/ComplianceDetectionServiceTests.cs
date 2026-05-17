@@ -421,6 +421,67 @@ public class ComplianceDetectionServiceTests : BaseIntegrationTest, IAsyncLifeti
         events[0].Notes.Should().Contain("normalized");
     }
 
+    // ─── Installation-level aggregation ──────────────────────────────────────────
+
+    [Fact]
+    public async Task ShouldDetectInstallationAggregateExceedanceForMassFlow()
+    {
+        // Two sources on the same installation, each 30 kg/h → sum 60 kg/h.
+        // Installation limit "≤50 kg/h" → exceedance ratio 1.2.
+        var secondSource = EmissionSourcesData.SecondTestAirEmissionSource(_installation.Id);
+        await Context.Set<EmissionSource>().AddAsync(secondSource);
+        var secondDevice = MonitoringDevicesData.SecondTestDevice(secondSource.Id, _installation.Id);
+        SetDeviceStatus(secondDevice, DeviceStatus.Operational);
+        BackdateInstall(secondDevice, TimeSpan.FromDays(60));
+        await Context.Set<MonitoringDevice>().AddAsync(secondDevice);
+
+        var (permit, limit) = ActivePermitWithInstallationLimit(
+            value: 50m, unitId: _kgh.Id, limitType: LimitType.MassFlow);
+        await Context.Set<Permit>().AddAsync(permit);
+        await Context.Set<EmissionLimit>().AddAsync(limit);
+
+        await Context.Set<Measurement>().AddRangeAsync(
+            HourlyMeasurement(value: 30m, unitId: _kgh.Id),
+            HourlyMeasurementForSource(secondSource.Id, secondDevice.Id, value: 30m, unitId: _kgh.Id));
+        await SaveChangesAsync();
+
+        await RunDetectionAsync();
+
+        var events = await GetEventsAsync(ComplianceEventType.LimitExceedance, limit.Id);
+        events.Should().HaveCount(1);
+        events[0].Ratio.Should().BeApproximately(1.2m, 0.0001m);
+        events[0].Notes.Should().Contain("Installation aggregate");
+        events[0].Notes.Should().Contain("2 source");
+    }
+
+    [Fact]
+    public async Task ShouldNotDetectInstallationAggregateForConcentrationLimit()
+    {
+        // Concentration installation-level limit stays per-source (intensive — doesn't sum).
+        // Each source 30 mg/m³ vs limit 50 mg/m³ → no exceedance.
+        var secondSource = EmissionSourcesData.SecondTestAirEmissionSource(_installation.Id);
+        await Context.Set<EmissionSource>().AddAsync(secondSource);
+        var secondDevice = MonitoringDevicesData.SecondTestDevice(secondSource.Id, _installation.Id);
+        SetDeviceStatus(secondDevice, DeviceStatus.Operational);
+        BackdateInstall(secondDevice, TimeSpan.FromDays(60));
+        await Context.Set<MonitoringDevice>().AddAsync(secondDevice);
+
+        var (permit, limit) = ActivePermitWithInstallationLimit(
+            value: 50m, unitId: _mg.Id, limitType: LimitType.Concentration);
+        await Context.Set<Permit>().AddAsync(permit);
+        await Context.Set<EmissionLimit>().AddAsync(limit);
+
+        await Context.Set<Measurement>().AddRangeAsync(
+            HourlyMeasurement(value: 30m, unitId: _mg.Id),
+            HourlyMeasurementForSource(secondSource.Id, secondDevice.Id, value: 30m, unitId: _mg.Id));
+        await SaveChangesAsync();
+
+        await RunDetectionAsync();
+
+        var events = await GetEventsAsync(ComplianceEventType.LimitExceedance, limit.Id);
+        events.Should().BeEmpty();
+    }
+
     // ─── AnnualLoad detection ────────────────────────────────────────────────────
 
     [Fact]
@@ -631,20 +692,44 @@ public class ComplianceDetectionServiceTests : BaseIntegrationTest, IAsyncLifeti
     }
 
     private Measurement HourlyMeasurement(decimal value, Guid unitId, decimal? normalizedValue = null) =>
+        HourlyMeasurementForSource(_source.Id, _device.Id, value, unitId, normalizedValue);
+
+    private Measurement HourlyMeasurementForSource(
+        Guid sourceId, Guid deviceId, decimal value, Guid unitId, decimal? normalizedValue = null) =>
         Measurement.New(
             id: Guid.NewGuid(),
             windowStart: _lastClosedHourStart,
             windowEnd: _lastClosedHourEnd,
             window: AveragingWindow.Hour1,
             aggregation: Aggregation.Average,
-            emissionSourceId: _source.Id,
+            emissionSourceId: sourceId,
             pollutantId: _pollutant.Id,
-            deviceId: _device.Id,
+            deviceId: deviceId,
             unitId: unitId,
             value: value,
             validPointsCount: 60,
             expectedPointsCount: 60,
             normalizedValue: normalizedValue);
+
+    private (Permit Permit, EmissionLimit Limit) ActivePermitWithInstallationLimit(
+        decimal value, Guid unitId, LimitType limitType,
+        AveragingWindow period = AveragingWindow.Hour1)
+    {
+        var permitId = Guid.NewGuid();
+        var limit = EmissionLimit.New(
+            Guid.NewGuid(), value, limitType, period,
+            permitId, unitId, _pollutant.Id,
+            emissionSourceId: null,
+            installationId: _installation.Id,
+            validFrom: DateTime.UtcNow.AddDays(-1), validTo: null);
+
+        var permit = Permit.New(
+            permitId, _installation.Id, "P-INST", PermitType.Air,
+            DateTime.UtcNow.AddDays(-10), DateTime.UtcNow.AddYears(1),
+            "Test", null, [limit]);
+        permit.ChangeStatus(PermitStatus.Active);
+        return (permit, limit);
+    }
 
     private static void SetPointsCount(Measurement m, int valid, int expected)
     {

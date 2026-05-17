@@ -30,7 +30,7 @@ internal class ComplianceDetectionQueries(ApplicationDbContext context) : ICompl
             .Select(l => new
             {
                 l.Id, l.EmissionSourceId, l.InstallationId, l.PollutantId,
-                l.Period, l.Value, l.UnitId
+                l.Period, l.Value, l.UnitId, l.LimitType
             })
             .ToListAsync(ct);
 
@@ -49,13 +49,14 @@ internal class ComplianceDetectionQueries(ApplicationDbContext context) : ICompl
             if (l.EmissionSourceId.HasValue)
             {
                 result.Add(new LimitTarget(l.Id, l.EmissionSourceId.Value, l.PollutantId,
-                    l.Period, l.Value, l.UnitId));
+                    l.Period, l.Value, l.UnitId, l.LimitType, InstallationId: null));
             }
             else if (l.InstallationId.HasValue
                      && sourcesByInstallation.TryGetValue(l.InstallationId.Value, out var sids))
             {
                 foreach (var sid in sids)
-                    result.Add(new LimitTarget(l.Id, sid, l.PollutantId, l.Period, l.Value, l.UnitId));
+                    result.Add(new LimitTarget(l.Id, sid, l.PollutantId, l.Period, l.Value, l.UnitId,
+                        l.LimitType, InstallationId: l.InstallationId));
             }
         }
         return result;

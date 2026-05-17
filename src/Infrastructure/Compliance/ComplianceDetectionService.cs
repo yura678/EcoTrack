@@ -124,8 +124,14 @@ public class ComplianceDetectionService(
                 foreach (var (uid, info) in extra) units.TryAdd(uid, info);
             }
 
+            // Installation-level MassFlow: sum mass-flow values across all sources, compare once.
+            // Concentration installation-level stays per-source (concentration is intensive).
+            var aggregateLimitIds = ProcessInstallationAggregates(
+                byPeriod.ToList(), byKey, units, existingKeys, to, newEvents);
+
             foreach (var t in byPeriod)
             {
+                if (aggregateLimitIds.Contains(t.LimitId)) continue; // handled above
                 if (existingKeys.Contains((t.LimitId, t.EmissionSourceId))) continue;
                 if (!byKey.TryGetValue((t.EmissionSourceId, t.PollutantId), out var m)) continue;
                 // Allow Valid and Substituted — both are IED-acceptable regulatory values.
@@ -176,6 +182,81 @@ public class ComplianceDetectionService(
             }
         }
         return newEvents;
+    }
+
+    /// <summary>
+    /// Handles installation-level MassFlow limits by summing values across all sources of the
+    /// installation and comparing the total with the limit. Returns the set of LimitIds it
+    /// processed so the caller can skip them in the per-source loop.
+    /// Concentration limits are skipped (intensive — handled per-source instead).
+    /// Cross-dimension derivation (concentration × flow then sum) is not supported in v1.
+    /// </summary>
+    private HashSet<Guid> ProcessInstallationAggregates(
+        IReadOnlyList<LimitTarget> targetsInPeriod,
+        IReadOnlyDictionary<(Guid, Guid), MeasurementSnapshot> measurementByKey,
+        IReadOnlyDictionary<Guid, UnitInfo> units,
+        HashSet<(Guid LimitId, Guid EmissionSourceId)> existingKeys,
+        DateTime windowEnd,
+        List<ComplianceEvent> sink)
+    {
+        var processed = new HashSet<Guid>();
+
+        var aggregateGroups = targetsInPeriod
+            .Where(t => t.InstallationId.HasValue && t.LimitType == LimitType.MassFlow)
+            .GroupBy(t => t.LimitId);
+
+        foreach (var byLimit in aggregateGroups)
+        {
+            processed.Add(byLimit.Key);
+            var primary = byLimit.First();
+            if (!units.TryGetValue(primary.UnitId, out var limitUnit)) continue;
+            if (existingKeys.Any(k => k.LimitId == primary.LimitId)) continue; // dedup
+
+            decimal sumBase = 0m;
+            var contributingSources = new List<Guid>();
+            DateTime? windowStart = null;
+
+            foreach (var t in byLimit)
+            {
+                if (!measurementByKey.TryGetValue((t.EmissionSourceId, t.PollutantId), out var m)) continue;
+                if (m.Quality != Quality.Valid && m.Quality != Quality.Substituted) continue;
+                if (!units.TryGetValue(m.UnitId, out var measurementUnit)) continue;
+                if (measurementUnit.Dimension != limitUnit.Dimension)
+                {
+                    logger.LogWarning(
+                        "Installation-aggregate limit {LimitId} requires uniform dimension; " +
+                        "source {SourceId} measurement is {MeasDim} vs limit {LimitDim} — skipping aggregate.",
+                        primary.LimitId, t.EmissionSourceId, measurementUnit.Dimension, limitUnit.Dimension);
+                    contributingSources.Clear();
+                    break;
+                }
+
+                var effectiveValue = m.NormalizedValue ?? m.Value;
+                sumBase += effectiveValue * measurementUnit.ToBaseFactor;
+                contributingSources.Add(t.EmissionSourceId);
+                windowStart = m.WindowStart;
+            }
+
+            if (contributingSources.Count == 0) continue;
+
+            var limitBase = primary.Value * limitUnit.ToBaseFactor;
+            if (sumBase <= limitBase) continue;
+
+            var ratio = Math.Round(sumBase / limitBase, 4);
+            sink.Add(ComplianceEvent.ForLimitExceedance(
+                Guid.NewGuid(),
+                emissionSourceId: contributingSources[0], // representative; events require a single source
+                measurementId: null,
+                limitId: primary.LimitId,
+                ratio: ratio,
+                windowStart: windowStart!.Value,
+                windowEnd: windowEnd,
+                notes: $"Installation aggregate: sum {sumBase:0.###} {limitUnit.Symbol} " +
+                       $"across {contributingSources.Count} source(s) > " +
+                       $"{primary.Value:0.###} {limitUnit.Symbol} (ratio {ratio:0.##})"));
+        }
+
+        return processed;
     }
 
     private record DerivedMassFlow(decimal MassFlowKgPerH, decimal LimitKgPerH, string FlowDescription);
@@ -256,8 +337,14 @@ public class ComplianceDetectionService(
                 foreach (var (uid, info) in extra) units.TryAdd(uid, info);
             }
 
+            // Installation-level AnnualLoad: sum rolling-average rates across all sources of
+            // the installation and compare once.
+            var aggregateLimitIds = ProcessAnnualLoadAggregates(
+                byPeriod.ToList(), rolling, units, existingKeys, from, now, window, newEvents);
+
             foreach (var t in byPeriod)
             {
+                if (aggregateLimitIds.Contains(t.LimitId)) continue;
                 if (existingKeys.Contains((t.LimitId, t.EmissionSourceId))) continue;
                 if (!rolling.TryGetValue((t.EmissionSourceId, t.PollutantId), out var r)) continue;
                 if (!units.TryGetValue(t.UnitId, out var limitUnit)
@@ -301,6 +388,77 @@ public class ComplianceDetectionService(
             }
         }
         return newEvents;
+    }
+
+    /// <summary>
+    /// Installation-level AnnualLoad aggregation: sum rolling average rates across all sources of
+    /// the installation, compare with limit once. Returns the LimitIds it processed so the caller
+    /// can skip them in the per-source loop.
+    /// </summary>
+    private HashSet<Guid> ProcessAnnualLoadAggregates(
+        IReadOnlyList<LimitTarget> targetsInPeriod,
+        IReadOnlyDictionary<(Guid, Guid), RollingAverage> rollingByKey,
+        IReadOnlyDictionary<Guid, UnitInfo> units,
+        HashSet<(Guid LimitId, Guid EmissionSourceId)> existingKeys,
+        DateTime from, DateTime to, TimeSpan window,
+        List<ComplianceEvent> sink)
+    {
+        var processed = new HashSet<Guid>();
+
+        var aggregateGroups = targetsInPeriod
+            .Where(t => t.InstallationId.HasValue && t.LimitType == LimitType.AnnualLoad)
+            .GroupBy(t => t.LimitId);
+
+        foreach (var byLimit in aggregateGroups)
+        {
+            processed.Add(byLimit.Key);
+            var primary = byLimit.First();
+            if (!units.TryGetValue(primary.UnitId, out var limitUnit)) continue;
+            if (existingKeys.Any(k => k.LimitId == primary.LimitId)) continue;
+
+            decimal sumBase = 0m;
+            var contributingSources = new List<Guid>();
+            long totalSamples = 0;
+
+            foreach (var t in byLimit)
+            {
+                if (!rollingByKey.TryGetValue((t.EmissionSourceId, t.PollutantId), out var r)) continue;
+                if (!units.TryGetValue(r.UnitId, out var measurementUnit)) continue;
+                if (measurementUnit.Dimension != limitUnit.Dimension)
+                {
+                    logger.LogWarning(
+                        "AnnualLoad aggregate {LimitId} requires uniform dimension; source {SourceId} " +
+                        "measurement {MeasDim} vs limit {LimitDim} — skipping aggregate.",
+                        primary.LimitId, t.EmissionSourceId, measurementUnit.Dimension, limitUnit.Dimension);
+                    contributingSources.Clear();
+                    break;
+                }
+
+                sumBase += r.AvgRate * measurementUnit.ToBaseFactor;
+                totalSamples += r.Samples;
+                contributingSources.Add(t.EmissionSourceId);
+            }
+
+            if (contributingSources.Count == 0) continue;
+
+            var limitBase = primary.Value * limitUnit.ToBaseFactor;
+            if (sumBase <= limitBase) continue;
+
+            var ratio = Math.Round(sumBase / limitBase, 4);
+            sink.Add(ComplianceEvent.ForLimitExceedance(
+                Guid.NewGuid(),
+                emissionSourceId: contributingSources[0],
+                measurementId: null,
+                limitId: primary.LimitId,
+                ratio: ratio,
+                windowStart: from,
+                windowEnd: to,
+                notes: $"AnnualLoad installation aggregate: sum {sumBase:0.###} {limitUnit.Symbol} " +
+                       $"across {contributingSources.Count} source(s) over last {window.TotalDays:0}d > " +
+                       $"{primary.Value:0.###} {limitUnit.Symbol} (ratio {ratio:0.##}, {totalSamples} samples)"));
+        }
+
+        return processed;
     }
 
     // ─── DeviceOffline ───────────────────────────────────────────────────────────

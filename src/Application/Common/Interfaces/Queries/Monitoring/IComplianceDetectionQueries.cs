@@ -11,7 +11,9 @@ public record LimitTarget(
     Guid PollutantId,
     AveragingWindow Period,
     decimal Value,
-    Guid UnitId);
+    Guid UnitId,
+    LimitType LimitType,
+    Guid? InstallationId);
 
 public record MaterializationTuple(
     Guid SourceId,
