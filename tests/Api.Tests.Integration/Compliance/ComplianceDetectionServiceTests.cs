@@ -500,6 +500,73 @@ public class ComplianceDetectionServiceTests : BaseIntegrationTest, IAsyncLifeti
     }
 
     [Fact]
+    public async Task ShouldHandleSameDimensionMixedUnitsInInstallationAggregate()
+    {
+        // Two MassFlow sources with different units of the same dimension:
+        // Source A: 30 kg/h (factor 1, already in base).
+        // Source B: 30000 g/h (factor 0.001 → 30 kg/h equivalent).
+        // Sum in kg/h base = 60 vs 50 kg/h limit → ratio 1.2.
+        var gph = MeasureUnit.New(Guid.NewGuid(), "g/h-test", MeasureUnitDimension.MassFlow, 0.001m);
+        await Context.Set<MeasureUnit>().AddAsync(gph);
+
+        var secondSource = EmissionSourcesData.SecondTestAirEmissionSource(_installation.Id);
+        await Context.Set<EmissionSource>().AddAsync(secondSource);
+        var secondDevice = MonitoringDevicesData.SecondTestDevice(secondSource.Id, _installation.Id);
+        SetDeviceStatus(secondDevice, DeviceStatus.Operational);
+        BackdateInstall(secondDevice, TimeSpan.FromDays(60));
+        await Context.Set<MonitoringDevice>().AddAsync(secondDevice);
+
+        var (permit, limit) = ActivePermitWithInstallationLimit(
+            value: 50m, unitId: _kgh.Id, limitType: LimitType.MassFlow);
+        await Context.Set<Permit>().AddAsync(permit);
+        await Context.Set<EmissionLimit>().AddAsync(limit);
+
+        await Context.Set<Measurement>().AddRangeAsync(
+            HourlyMeasurement(value: 30m, unitId: _kgh.Id),
+            HourlyMeasurementForSource(secondSource.Id, secondDevice.Id, value: 30000m, unitId: gph.Id));
+        await SaveChangesAsync();
+
+        await RunDetectionAsync();
+
+        var events = await GetEventsAsync(ComplianceEventType.LimitExceedance, limit.Id);
+        events.Should().HaveCount(1);
+        events[0].Ratio.Should().BeApproximately(1.2m, 0.0001m);
+        events[0].Notes.Should().Contain("2 source");
+    }
+
+    [Fact]
+    public async Task ShouldExcludeAggregateSourceWithDimensionThatHasNoDerivationPath()
+    {
+        // Source A: 6 kg/h MassFlow → +6.
+        // Source B: 100 % (Dimensionless) → no path to MassFlow → excluded from sum.
+        // Aggregate (1 contributing source) = 6 > 5 kg/h limit → event with "1 excluded" note.
+        var secondSource = EmissionSourcesData.SecondTestAirEmissionSource(_installation.Id);
+        await Context.Set<EmissionSource>().AddAsync(secondSource);
+        var secondDevice = MonitoringDevicesData.SecondTestDevice(secondSource.Id, _installation.Id);
+        SetDeviceStatus(secondDevice, DeviceStatus.Operational);
+        BackdateInstall(secondDevice, TimeSpan.FromDays(60));
+        await Context.Set<MonitoringDevice>().AddAsync(secondDevice);
+
+        var (permit, limit) = ActivePermitWithInstallationLimit(
+            value: 5m, unitId: _kgh.Id, limitType: LimitType.MassFlow);
+        await Context.Set<Permit>().AddAsync(permit);
+        await Context.Set<EmissionLimit>().AddAsync(limit);
+
+        await Context.Set<Measurement>().AddRangeAsync(
+            HourlyMeasurement(value: 6m, unitId: _kgh.Id),
+            HourlyMeasurementForSource(secondSource.Id, secondDevice.Id, value: 100m, unitId: _percent.Id));
+        await SaveChangesAsync();
+
+        await RunDetectionAsync();
+
+        var events = await GetEventsAsync(ComplianceEventType.LimitExceedance, limit.Id);
+        events.Should().HaveCount(1);
+        events[0].Ratio.Should().BeApproximately(1.2m, 0.0001m);
+        events[0].Notes.Should().Contain("1 excluded");
+        events[0].Notes.Should().Contain("1 source");
+    }
+
+    [Fact]
     public async Task ShouldNotDetectInstallationAggregateForConcentrationLimit()
     {
         // Concentration installation-level limit stays per-source (intensive — doesn't sum).
