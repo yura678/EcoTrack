@@ -31,4 +31,18 @@ public static class MeasureUnitsData
             symbol: "kg/hr-test",
             dimension: MeasureUnitDimension.MassFlow,
             toBaseFactor: 1m);
+
+    public static MeasureUnit Celsius()
+        => MeasureUnit.New(
+            Guid.NewGuid(),
+            symbol: "C-test",
+            dimension: MeasureUnitDimension.Temperature,
+            toBaseFactor: 1m);
+
+    public static MeasureUnit Percent()
+        => MeasureUnit.New(
+            Guid.NewGuid(),
+            symbol: "%-test",
+            dimension: MeasureUnitDimension.Dimensionless,
+            toBaseFactor: 1m);
 }
