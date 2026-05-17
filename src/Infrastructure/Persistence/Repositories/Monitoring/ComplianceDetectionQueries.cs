@@ -62,6 +62,36 @@ internal class ComplianceDetectionQueries(ApplicationDbContext context) : ICompl
         return result;
     }
 
+    public async Task<Dictionary<Guid, LimitTarget>> GetActiveLimitsByIdsAsync(
+        IReadOnlyCollection<Guid> limitIds, CancellationToken ct)
+    {
+        if (limitIds.Count == 0) return [];
+        var now = DateTime.UtcNow;
+        var rows = await context.Set<EmissionLimit>()
+            .Where(l => limitIds.Contains(l.Id)
+                        && l.ValidFrom <= now
+                        && (l.ValidTo == null || l.ValidTo >= now)
+                        && l.Permit!.PermitStatus == PermitStatus.Active
+                        && l.Permit!.ValidUntil >= now)
+            .Select(l => new
+            {
+                l.Id, l.EmissionSourceId, l.InstallationId, l.PollutantId,
+                l.Period, l.Value, l.UnitId, l.LimitType
+            })
+            .ToListAsync(ct);
+
+        var dict = new Dictionary<Guid, LimitTarget>(rows.Count);
+        foreach (var l in rows)
+        {
+            // EmissionSourceId is optional on installation-wide limits; the probe needs a source
+            // anchor (the ComplianceEvent already pins the source), so leave empty here and let
+            // the caller substitute event.EmissionSourceId.
+            dict[l.Id] = new LimitTarget(l.Id, l.EmissionSourceId ?? Guid.Empty,
+                l.PollutantId, l.Period, l.Value, l.UnitId, l.LimitType, l.InstallationId);
+        }
+        return dict;
+    }
+
     public async Task<List<MaterializationTuple>> GetActiveMaterializationTuplesAsync(
         IReadOnlyCollection<LimitType> limitTypes, CancellationToken ct)
     {
@@ -179,9 +209,78 @@ internal class ComplianceDetectionQueries(ApplicationDbContext context) : ICompl
                 m.Id, m.EmissionSourceId, m.PollutantId,
                 m.Value, m.NormalizedValue, m.UnitId, m.Quality,
                 m.ValidPointsCount, m.ExpectedPointsCount,
-                m.WindowStart, m.WindowEnd))
+                m.WindowStart, m.WindowEnd, m.Window))
             .ToListAsync(ct);
         return rows;
+    }
+
+    public async Task<IReadOnlyList<MeasurementSnapshot>> GetLatestMeasurementsAsync(
+        IReadOnlyCollection<(Guid SourceId, Guid PollutantId)> pairs,
+        AveragingWindow period,
+        CancellationToken ct)
+    {
+        if (pairs.Count == 0) return [];
+        var sourceIds = pairs.Select(p => p.SourceId).Distinct().ToArray();
+        var pollutantIds = pairs.Select(p => p.PollutantId).Distinct().ToArray();
+
+        // Two-step EF query: first find max(WindowEnd) per (source, pollutant) — translates to
+        // a clean GROUP BY — then load the rows whose WindowEnd matches. Avoids the
+        // GroupBy(...).Select(g => g.First()) shape that PG translation does not support.
+        var maxEnds = await context.Set<Measurement>()
+            .Where(m => sourceIds.Contains(m.EmissionSourceId)
+                        && pollutantIds.Contains(m.PollutantId)
+                        && m.Window == period
+                        && m.Aggregation == Aggregation.Average)
+            .GroupBy(m => new { m.EmissionSourceId, m.PollutantId })
+            .Select(g => new
+            {
+                g.Key.EmissionSourceId,
+                g.Key.PollutantId,
+                MaxEnd = g.Max(m => m.WindowEnd)
+            })
+            .ToListAsync(ct);
+        if (maxEnds.Count == 0) return [];
+
+        var maxEndsArr = maxEnds.Select(x => x.MaxEnd).Distinct().ToArray();
+        var rows = await context.Set<Measurement>()
+            .Where(m => sourceIds.Contains(m.EmissionSourceId)
+                        && pollutantIds.Contains(m.PollutantId)
+                        && m.Window == period
+                        && m.Aggregation == Aggregation.Average
+                        && maxEndsArr.Contains(m.WindowEnd))
+            .Select(m => new MeasurementSnapshot(
+                m.Id, m.EmissionSourceId, m.PollutantId,
+                m.Value, m.NormalizedValue, m.UnitId, m.Quality,
+                m.ValidPointsCount, m.ExpectedPointsCount,
+                m.WindowStart, m.WindowEnd, m.Window))
+            .ToListAsync(ct);
+
+        // Keep only the (source, pollutant) row whose WindowEnd actually equals that pair's max,
+        // and restrict to originally requested pairs (the IN filter above can over-fetch when
+        // different pairs happen to share the same max timestamp).
+        var maxByPair = maxEnds.ToDictionary(
+            x => (x.EmissionSourceId, x.PollutantId), x => x.MaxEnd);
+        var requestedPairs = pairs.ToHashSet();
+        return rows
+            .Where(r => requestedPairs.Contains((r.EmissionSourceId, r.PollutantId))
+                        && maxByPair.TryGetValue(
+                            (r.EmissionSourceId, r.PollutantId), out var max)
+                        && r.WindowEnd == max)
+            .ToList();
+    }
+
+    public async Task<IReadOnlyList<MeasurementSnapshot>> GetMeasurementsByIdsAsync(
+        IReadOnlyCollection<Guid> measurementIds, CancellationToken ct)
+    {
+        if (measurementIds.Count == 0) return [];
+        return await context.Set<Measurement>()
+            .Where(m => measurementIds.Contains(m.Id))
+            .Select(m => new MeasurementSnapshot(
+                m.Id, m.EmissionSourceId, m.PollutantId,
+                m.Value, m.NormalizedValue, m.UnitId, m.Quality,
+                m.ValidPointsCount, m.ExpectedPointsCount,
+                m.WindowStart, m.WindowEnd, m.Window))
+            .ToListAsync(ct);
     }
 
     public async Task<decimal?> GetMaxValueOverRecentValidWindowsAsync(
@@ -476,6 +575,31 @@ internal class ComplianceDetectionQueries(ApplicationDbContext context) : ICompl
     }
 
     // ─── Raw counts & long-window rolling stats ─────────────────────────────────
+
+    public async Task<Dictionary<Guid, long>> GetRawMeasurementCountsBySourceAsync(
+        IReadOnlyCollection<Guid> sourceIds, DateTime from, DateTime to, CancellationToken ct)
+    {
+        if (sourceIds.Count == 0) return [];
+        var sql = @"
+            SELECT emission_source_id, COUNT(*)::bigint
+            FROM raw_measurement
+            WHERE emission_source_id = ANY(@source_ids)
+              AND time >= @from AND time < @to
+            GROUP BY emission_source_id";
+
+        await using var command = await CreateCommandAsync(sql, ct);
+        AddParam(command, "source_ids", NpgsqlDbType.Array | NpgsqlDbType.Uuid, sourceIds.ToArray());
+        AddParam(command, "from", NpgsqlDbType.TimestampTz, EnsureUtc(from));
+        AddParam(command, "to", NpgsqlDbType.TimestampTz, EnsureUtc(to));
+
+        var dict = new Dictionary<Guid, long>();
+        await using var reader = await command.ExecuteReaderAsync(ct);
+        while (await reader.ReadAsync(ct))
+        {
+            dict[reader.GetGuid(0)] = reader.GetInt64(1);
+        }
+        return dict;
+    }
 
     public async Task<Dictionary<(Guid, Guid), long>> GetRawMeasurementCountsAsync(
         IReadOnlyCollection<Guid> sourceIds, IReadOnlyCollection<Guid> pollutantIds,

@@ -37,7 +37,8 @@ public record MeasurementSnapshot(
     int ValidPointsCount,
     int ExpectedPointsCount,
     DateTime WindowStart,
-    DateTime WindowEnd);
+    DateTime WindowEnd,
+    AveragingWindow Window);
 
 public record OperationalDevice(
     Guid Id,
@@ -81,6 +82,13 @@ public interface IComplianceDetectionQueries
     // ── Limit & source tuples ───────────────────────────────────────────────
     Task<List<LimitTarget>> GetActiveLimitTargetsAsync(
         IReadOnlyCollection<LimitType> limitTypes, CancellationToken ct);
+
+    /// <summary>
+    /// Loads currently-active limits by Id (validity + permit state checked) — used by the
+    /// current-violation probe to recover the reference data for an open ComplianceEvent.
+    /// </summary>
+    Task<Dictionary<Guid, LimitTarget>> GetActiveLimitsByIdsAsync(
+        IReadOnlyCollection<Guid> limitIds, CancellationToken ct);
 
     Task<List<MaterializationTuple>> GetActiveMaterializationTuplesAsync(
         IReadOnlyCollection<LimitType> limitTypes, CancellationToken ct);
@@ -172,6 +180,32 @@ public interface IComplianceDetectionQueries
         DateTime from,
         DateTime to,
         CancellationToken ct);
+
+    /// <summary>
+    /// Total raw_measurement count per source over a time range — used to probe whether a
+    /// MissingMeasurement event is still "source is silent" right now.
+    /// </summary>
+    Task<Dictionary<Guid, long>> GetRawMeasurementCountsBySourceAsync(
+        IReadOnlyCollection<Guid> sourceIds,
+        DateTime from,
+        DateTime to,
+        CancellationToken ct);
+
+    /// <summary>
+    /// Latest Measurement per (sourceId, pollutantId) with the given period/Average — used by
+    /// the current-violation probe to compare the freshest aggregate against a limit.
+    /// </summary>
+    Task<IReadOnlyList<MeasurementSnapshot>> GetLatestMeasurementsAsync(
+        IReadOnlyCollection<(Guid SourceId, Guid PollutantId)> pairs,
+        AveragingWindow period,
+        CancellationToken ct);
+
+    /// <summary>
+    /// Loads MeasurementSnapshot records by Id — used by the DataAvailabilityLoss probe to
+    /// recover the (source, pollutant, window) tuple from the event's original Measurement.
+    /// </summary>
+    Task<IReadOnlyList<MeasurementSnapshot>> GetMeasurementsByIdsAsync(
+        IReadOnlyCollection<Guid> measurementIds, CancellationToken ct);
 
     Task<Dictionary<(Guid SourceId, Guid PollutantId), RollingAverage>> GetRollingAverageRateAsync(
         IReadOnlyCollection<Guid> sourceIds,

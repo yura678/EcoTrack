@@ -8,6 +8,7 @@ using Application.Features.ComplianceEvents.Commands.CloseComplianceEvent;
 using Application.Features.ComplianceEvents.Commands.InvestigateComplianceEvent;
 using Application.Features.ComplianceEvents.Commands.ReopenComplianceEvent;
 using Asp.Versioning;
+using Domain.Entities.Monitoring;
 using Infrastructure.Identity.PermissionManager;
 using MediatR;
 using Microsoft.AspNetCore.Authorization;
@@ -21,6 +22,7 @@ namespace Api.Controllers.V1.Monitoring;
 [ApiController]
 public class ComplianceEventController(
     IComplianceEventQueries queries,
+    ICurrentViolationProbe violationProbe,
     ISender sender) : BaseController
 {
     [HttpGet("compliance-events")]
@@ -35,9 +37,19 @@ public class ComplianceEventController(
             query.From, query.To,
             query.Page, query.PageSize, cancellationToken);
 
+        // Only probe Open events — Closed/Investigating events represent operator decisions
+        // and the "currently violating" hint adds no value once the event has been actioned.
+        var openItems = result.Items
+            .Where(e => e.Status == ComplianceEventStatus.Open)
+            .ToList();
+        var probe = await violationProbe.ProbeAsync(openItems, cancellationToken);
+
         return Ok(new PageResult<ComplianceEventDto>
         {
-            Items = result.Items.Select(ComplianceEventDto.FromDomainModel).ToList(),
+            Items = result.Items
+                .Select(e => ComplianceEventDto.FromDomainModel(
+                    e, probe.TryGetValue(e.Id, out var v) ? v : null))
+                .ToList(),
             TotalCount = result.TotalCount,
             Page = result.Page,
             PageSize = result.PageSize
@@ -49,9 +61,18 @@ public class ComplianceEventController(
     public async Task<IActionResult> GetById(Guid id, CancellationToken cancellationToken)
     {
         var entity = await queries.GetByIdAsync(id, cancellationToken);
-        return entity.Match<ActionResult>(
-            ev => Ok(ComplianceEventDto.FromDomainModel(ev)),
-            () => NotFound());
+        return await entity.Match<Task<ActionResult>>(
+            async ev =>
+            {
+                bool? currentlyViolating = null;
+                if (ev.Status == ComplianceEventStatus.Open)
+                {
+                    var probe = await violationProbe.ProbeAsync([ev], cancellationToken);
+                    currentlyViolating = probe.TryGetValue(ev.Id, out var v) ? v : null;
+                }
+                return Ok(ComplianceEventDto.FromDomainModel(ev, currentlyViolating));
+            },
+            () => Task.FromResult<ActionResult>(NotFound()));
     }
 
     [HttpGet("measurements/{measurementId:guid}/compliance-events")]
@@ -61,7 +82,7 @@ public class ComplianceEventController(
         CancellationToken cancellationToken)
     {
         var entities = await queries.GetByMeasurementIdAsync(measurementId, cancellationToken);
-        return Ok(entities.Select(ComplianceEventDto.FromDomainModel).ToList());
+        return Ok(entities.Select(e => ComplianceEventDto.FromDomainModel(e)).ToList());
     }
 
     [HttpPatch("compliance-events/{id:guid}/close")]

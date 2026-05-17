@@ -26,9 +26,10 @@ public record ComplianceEventDto(
     DateTime DetectedAt,
     DateTime? ClosedAt,
     DateTime? UpdatedAt,
-    string? Notes)
+    string? Notes,
+    bool? IsCurrentlyViolating)
 {
-    public static ComplianceEventDto FromDomainModel(ComplianceEvent ev)
+    public static ComplianceEventDto FromDomainModel(ComplianceEvent ev, bool? isCurrentlyViolating = null)
     {
         return new ComplianceEventDto(
             ev.Id,
@@ -44,7 +45,8 @@ public record ComplianceEventDto(
             ev.DetectedAt,
             ev.ClosedAt,
             ev.UpdatedAt,
-            ev.Notes
+            ev.Notes,
+            isCurrentlyViolating
         );
     }
 }

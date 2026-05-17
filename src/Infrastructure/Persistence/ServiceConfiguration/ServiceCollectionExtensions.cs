@@ -75,6 +75,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<DetectionLockProvider>();
         services.AddScoped<MeasurementMaterializationService>();
         services.AddScoped<ComplianceDetectionService>();
+        services.AddScoped<ICurrentViolationProbe, CurrentViolationProbe>();
         services.AddHostedService<FastDetectionHostedService>();
         services.AddHostedService<AnnualLoadHostedService>();
         services.AddHostedService<CalibrationCheckHostedService>();
