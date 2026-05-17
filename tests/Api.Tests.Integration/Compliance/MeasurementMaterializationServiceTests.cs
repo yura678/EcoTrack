@@ -164,6 +164,75 @@ public class MeasurementMaterializationServiceTests : BaseIntegrationTest, IAsyn
     }
 
     [Fact]
+    public async Task ShouldSubstituteValueWhenAvailabilityLowAndHistoryExists()
+    {
+        var pollutant = PollutantsData.FirstTestPollutant();
+        await Context.Set<Pollutant>().AddAsync(pollutant);
+        var (permit, limit) = ActivePermitWithLimit(pollutant.Id, 1000m);
+        await Context.Set<Permit>().AddAsync(permit);
+        await Context.Set<EmissionLimit>().AddAsync(limit);
+
+        // Historical valid hourly measurements; max = 80, so substitute = 80 × 1.05 = 84.
+        await Context.Set<Measurement>().AddRangeAsync(
+            HistoricalValidMeasurement(pollutant.Id, 70m, hoursAgo: 5),
+            HistoricalValidMeasurement(pollutant.Id, 80m, hoursAgo: 4),
+            HistoricalValidMeasurement(pollutant.Id, 60m, hoursAgo: 3));
+
+        // Only 1 raw point in the current hour → ValidCount=1, Expected=60 → ~1.67% availability.
+        await Context.Set<RawMeasurement>().AddAsync(RawMeasurement.New(
+            _midWindow, _source.Id, pollutant.Id, _device.Id, _mg.Id, 30m));
+        await SaveChangesAsync();
+        await RefreshCasAsync();
+
+        await RunMaterializationAsync();
+
+        var measurement = await Context.Set<Measurement>().AsNoTracking()
+            .FirstOrDefaultAsync(m => m.WindowEnd == _windowEnd && m.PollutantId == pollutant.Id);
+        measurement.Should().NotBeNull();
+        measurement!.Quality.Should().Be(Quality.Substituted);
+        measurement.Value.Should().BeApproximately(84m, 0.0001m);
+        measurement.SubstitutionReason.Should().Contain("substitute = max(80");
+    }
+
+    [Fact]
+    public async Task ShouldMarkSubstitutedWithoutValueChangeWhenNoHistory()
+    {
+        var pollutant = PollutantsData.FirstTestPollutant();
+        await Context.Set<Pollutant>().AddAsync(pollutant);
+        var (permit, limit) = ActivePermitWithLimit(pollutant.Id, 1000m);
+        await Context.Set<Permit>().AddAsync(permit);
+        await Context.Set<EmissionLimit>().AddAsync(limit);
+
+        await Context.Set<RawMeasurement>().AddAsync(RawMeasurement.New(
+            _midWindow, _source.Id, pollutant.Id, _device.Id, _mg.Id, 30m));
+        await SaveChangesAsync();
+        await RefreshCasAsync();
+
+        await RunMaterializationAsync();
+
+        var measurement = await Context.Set<Measurement>().AsNoTracking()
+            .FirstOrDefaultAsync(m => m.WindowEnd == _windowEnd && m.PollutantId == pollutant.Id);
+        measurement.Should().NotBeNull();
+        measurement!.Quality.Should().Be(Quality.Substituted);
+        measurement.Value.Should().Be(30m); // unchanged — fallback path
+        measurement.SubstitutionReason.Should().Contain("no valid historical");
+    }
+
+    private Measurement HistoricalValidMeasurement(Guid pollutantId, decimal value, int hoursAgo)
+    {
+        var end = _windowEnd.AddHours(-hoursAgo);
+        var start = end.AddHours(-1);
+        return Measurement.New(
+            id: Guid.NewGuid(),
+            windowStart: start, windowEnd: end,
+            window: AveragingWindow.Hour1, aggregation: Aggregation.Average,
+            emissionSourceId: _source.Id, pollutantId: pollutantId,
+            deviceId: _device.Id, unitId: _mg.Id,
+            value: value,
+            validPointsCount: 60, expectedPointsCount: 60);
+    }
+
+    [Fact]
     public async Task ShouldLeaveNormalizedNullWhenO2IsSensorFault()
     {
         var pollutant = PollutantsData.WithO2Reference(6m);

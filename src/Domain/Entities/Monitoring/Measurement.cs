@@ -102,6 +102,22 @@ public class Measurement : BaseEntity, ITenantOwned
         UpdatedAt = DateTime.UtcNow;
     }
 
+    /// <summary>
+    /// IED Annex V Part 4 substitution: replaces the measured Value with a conservative
+    /// substitute (typically MAX of recent valid windows × 1.05). Normalisation is dropped
+    /// because the substitute is already a worst-case proxy.
+    /// </summary>
+    public void MarkSubstituted(SubstitutionSource by, string reason, decimal substituteValue)
+    {
+        Value = substituteValue;
+        NormalizedValue = null;
+        Quality = Quality.Substituted;
+        SubstitutedBy = by;
+        SubstitutionReason = reason;
+        SubstitutedAt = DateTime.UtcNow;
+        UpdatedAt = DateTime.UtcNow;
+    }
+
     public void AssignTenant(Guid enterpriseId)
     {
         if (EnterpriseId == Guid.Empty)

@@ -169,6 +169,29 @@ internal class ComplianceDetectionQueries(ApplicationDbContext context) : ICompl
         return rows;
     }
 
+    public async Task<decimal?> GetMaxValueOverRecentValidWindowsAsync(
+        Guid sourceId,
+        Guid pollutantId,
+        AveragingWindow period,
+        DateTime beforeWindowStart,
+        int lookbackCount,
+        CancellationToken ct)
+    {
+        if (lookbackCount <= 0) return null;
+        var recent = await context.Set<Measurement>()
+            .Where(m => m.EmissionSourceId == sourceId
+                        && m.PollutantId == pollutantId
+                        && m.Window == period
+                        && m.Aggregation == Aggregation.Average
+                        && m.Quality == Quality.Valid
+                        && m.WindowStart < beforeWindowStart)
+            .OrderByDescending(m => m.WindowEnd)
+            .Take(lookbackCount)
+            .Select(m => m.Value)
+            .ToListAsync(ct);
+        return recent.Count == 0 ? null : recent.Max();
+    }
+
     // ─── Materialization ────────────────────────────────────────────────────────
 
     public async Task<Dictionary<(Guid SourceId, Guid PollutantId), DateTime?>> GetLastWindowEndsAsync(

@@ -27,4 +27,16 @@ public class ComplianceDetectionSettings
     /// and overdue status only crosses once per day, so checking every fast tick is wasteful.
     /// </summary>
     public int CalibrationCheckIntervalHours { get; set; } = 6;
+
+    /// <summary>
+    /// IED substitution: when DataAvailability drops below threshold, replace the computed
+    /// value with the maximum observed in the last N valid windows times this multiplier.
+    /// 1.05 is the customary conservative bump per CEN/TS recommendations.
+    /// </summary>
+    public decimal SubstitutionMultiplier { get; set; } = 1.05m;
+
+    /// <summary>
+    /// How many prior valid windows to scan for the substitution maximum.
+    /// </summary>
+    public int SubstitutionLookbackWindows { get; set; } = 30;
 }

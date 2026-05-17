@@ -97,6 +97,7 @@ public class MeasurementMaterializationService(
                     if (entry.SampleCount == 0 || entry.Avg is null) continue;
 
                     var expected = (int)period.TotalMinutes;
+                    var validCount = (int)Math.Min(int.MaxValue, entry.ValidCount);
                     var normalizedValue = TryComputeNormalized(
                         entry.Avg.Value, o2Ref, tuple.SourceId, windowStart, paramReadings);
 
@@ -106,9 +107,12 @@ public class MeasurementMaterializationService(
                         tuple.Period, Aggregation.Average,
                         tuple.SourceId, tuple.PollutantId, deviceId, entry.UnitId,
                         value: entry.Avg.Value,
-                        validPointsCount: (int)Math.Min(int.MaxValue, entry.ValidCount),
+                        validPointsCount: validCount,
                         expectedPointsCount: expected,
                         normalizedValue: normalizedValue);
+
+                    await ApplyIedSubstitutionIfNeededAsync(
+                        measurement, tuple, validCount, expected, windowStart, cancellationToken);
 
                     newMeasurements.Add(measurement);
                     windowsThisTick++;
@@ -125,6 +129,41 @@ public class MeasurementMaterializationService(
         logger.LogInformation(
             "Materialized {Count} Measurement records in {Ms}ms",
             newMeasurements.Count, (DateTime.UtcNow - start).TotalMilliseconds);
+    }
+
+    /// <summary>
+    /// IED Annex V Part 4 substitution: when DataAvailability drops below the configured
+    /// threshold, the window is non-representative and its computed average cannot be used
+    /// for compliance. The customary CEMS substitute is MAX of recent valid windows × 1.05.
+    /// If no history is available, the value is left as-is but quality is marked Substituted
+    /// so downstream consumers know it is unreliable.
+    /// </summary>
+    private async Task ApplyIedSubstitutionIfNeededAsync(
+        Measurement measurement, MaterializationTuple tuple,
+        int validCount, int expectedCount, DateTime windowStart,
+        CancellationToken ct)
+    {
+        if (expectedCount <= 0) return;
+        var availability = (decimal)validCount / expectedCount;
+        if (availability >= _settings.DataAvailabilityThreshold) return;
+
+        var maxRecent = await queries.GetMaxValueOverRecentValidWindowsAsync(
+            tuple.SourceId, tuple.PollutantId, tuple.Period,
+            windowStart, _settings.SubstitutionLookbackWindows, ct);
+
+        if (maxRecent is null)
+        {
+            measurement.MarkSubstituted(SubstitutionSource.Auto,
+                $"Availability {availability:P0} < {_settings.DataAvailabilityThreshold:P0}; " +
+                "no valid historical windows to derive a substitute.");
+            return;
+        }
+
+        var substitute = Math.Round(maxRecent.Value * _settings.SubstitutionMultiplier, 6);
+        measurement.MarkSubstituted(SubstitutionSource.Auto,
+            $"IED substitution: availability {availability:P0} < {_settings.DataAvailabilityThreshold:P0}; " +
+            $"substitute = max({maxRecent.Value:0.###}) × {_settings.SubstitutionMultiplier} = {substitute:0.###}",
+            substitute);
     }
 
     /// <summary>

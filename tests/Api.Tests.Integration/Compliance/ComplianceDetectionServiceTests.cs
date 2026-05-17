@@ -345,6 +345,26 @@ public class ComplianceDetectionServiceTests : BaseIntegrationTest, IAsyncLifeti
         events.Should().BeEmpty();
     }
 
+    [Fact]
+    public async Task ShouldDetectExceedanceOnSubstitutedMeasurement()
+    {
+        var (permit, limit) = ActivePermitWithLimit(value: 80m, unitId: _mg.Id);
+        await Context.Set<Permit>().AddAsync(permit);
+        await Context.Set<EmissionLimit>().AddAsync(limit);
+
+        var measurement = HourlyMeasurement(value: 50m, unitId: _mg.Id);
+        // Substitute replaces Value with 85 — exceeds limit 80.
+        measurement.MarkSubstituted(SubstitutionSource.Auto, "test substitute", substituteValue: 85m);
+        await Context.Set<Measurement>().AddAsync(measurement);
+        await SaveChangesAsync();
+
+        await RunDetectionAsync();
+
+        var events = await GetEventsAsync(ComplianceEventType.LimitExceedance, limit.Id);
+        events.Should().HaveCount(1);
+        events[0].Ratio.Should().BeApproximately(1.0625m, 0.0001m); // 85/80
+    }
+
     // ─── MassFlow detection (LimitType dispatch) ─────────────────────────────────
 
     [Fact]

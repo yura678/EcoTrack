@@ -115,6 +115,19 @@ public interface IComplianceDetectionQueries
         DateTime to,
         CancellationToken ct);
 
+    /// <summary>
+    /// IED substitution lookup: max value among the last N valid Measurement records for
+    /// (source, pollutant, period, Average) strictly before <paramref name="beforeWindowStart"/>.
+    /// Returns null if no qualifying history exists.
+    /// </summary>
+    Task<decimal?> GetMaxValueOverRecentValidWindowsAsync(
+        Guid sourceId,
+        Guid pollutantId,
+        AveragingWindow period,
+        DateTime beforeWindowStart,
+        int lookbackCount,
+        CancellationToken ct);
+
     // ── Devices & calibration ───────────────────────────────────────────────
     Task<IReadOnlyList<OperationalDevice>> GetOperationalDevicesAsync(CancellationToken ct);
 

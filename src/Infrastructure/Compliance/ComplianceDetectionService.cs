@@ -128,7 +128,9 @@ public class ComplianceDetectionService(
             {
                 if (existingKeys.Contains((t.LimitId, t.EmissionSourceId))) continue;
                 if (!byKey.TryGetValue((t.EmissionSourceId, t.PollutantId), out var m)) continue;
-                if (m.Quality != Quality.Valid) continue; // untrusted reading
+                // Allow Valid and Substituted — both are IED-acceptable regulatory values.
+                // Invalid/Missing/Calibration/Maintenance are skipped.
+                if (m.Quality != Quality.Valid && m.Quality != Quality.Substituted) continue;
                 if (!units.TryGetValue(t.UnitId, out var limitUnit)
                     || !units.TryGetValue(m.UnitId, out var measurementUnit)) continue;
 
