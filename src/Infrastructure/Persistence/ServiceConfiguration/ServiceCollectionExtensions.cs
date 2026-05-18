@@ -8,6 +8,9 @@ using Application.Common.Interfaces.Repositories;
 using Application.Common.Interfaces.Repositories.Emissions;
 using Application.Common.Interfaces.Repositories.Enterprises;
 using Application.Common.Interfaces.Repositories.Monitoring;
+using Application.Common.Interfaces.Repositories.Notifications;
+using Application.Common.Interfaces.Queries.Notifications;
+using Infrastructure.Persistence.Repositories.Notifications;
 using Application.Common.Settings;
 using Infrastructure.Compliance;
 using Infrastructure.Persistence.Repositories;
@@ -156,6 +159,10 @@ public static class ServiceCollectionExtensions
         services.AddScoped<UserEnterpriseMembershipRepository>();
         services.AddScoped<IUserEnterpriseMembershipRepository>(provider => provider.GetRequiredService<UserEnterpriseMembershipRepository>());
         services.AddScoped<IUserEnterpriseMembershipQueries>(provider => provider.GetRequiredService<UserEnterpriseMembershipRepository>());
+
+        services.AddScoped<NotificationSubscriptionRepository>();
+        services.AddScoped<INotificationSubscriptionRepository>(provider => provider.GetRequiredService<NotificationSubscriptionRepository>());
+        services.AddScoped<INotificationSubscriptionQueries>(provider => provider.GetRequiredService<NotificationSubscriptionRepository>());
     }
      
 

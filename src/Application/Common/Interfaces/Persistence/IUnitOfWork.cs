@@ -3,6 +3,7 @@ using Application.Common.Interfaces.Repositories;
 using Application.Common.Interfaces.Repositories.Emissions;
 using Application.Common.Interfaces.Repositories.Enterprises;
 using Application.Common.Interfaces.Repositories.Monitoring;
+using Application.Common.Interfaces.Repositories.Notifications;
 
 namespace Application.Common.Interfaces.Persistence;
 
@@ -26,6 +27,7 @@ public interface IUnitOfWork
     IEmissionLimitRepository EmissionLimitRepository { get; }
     IInvitationRepository InvitationRepository { get; }
     IUserEnterpriseMembershipRepository UserEnterpriseMembershipRepository { get; }
+    INotificationSubscriptionRepository NotificationSubscriptionRepository { get; }
 
     Task SaveChangesAsync(CancellationToken cancellationToken);
     Task<IDbTransaction> BeginTransactionAsync(CancellationToken cancellationToken);

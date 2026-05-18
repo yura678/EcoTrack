@@ -4,6 +4,7 @@ using Application.Common.Interfaces.Repositories;
 using Application.Common.Interfaces.Repositories.Emissions;
 using Application.Common.Interfaces.Repositories.Enterprises;
 using Application.Common.Interfaces.Repositories.Monitoring;
+using Application.Common.Interfaces.Repositories.Notifications;
 using Microsoft.EntityFrameworkCore.Storage;
 
 namespace Infrastructure.Persistence.Repositories.Common;
@@ -27,7 +28,8 @@ public class UnitOfWork(
     IPermitRepository permitRepository,
     IEmissionLimitRepository emissionLimitRepository,
     IInvitationRepository invitationRepository,
-    IUserEnterpriseMembershipRepository userEnterpriseMembershipRepository)
+    IUserEnterpriseMembershipRepository userEnterpriseMembershipRepository,
+    INotificationSubscriptionRepository notificationSubscriptionRepository)
     : IUnitOfWork
 {
     public IUserRefreshTokenRepository UserRefreshTokenRepository { get; } = userRefreshTokenRepository;
@@ -48,6 +50,7 @@ public class UnitOfWork(
     public IEmissionLimitRepository EmissionLimitRepository { get; } = emissionLimitRepository;
     public IInvitationRepository InvitationRepository { get; } = invitationRepository;
     public IUserEnterpriseMembershipRepository UserEnterpriseMembershipRepository { get; } = userEnterpriseMembershipRepository;
+    public INotificationSubscriptionRepository NotificationSubscriptionRepository { get; } = notificationSubscriptionRepository;
 
 
     public Task SaveChangesAsync(CancellationToken cancellationToken)

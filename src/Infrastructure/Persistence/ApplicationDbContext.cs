@@ -3,6 +3,7 @@ using Domain.Common;
 using Domain.Entities.EmissionSources;
 using Domain.Entities.Enterprises;
 using Domain.Entities.Monitoring;
+using Domain.Entities.Notifications;
 using Domain.Entities.User;
 using Infrastructure.Persistence.Converters;
 using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
@@ -101,6 +102,8 @@ public class ApplicationDbContext
         modelBuilder.Entity<CalibrationRecord>().HasQueryFilter(x =>
             BypassTenantFilter || x.EnterpriseId == TenantFilterId);
         modelBuilder.Entity<DevicePollutantCapability>().HasQueryFilter(x =>
+            BypassTenantFilter || x.EnterpriseId == TenantFilterId);
+        modelBuilder.Entity<NotificationSubscription>().HasQueryFilter(x =>
             BypassTenantFilter || x.EnterpriseId == TenantFilterId);
 
         // Roles: global (EnterpriseId == null, e.g. superAdmin) are visible everywhere; tenant roles
