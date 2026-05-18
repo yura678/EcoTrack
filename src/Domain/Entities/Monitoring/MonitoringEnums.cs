@@ -58,7 +58,8 @@ public enum ComplianceEventType
     DataAvailabilityLoss = 1,
     DeviceOffline = 2,
     CalibrationFailure = 3,
-    MissingMeasurement = 4
+    MissingMeasurement = 4,
+    OutOfRangeReading = 5
 }
 
 public enum ComplianceEventStatus

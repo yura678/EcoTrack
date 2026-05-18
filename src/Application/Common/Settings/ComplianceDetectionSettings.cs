@@ -56,4 +56,21 @@ public class ComplianceDetectionSettings
     /// How many prior valid windows to scan for the substitution maximum.
     /// </summary>
     public int SubstitutionLookbackWindows { get; set; } = 30;
+
+    /// <summary>
+    /// Rolling window the OutOfRangeReading detector inspects for invalid raw_measurement rows.
+    /// </summary>
+    public int OutOfRangeWindowMinutes { get; set; } = 60;
+
+    /// <summary>
+    /// Fraction of invalid (out-of-range) raw rows per (source, device, pollutant) over the
+    /// window above which an OutOfRangeReading event is opened. 0.10 = 10%.
+    /// </summary>
+    public decimal OutOfRangeThreshold { get; set; } = 0.10m;
+
+    /// <summary>
+    /// Minimum total number of raw rows in the window before the OutOfRangeReading detector
+    /// will react — avoids flapping events when only a handful of points are present.
+    /// </summary>
+    public int OutOfRangeMinSampleCount { get; set; } = 10;
 }

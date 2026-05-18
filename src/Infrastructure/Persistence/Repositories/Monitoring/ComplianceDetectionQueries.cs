@@ -672,6 +672,44 @@ internal class ComplianceDetectionQueries(ApplicationDbContext context) : ICompl
         return dict;
     }
 
+    public async Task<IReadOnlyList<OutOfRangeWindow>> GetOutOfRangeWindowsAsync(
+        DateTime from, DateTime to, decimal threshold, int minSampleCount, CancellationToken ct)
+    {
+        // Quality.Invalid is 3 — see Domain.Entities.Monitoring.Quality enum.
+        var sql = @"
+            SELECT
+                emission_source_id,
+                device_id,
+                pollutant_id,
+                COUNT(*)::bigint AS total,
+                COUNT(*) FILTER (WHERE quality = 3)::bigint AS invalid_count
+            FROM raw_measurement
+            WHERE time >= @from AND time < @to
+            GROUP BY emission_source_id, device_id, pollutant_id
+            HAVING COUNT(*) >= @min_samples
+               AND (COUNT(*) FILTER (WHERE quality = 3))::numeric / COUNT(*) > @threshold";
+
+        await using var command = await CreateCommandAsync(sql, ct);
+        AddParam(command, "from", NpgsqlDbType.TimestampTz, EnsureUtc(from));
+        AddParam(command, "to", NpgsqlDbType.TimestampTz, EnsureUtc(to));
+        AddParam(command, "min_samples", NpgsqlDbType.Bigint, (long)minSampleCount);
+        AddParam(command, "threshold", NpgsqlDbType.Numeric, threshold);
+
+        var list = new List<OutOfRangeWindow>();
+        await using var reader = await command.ExecuteReaderAsync(ct);
+        while (await reader.ReadAsync(ct))
+        {
+            var sourceId = reader.GetGuid(0);
+            var deviceId = reader.GetGuid(1);
+            var pollutantId = reader.GetGuid(2);
+            var total = reader.GetInt64(3);
+            var invalidCount = reader.GetInt64(4);
+            var ratio = Math.Round((decimal)invalidCount / total, 4);
+            list.Add(new OutOfRangeWindow(sourceId, deviceId, pollutantId, total, invalidCount, ratio));
+        }
+        return list;
+    }
+
     // ─── Helpers ────────────────────────────────────────────────────────────────
 
     private async Task<NpgsqlCommand> CreateCommandAsync(string sql, CancellationToken ct)

@@ -800,6 +800,71 @@ public class ComplianceDetectionServiceTests : BaseIntegrationTest, IAsyncLifeti
         events.Should().BeEmpty();
     }
 
+    // ─── OutOfRangeReading ───────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task ShouldDetectOutOfRangeReadingWhenInvalidRatioExceedsThreshold()
+    {
+        // 12 of 60 (20%) raw rows marked Invalid → above 10% default threshold → event opens.
+        await SeedRawWithQualityMixAsync(validCount: 48, invalidCount: 12);
+
+        await RunDetectionAsync();
+
+        var events = await GetEventsAsync(ComplianceEventType.OutOfRangeReading);
+        events.Should().HaveCount(1);
+        events[0].EmissionSourceId.Should().Be(_source.Id);
+        events[0].DeviceId.Should().Be(_device.Id);
+        events[0].Ratio.Should().BeApproximately(0.20m, 0.0001m);
+        events[0].Notes.Should().Contain("12/60");
+        events[0].Notes.Should().Contain(_pollutant.Id.ToString());
+    }
+
+    [Fact]
+    public async Task ShouldNotDetectOutOfRangeReadingWhenBelowMinSampleCount()
+    {
+        // 1 of 5 (20%) — above ratio but below default MinSampleCount=10 → no event.
+        await SeedRawWithQualityMixAsync(validCount: 4, invalidCount: 1);
+
+        await RunDetectionAsync();
+
+        var events = await GetEventsAsync(ComplianceEventType.OutOfRangeReading);
+        events.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task ShouldNotDuplicateOpenOutOfRangeReadingEvent()
+    {
+        await SeedRawWithQualityMixAsync(validCount: 48, invalidCount: 12);
+
+        await RunDetectionAsync();
+        await RunDetectionAsync();
+
+        var events = await GetEventsAsync(ComplianceEventType.OutOfRangeReading);
+        events.Should().HaveCount(1);
+    }
+
+    private async Task SeedRawWithQualityMixAsync(int validCount, int invalidCount)
+    {
+        var baseTime = DateTime.UtcNow.AddMinutes(-30);
+        var rows = new List<RawMeasurement>(validCount + invalidCount);
+        for (var i = 0; i < validCount; i++)
+        {
+            rows.Add(RawMeasurement.New(
+                baseTime.AddSeconds(i),
+                _source.Id, _pollutant.Id, _device.Id, _mg.Id,
+                rawValue: 100m, quality: Quality.Valid));
+        }
+        for (var i = 0; i < invalidCount; i++)
+        {
+            rows.Add(RawMeasurement.New(
+                baseTime.AddSeconds(validCount + i),
+                _source.Id, _pollutant.Id, _device.Id, _mg.Id,
+                rawValue: 999m, quality: Quality.Invalid));
+        }
+        await Context.Set<RawMeasurement>().AddRangeAsync(rows);
+        await SaveChangesAsync();
+    }
+
     // ─── Helpers ─────────────────────────────────────────────────────────────────
 
     private (Permit Permit, EmissionLimit Limit) ActivePermitWithLimit(

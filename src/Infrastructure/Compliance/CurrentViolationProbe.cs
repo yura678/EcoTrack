@@ -43,6 +43,9 @@ public class CurrentViolationProbe(
                 case ComplianceEventType.MissingMeasurement:
                     await ProbeMissingMeasurement(byType, result, ct);
                     break;
+                case ComplianceEventType.OutOfRangeReading:
+                    await ProbeOutOfRangeReading(byType, result, ct);
+                    break;
             }
         }
 
@@ -310,6 +313,32 @@ public class CurrentViolationProbe(
             // Still violating if no raw_measurement of any pollutant has been ingested for this
             // source in the latest window.
             result[e.Id] = counts.GetValueOrDefault(e.EmissionSourceId, 0) == 0;
+        }
+    }
+
+    // ─── OutOfRangeReading ──────────────────────────────────────────────────────
+
+    private async Task ProbeOutOfRangeReading(
+        IEnumerable<ComplianceEvent> events,
+        Dictionary<Guid, bool?> result,
+        CancellationToken ct)
+    {
+        var eventsArr = events.ToArray();
+        var now = DateTime.UtcNow;
+        var from = now - TimeSpan.FromMinutes(Math.Max(1, _settings.OutOfRangeWindowMinutes));
+
+        // Re-run the same query the detector uses. Any (source, device) still over threshold
+        // is still violating; the rest are not.
+        var windows = await queries.GetOutOfRangeWindowsAsync(
+            from, now, _settings.OutOfRangeThreshold, _settings.OutOfRangeMinSampleCount, ct);
+        var stillViolating = windows
+            .Select(w => (w.SourceId, w.DeviceId))
+            .ToHashSet();
+
+        foreach (var e in eventsArr)
+        {
+            if (e.DeviceId is null) { result[e.Id] = null; continue; }
+            result[e.Id] = stillViolating.Contains((e.EmissionSourceId, e.DeviceId.Value));
         }
     }
 

@@ -35,6 +35,7 @@ public class ComplianceDetectionService(
         newEvents.AddRange(await DetectDeviceOfflineAsync(cancellationToken));
         newEvents.AddRange(await DetectDataAvailabilityLossAsync(cancellationToken));
         newEvents.AddRange(await DetectMissingMeasurementAsync(cancellationToken));
+        newEvents.AddRange(await DetectOutOfRangeReadingsAsync(cancellationToken));
 
         await PersistAsync(newEvents, cancellationToken);
 
@@ -730,6 +731,45 @@ public class ComplianceDetectionService(
             newEvents.Add(ComplianceEvent.ForMissingMeasurement(
                 Guid.NewGuid(), pair.EmissionSourceId, from, to,
                 notes: $"No measurements in last {window.TotalMinutes:0} minutes"));
+        }
+        return newEvents;
+    }
+
+    // ─── OutOfRangeReading ───────────────────────────────────────────────────────
+
+    private async Task<List<ComplianceEvent>> DetectOutOfRangeReadingsAsync(CancellationToken ct)
+    {
+        var now = DateTime.UtcNow;
+        var windowMinutes = Math.Max(1, _settings.OutOfRangeWindowMinutes);
+        var from = now - TimeSpan.FromMinutes(windowMinutes);
+
+        var windows = await queries.GetOutOfRangeWindowsAsync(
+            from, now, _settings.OutOfRangeThreshold, _settings.OutOfRangeMinSampleCount, ct);
+        if (windows.Count == 0) return [];
+
+        var existing = await complianceEventQueries.GetOpenByTypeAsync(
+            ComplianceEventType.OutOfRangeReading, ct);
+        // Dedup at (source, device) — ComplianceEvent currently has no PollutantId column so
+        // multiple pollutants drifting on the same device collapse into a single event.
+        // Pollutant is recorded in Notes for triage.
+        var existingKeys = existing
+            .Where(e => e.DeviceId.HasValue)
+            .Select(e => (e.EmissionSourceId, e.DeviceId!.Value))
+            .ToHashSet();
+
+        var newEvents = new List<ComplianceEvent>();
+        var added = new HashSet<(Guid SourceId, Guid DeviceId)>();
+        foreach (var w in windows)
+        {
+            var key = (w.SourceId, w.DeviceId);
+            if (existingKeys.Contains(key)) continue;
+            if (!added.Add(key)) continue;
+
+            newEvents.Add(ComplianceEvent.ForOutOfRangeReading(
+                Guid.NewGuid(), w.SourceId, w.DeviceId, w.InvalidRatio, from, now,
+                notes: $"Pollutant {w.PollutantId}: {w.InvalidCount}/{w.Total} readings " +
+                       $"({w.InvalidRatio:P0}) out of sensor range over last {windowMinutes} min " +
+                       $"(threshold {_settings.OutOfRangeThreshold:P0})"));
         }
         return newEvents;
     }

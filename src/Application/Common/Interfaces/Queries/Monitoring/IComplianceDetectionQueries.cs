@@ -75,6 +75,19 @@ public record ProcessParamReadings(
     decimal? PressureKPa,
     decimal? MoisturePercent);
 
+/// <summary>
+/// Per-(source, device, pollutant) summary of raw_measurement quality over a rolling window.
+/// Returned only when the invalid ratio exceeds the configured threshold and total samples
+/// meet the minimum count — used to open OutOfRangeReading events.
+/// </summary>
+public record OutOfRangeWindow(
+    Guid SourceId,
+    Guid DeviceId,
+    Guid PollutantId,
+    long Total,
+    long InvalidCount,
+    decimal InvalidRatio);
+
 // ─── Query interface ────────────────────────────────────────────────────────
 
 public interface IComplianceDetectionQueries
@@ -212,5 +225,17 @@ public interface IComplianceDetectionQueries
         IReadOnlyCollection<Guid> pollutantIds,
         DateTime from,
         DateTime to,
+        CancellationToken ct);
+
+    /// <summary>
+    /// Scans raw_measurement and returns one row per (source, device, pollutant) whose share of
+    /// Quality=Invalid rows over the window exceeds <paramref name="threshold"/> AND whose total
+    /// row count is at least <paramref name="minSampleCount"/>.
+    /// </summary>
+    Task<IReadOnlyList<OutOfRangeWindow>> GetOutOfRangeWindowsAsync(
+        DateTime from,
+        DateTime to,
+        decimal threshold,
+        int minSampleCount,
         CancellationToken ct);
 }

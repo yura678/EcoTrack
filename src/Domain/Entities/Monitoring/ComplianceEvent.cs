@@ -94,6 +94,13 @@ public class ComplianceEvent : BaseEntity, ITenantOwned
             windowStart, windowEnd, ratio: null,
             ComplianceEventStatus.Open, DateTime.UtcNow, closedAt: null, notes, updatedAt: null);
 
+    public static ComplianceEvent ForOutOfRangeReading(Guid id, Guid emissionSourceId, Guid deviceId,
+        decimal ratio, DateTime windowStart, DateTime windowEnd, string? notes = null) =>
+        new(id, ComplianceEventType.OutOfRangeReading, emissionSourceId,
+            measurementId: null, limitId: null, deviceId,
+            windowStart, windowEnd, ratio,
+            ComplianceEventStatus.Open, DateTime.UtcNow, closedAt: null, notes, updatedAt: null);
+
     public void ChangeStatus(ComplianceEventStatus status)
     {
         if (status == ComplianceEventStatus.Closed)
