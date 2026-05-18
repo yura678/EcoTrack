@@ -26,6 +26,7 @@ public class RawIngestControllerTests : BaseIntegrationTest, IAsyncLifetime
     private readonly Pollutant _configuredPollutant;
     private readonly Pollutant _unconfiguredPollutant;
     private readonly MeasureUnit _mg;
+    private readonly MeasureUnit _g;
     private readonly MonitoringDevice _device;
     private readonly DevicePollutantCapability _capability;
 
@@ -42,6 +43,7 @@ public class RawIngestControllerTests : BaseIntegrationTest, IAsyncLifetime
         _configuredPollutant = PollutantsData.FirstTestPollutant();
         _unconfiguredPollutant = PollutantsData.SecondTestPollutant();
         _mg = MeasureUnitsData.MgPerM3();
+        _g = MeasureUnitsData.GPerM3();
         _device = MonitoringDevicesData.FirstTestDevice(_source.Id, _installation.Id);
         _device.RotateIngestionSecret(Convert.ToBase64String(_ingestionSecretBytes));
         _capability = DevicePollutantCapability.New(
@@ -119,6 +121,82 @@ public class RawIngestControllerTests : BaseIntegrationTest, IAsyncLifetime
         rawCount.Should().Be(0, "no row may be persisted when the batch is rejected");
     }
 
+    [Fact]
+    public async Task ShouldKeepValidQualityWhenRawValueIsInsideCapabilityRange()
+    {
+        // Capability range 0..500 mg/m³, value 100 mg/m³ → Quality stays Valid.
+        var body = new[]
+        {
+            new RawMeasurementIngestDto(
+                Time: DateTime.UtcNow.AddMinutes(-1),
+                EmissionSourceId: _source.Id,
+                PollutantId: _configuredPollutant.Id,
+                UnitId: _mg.Id,
+                RawValue: 100m,
+                Quality: Quality.Valid)
+        };
+
+        var response = await SignAndSendAsync(body);
+        response.StatusCode.Should().Be(HttpStatusCode.Accepted);
+
+        var row = await Context.Set<RawMeasurement>()
+            .Where(r => r.DeviceId == _device.Id)
+            .SingleAsync();
+        row.Quality.Should().Be(Quality.Valid);
+    }
+
+    [Fact]
+    public async Task ShouldForceInvalidQualityWhenRawValueOutsideCapabilityRange()
+    {
+        // Capability range 0..500 mg/m³, value 600 mg/m³ → forced Invalid; row still inserted
+        // for audit so downstream detectors can spot the systematic out-of-range condition.
+        var body = new[]
+        {
+            new RawMeasurementIngestDto(
+                Time: DateTime.UtcNow.AddMinutes(-1),
+                EmissionSourceId: _source.Id,
+                PollutantId: _configuredPollutant.Id,
+                UnitId: _mg.Id,
+                RawValue: 600m,
+                Quality: Quality.Valid)
+        };
+
+        var response = await SignAndSendAsync(body);
+        response.StatusCode.Should().Be(HttpStatusCode.Accepted);
+
+        var row = await Context.Set<RawMeasurement>()
+            .Where(r => r.DeviceId == _device.Id)
+            .SingleAsync();
+        row.Quality.Should().Be(Quality.Invalid);
+        row.RawValue.Should().Be(600m);
+    }
+
+    [Fact]
+    public async Task ShouldConvertUnitsBeforeRangeCheck()
+    {
+        // Capability range is in mg/m³ (factor 1). Measurement is in g/m³ (factor 1000).
+        // 0.6 g/m³ = 600 mg/m³ > 500 limit → forced Invalid even though the numeric value
+        // alone is well below 500.
+        var body = new[]
+        {
+            new RawMeasurementIngestDto(
+                Time: DateTime.UtcNow.AddMinutes(-1),
+                EmissionSourceId: _source.Id,
+                PollutantId: _configuredPollutant.Id,
+                UnitId: _g.Id,
+                RawValue: 0.6m,
+                Quality: Quality.Valid)
+        };
+
+        var response = await SignAndSendAsync(body);
+        response.StatusCode.Should().Be(HttpStatusCode.Accepted);
+
+        var row = await Context.Set<RawMeasurement>()
+            .Where(r => r.DeviceId == _device.Id)
+            .SingleAsync();
+        row.Quality.Should().Be(Quality.Invalid);
+    }
+
     // ─── HMAC signing helper ─────────────────────────────────────────────────────
 
     private async Task<HttpResponseMessage> SignAndSendAsync<TBody>(TBody body)
@@ -151,7 +229,7 @@ public class RawIngestControllerTests : BaseIntegrationTest, IAsyncLifetime
         await Context.Set<Installation>().AddAsync(_installation);
         await Context.Set<EmissionSource>().AddAsync(_source);
         await Context.Set<Pollutant>().AddRangeAsync(_configuredPollutant, _unconfiguredPollutant);
-        await Context.Set<MeasureUnit>().AddAsync(_mg);
+        await Context.Set<MeasureUnit>().AddRangeAsync(_mg, _g);
         await Context.Set<MonitoringDevice>().AddAsync(_device);
         await Context.Set<DevicePollutantCapability>().AddAsync(_capability);
         await SaveChangesAsync();

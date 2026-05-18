@@ -7,4 +7,6 @@ public interface IMeasureUnitQueries
 {
     Task<IReadOnlyList<MeasureUnit>> GetAllAsync(CancellationToken cancellationToken);
     Task<Option<MeasureUnit>> GetByIdAsync(Guid id, CancellationToken cancellationToken);
+    Task<IReadOnlyList<MeasureUnit>> GetByIdsAsync(
+        IReadOnlyList<Guid> ids, CancellationToken cancellationToken);
 }

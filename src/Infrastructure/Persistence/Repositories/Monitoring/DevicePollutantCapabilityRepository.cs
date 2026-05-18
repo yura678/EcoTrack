@@ -52,4 +52,18 @@ internal class DevicePollutantCapabilityRepository(ApplicationDbContext context)
             .ToListAsync(cancellationToken);
         return rows.ToHashSet();
     }
+
+    public async Task<IReadOnlyDictionary<Guid, DeviceCapabilityRange>> GetCapabilityRangesForDeviceAsync(
+        Guid deviceId,
+        IReadOnlyCollection<Guid> pollutantIds,
+        CancellationToken cancellationToken)
+    {
+        if (pollutantIds.Count == 0) return new Dictionary<Guid, DeviceCapabilityRange>();
+        var rows = await TableNoTracking
+            .Where(x => x.DeviceId == deviceId && pollutantIds.Contains(x.PollutantId))
+            .Select(x => new DeviceCapabilityRange(
+                x.PollutantId, x.RangeMin, x.RangeMax, x.RangeUnitId))
+            .ToListAsync(cancellationToken);
+        return rows.ToDictionary(r => r.PollutantId);
+    }
 }

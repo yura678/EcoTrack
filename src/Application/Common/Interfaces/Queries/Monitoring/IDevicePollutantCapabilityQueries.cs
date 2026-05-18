@@ -3,6 +3,16 @@ using LanguageExt;
 
 namespace Application.Common.Interfaces.Queries.Monitoring;
 
+/// <summary>
+/// Range + unit metadata for a single (device, pollutant) capability — projected so callers
+/// don't have to load the full DevicePollutantCapability entity.
+/// </summary>
+public record DeviceCapabilityRange(
+    Guid PollutantId,
+    decimal RangeMin,
+    decimal RangeMax,
+    Guid RangeUnitId);
+
 public interface IDevicePollutantCapabilityQueries
 {
     Task<IReadOnlyList<DevicePollutantCapability>> GetByDeviceIdAsync(Guid deviceId,
@@ -15,6 +25,16 @@ public interface IDevicePollutantCapabilityQueries
     /// pollutants the device is not configured to measure.
     /// </summary>
     Task<System.Collections.Generic.HashSet<Guid>> GetConfiguredPollutantsForDeviceAsync(
+        Guid deviceId,
+        IReadOnlyCollection<Guid> pollutantIds,
+        CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Loads range + unit metadata for each requested (device, pollutantId) pair. Used by the
+    /// ingest range-check to decide whether an incoming rawValue lies inside the sensor's
+    /// declared shading.
+    /// </summary>
+    Task<IReadOnlyDictionary<Guid, DeviceCapabilityRange>> GetCapabilityRangesForDeviceAsync(
         Guid deviceId,
         IReadOnlyCollection<Guid> pollutantIds,
         CancellationToken cancellationToken);
