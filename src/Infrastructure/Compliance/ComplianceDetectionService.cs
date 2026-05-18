@@ -2,8 +2,10 @@ using Application.Common.Interfaces.Persistence;
 using Application.Common.Interfaces.Queries.Monitoring;
 using Application.Common.Interfaces.Repositories.Monitoring;
 using Application.Common.Settings;
+using Application.Features.ComplianceEvents.Notifications;
 using Domain.Entities.Enterprises;
 using Domain.Entities.Monitoring;
+using MediatR;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
@@ -19,6 +21,7 @@ public class ComplianceDetectionService(
     IComplianceEventRepository complianceEventRepository,
     IComplianceEventQueries complianceEventQueries,
     IUnitOfWork unitOfWork,
+    IPublisher publisher,
     IOptions<ComplianceDetectionSettings> options,
     ILogger<ComplianceDetectionService> logger)
 {
@@ -74,6 +77,15 @@ public class ComplianceDetectionService(
         if (events.Count == 0) return;
         await complianceEventRepository.AddRangeAsync(events, ct);
         await unitOfWork.SaveChangesAsync(ct);
+
+        // Publish AFTER successful save so handlers operate on persisted events. The handlers
+        // enqueue Hangfire jobs which are durable on their own — if Hangfire enqueue itself
+        // fails, we lose the notification but the ComplianceEvent stays in DB; later phases
+        // can replace this with a transactional outbox if loss becomes unacceptable.
+        foreach (var ev in events)
+        {
+            await publisher.Publish(new ComplianceEventOpenedNotification(ev.Id), ct);
+        }
     }
 
     // ─── LimitExceedance ─────────────────────────────────────────────────────────

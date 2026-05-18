@@ -1,4 +1,8 @@
-﻿using Infrastructure.Persistence;
+﻿using Application.Common.Settings;
+using Hangfire;
+using Hangfire.Common;
+using Hangfire.States;
+using Infrastructure.Persistence;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -7,6 +11,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using Npgsql;
 using Testcontainers.PostgreSql;
 using Xunit;
@@ -26,7 +31,20 @@ public class IntegrationTestWebFactory: WebApplicationFactory<Program>, IAsyncLi
     {
         builder.ConfigureTestServices(services =>
         {
+            // ApplicationSettings is consumed by Hangfire to get its connection string.
+            // Without this override Hangfire's JobStorage tries to connect to the
+            // production-config DB at app startup and tests fail before any code runs.
+            services.RemoveServiceByType(typeof(ApplicationSettings));
+            services.AddSingleton(new ApplicationSettings
+            {
+                ConnectionStrings = new ConectionStrings
+                {
+                    DefaultConnection = _dbContainer.GetConnectionString()
+                }
+            });
+
             RegisterDatabase(services);
+            DisableHangfire(services);
 
             services.AddAuthentication(defaultScheme: "TestScheme")
                 .AddScheme<AuthenticationSchemeOptions, TestAuthHandler>(
@@ -44,6 +62,25 @@ public class IntegrationTestWebFactory: WebApplicationFactory<Program>, IAsyncLi
                 .AddJsonFile("appsettings.Test.json")
                 .AddEnvironmentVariables();
         });
+    }
+
+    /// <summary>
+    /// Tests don't need real background-job processing but the dashboard middleware in
+    /// Program.cs requires AddHangfire to have been called. Strip the Hangfire processing
+    /// server (the IHostedService that polls JobStorage for work) so worker threads don't
+    /// churn against the testcontainer, but keep storage + client registrations intact so
+    /// the rest of the wiring resolves.
+    /// </summary>
+    private static void DisableHangfire(IServiceCollection services)
+    {
+        var serverDescriptors = services
+            .Where(d => d.ImplementationType?.FullName?.Contains("BackgroundJobServerHostedService") == true
+                        || d.ImplementationType?.FullName?.Contains("BackgroundProcessing") == true)
+            .ToList();
+        foreach (var d in serverDescriptors) services.Remove(d);
+
+        services.RemoveServiceByType(typeof(IBackgroundJobClient));
+        services.AddSingleton<IBackgroundJobClient, NoopBackgroundJobClient>();
     }
 
     private void RegisterDatabase(IServiceCollection services)
@@ -93,4 +130,10 @@ public static class TestFactoryExtensions
             services.Remove(descriptor);
         }
     }
+}
+
+internal class NoopBackgroundJobClient : IBackgroundJobClient
+{
+    public string Create(Job job, IState state) => Guid.NewGuid().ToString();
+    public bool ChangeState(string jobId, IState state, string? expectedState) => true;
 }

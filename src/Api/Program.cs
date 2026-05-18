@@ -4,6 +4,7 @@ using Api.Modules;
 using Api.Swagger;
 using Application.ServiceConfiguration;
 using Infrastructure.EmailProvider.ServiceConfiguration;
+using Infrastructure.Hangfire;
 using Infrastructure.Identity.Dtos;
 using Infrastructure.Identity.ServiceConfiguration;
 using Infrastructure.Logging;
@@ -26,7 +27,8 @@ builder.Services.SetupServices(configuration)
     .AddApplicationServices()
     .RegisterIdentityServices(identitySettings)
     .AddEmailProviderServices(configuration)
-    .AddPersistenceServices(configuration);
+    .AddPersistenceServices(configuration)
+    .AddHangfireServices();
 
 builder.Services.RegisterValidatorsAsServices();
 builder.Services.AddMemoryCache();
@@ -87,6 +89,8 @@ app.UseRateLimiter();
 
 app.UseAuthentication();
 app.UseAuthorization();
+
+app.UseHangfireDashboardWithAuth();
 
 app.MapControllers();
 

@@ -13,3 +13,6 @@ appsettings.Local.json
 *.user
 *.suo
 *.DotSettings.user
+
+# Local design notes (not part of the repo)
+docs/
