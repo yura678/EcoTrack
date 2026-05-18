@@ -6,10 +6,10 @@ using Microsoft.Extensions.Logging;
 namespace Infrastructure.Compliance.Notifications;
 
 /// <summary>
-/// Bridge from in-process MediatR notification to Hangfire-backed delivery jobs. Future
-/// phases will replace this stub with real channel jobs (email, webhook). Keeping the bridge
-/// here means the compliance detector never blocks on SMTP or external HTTP — it simply
-/// records an entry in Hangfire's job table and returns.
+/// Bridge from in-process MediatR notification to a Hangfire-backed delivery job. The
+/// compliance detector never blocks on SMTP or external HTTP — it commits the
+/// ComplianceEvent and returns; this handler simply records an entry in Hangfire's job
+/// table so the dispatcher can pick it up on a worker thread.
 /// </summary>
 public class EnqueueComplianceNotificationsHandler(
     IBackgroundJobClient jobClient,
@@ -23,22 +23,6 @@ public class EnqueueComplianceNotificationsHandler(
         logger.LogInformation(
             "Enqueued compliance notification job {JobId} for event {EventId}",
             jobId, notification.ComplianceEventId);
-        return Task.CompletedTask;
-    }
-}
-
-/// <summary>
-/// Placeholder Hangfire job. Phases 3-4 will inject the subscription queries and channel
-/// adapters here. For now it just logs so the wiring is observable end-to-end in the
-/// dashboard.
-/// </summary>
-public class ComplianceNotificationDispatcher(ILogger<ComplianceNotificationDispatcher> logger)
-{
-    public Task DispatchAsync(Guid complianceEventId, CancellationToken cancellationToken)
-    {
-        logger.LogInformation(
-            "Dispatch placeholder fired for compliance event {EventId} — channels not wired yet",
-            complianceEventId);
         return Task.CompletedTask;
     }
 }

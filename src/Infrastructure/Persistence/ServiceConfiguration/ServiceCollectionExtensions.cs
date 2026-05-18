@@ -1,4 +1,5 @@
 ﻿using Application.Common.Interfaces.Ingestion;
+using Application.Common.Interfaces.Notifications;
 using Application.Common.Interfaces.Persistence;
 using Application.Common.Interfaces.Queries;
 using Application.Common.Interfaces.Queries.Emissions;
@@ -13,6 +14,7 @@ using Application.Common.Interfaces.Queries.Notifications;
 using Infrastructure.Persistence.Repositories.Notifications;
 using Application.Common.Settings;
 using Infrastructure.Compliance;
+using Infrastructure.Compliance.Notifications;
 using Infrastructure.Persistence.Repositories;
 using Infrastructure.Persistence.Repositories.Common;
 using Infrastructure.Persistence.Repositories.EmissionSources;
@@ -79,6 +81,8 @@ public static class ServiceCollectionExtensions
         services.AddScoped<MeasurementMaterializationService>();
         services.AddScoped<ComplianceDetectionService>();
         services.AddScoped<ICurrentViolationProbe, CurrentViolationProbe>();
+        services.AddScoped<IEmailComplianceNotificationRenderer, EmailComplianceNotificationRenderer>();
+        services.AddScoped<ComplianceNotificationDispatcher>();
         services.AddHostedService<FastDetectionHostedService>();
         services.AddHostedService<AnnualLoadHostedService>();
         services.AddHostedService<CalibrationCheckHostedService>();

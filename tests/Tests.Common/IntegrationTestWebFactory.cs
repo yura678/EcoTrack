@@ -1,4 +1,5 @@
-﻿using Application.Common.Settings;
+﻿using Application.Common.Interfaces.Persistence;
+using Application.Common.Settings;
 using Hangfire;
 using Hangfire.Common;
 using Hangfire.States;
@@ -45,6 +46,7 @@ public class IntegrationTestWebFactory: WebApplicationFactory<Program>, IAsyncLi
 
             RegisterDatabase(services);
             DisableHangfire(services);
+            ReplaceEmailService(services);
 
             services.AddAuthentication(defaultScheme: "TestScheme")
                 .AddScheme<AuthenticationSchemeOptions, TestAuthHandler>(
@@ -71,6 +73,19 @@ public class IntegrationTestWebFactory: WebApplicationFactory<Program>, IAsyncLi
     /// churn against the testcontainer, but keep storage + client registrations intact so
     /// the rest of the wiring resolves.
     /// </summary>
+    /// <summary>
+    /// RecordingEmailService captures send calls so notification-dispatch tests can assert on
+    /// outgoing emails. Registered as singleton so the test class and the API share the same
+    /// queue instance.
+    /// </summary>
+    public RecordingEmailService Emails { get; } = new();
+
+    private void ReplaceEmailService(IServiceCollection services)
+    {
+        services.RemoveServiceByType(typeof(IEmailService));
+        services.AddSingleton<IEmailService>(Emails);
+    }
+
     private static void DisableHangfire(IServiceCollection services)
     {
         var serverDescriptors = services
