@@ -19,6 +19,8 @@ public class ComplianceNotificationDispatcher(
     INotificationSubscriptionQueries subscriptionQueries,
     IEmailComplianceNotificationRenderer emailRenderer,
     IEmailService emailService,
+    IWebhookComplianceNotificationPayloadBuilder webhookPayloadBuilder,
+    IWebhookSender webhookSender,
     ILogger<ComplianceNotificationDispatcher> logger)
 {
     [AutomaticRetry(Attempts = 5, DelaysInSeconds = new[] { 30, 120, 600, 1800, 3600 })]
@@ -48,33 +50,52 @@ public class ComplianceNotificationDispatcher(
             return;
         }
 
+        // Build the webhook payload lazily — most batches will have 0 webhook subs and we
+        // don't want to pay the serialization cost when nothing consumes it.
+        string? webhookPayload = null;
+
         var sentEmails = 0;
+        var sentWebhooks = 0;
         foreach (var sub in subscriptions)
         {
-            if (sub.Channel == NotificationChannel.Email && !string.IsNullOrEmpty(sub.Email))
+            try
             {
-                try
+                switch (sub.Channel)
                 {
-                    var content = emailRenderer.Render(complianceEvent);
-                    await emailService.SendEmailAsync(
-                        sub.Email, content.Subject, content.Body, cancellationToken);
-                    sentEmails++;
-                }
-                catch (Exception ex)
-                {
-                    // Log + continue so one bad recipient doesn't block others. Hangfire's
-                    // job-level retry covers transient global failures (e.g. SMTP down) by
-                    // re-running the whole dispatch.
-                    logger.LogError(ex,
-                        "Failed to send email for event {EventId} to subscription {SubId}",
-                        complianceEventId, sub.Id);
+                    case NotificationChannel.Email when !string.IsNullOrEmpty(sub.Email):
+                    {
+                        var content = emailRenderer.Render(complianceEvent);
+                        await emailService.SendEmailAsync(
+                            sub.Email, content.Subject, content.Body, cancellationToken);
+                        sentEmails++;
+                        break;
+                    }
+                    case NotificationChannel.Webhook
+                        when !string.IsNullOrEmpty(sub.WebhookUrl)
+                          && !string.IsNullOrEmpty(sub.WebhookSecret):
+                    {
+                        webhookPayload ??= webhookPayloadBuilder.Build(complianceEvent);
+                        await webhookSender.SendAsync(
+                            sub.WebhookUrl, sub.WebhookSecret, webhookPayload, cancellationToken);
+                        sentWebhooks++;
+                        break;
+                    }
                 }
             }
-            // Webhook channel handled in Phase 4.
+            catch (Exception ex)
+            {
+                // Per-recipient isolation: one bad URL or SMTP miss doesn't take out the
+                // dispatch for everyone else. Hangfire's job-level retry handles transient
+                // global failures (e.g. whole SMTP down) by re-running this method.
+                logger.LogError(ex,
+                    "Failed to deliver compliance event {EventId} via {Channel} to subscription {SubId}",
+                    complianceEventId, sub.Channel, sub.Id);
+            }
         }
 
         logger.LogInformation(
-            "Compliance notification dispatched for event {EventId}: {EmailCount} email(s) sent of {Total} matching subscription(s)",
-            complianceEventId, sentEmails, subscriptions.Count);
+            "Compliance notification dispatched for event {EventId}: " +
+            "{EmailCount} email(s), {WebhookCount} webhook(s) of {Total} matching subscription(s)",
+            complianceEventId, sentEmails, sentWebhooks, subscriptions.Count);
     }
 }

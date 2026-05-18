@@ -82,6 +82,8 @@ public static class ServiceCollectionExtensions
         services.AddScoped<ComplianceDetectionService>();
         services.AddScoped<ICurrentViolationProbe, CurrentViolationProbe>();
         services.AddScoped<IEmailComplianceNotificationRenderer, EmailComplianceNotificationRenderer>();
+        services.AddScoped<IWebhookComplianceNotificationPayloadBuilder, WebhookComplianceNotificationPayloadBuilder>();
+        services.AddHttpClient<IWebhookSender, HttpWebhookSender>();
         services.AddScoped<ComplianceNotificationDispatcher>();
         services.AddHostedService<FastDetectionHostedService>();
         services.AddHostedService<AnnualLoadHostedService>();

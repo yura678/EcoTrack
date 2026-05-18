@@ -1,4 +1,5 @@
-﻿using Application.Common.Interfaces.Persistence;
+﻿using Application.Common.Interfaces.Notifications;
+using Application.Common.Interfaces.Persistence;
 using Application.Common.Settings;
 using Hangfire;
 using Hangfire.Common;
@@ -47,6 +48,7 @@ public class IntegrationTestWebFactory: WebApplicationFactory<Program>, IAsyncLi
             RegisterDatabase(services);
             DisableHangfire(services);
             ReplaceEmailService(services);
+            ReplaceWebhookHttpClient(services);
 
             services.AddAuthentication(defaultScheme: "TestScheme")
                 .AddScheme<AuthenticationSchemeOptions, TestAuthHandler>(
@@ -84,6 +86,23 @@ public class IntegrationTestWebFactory: WebApplicationFactory<Program>, IAsyncLi
     {
         services.RemoveServiceByType(typeof(IEmailService));
         services.AddSingleton<IEmailService>(Emails);
+    }
+
+    /// <summary>
+    /// Captures every outbound webhook HTTP request via a fake primary handler bound to the
+    /// IWebhookSender's typed HttpClient. Tests can read WebhookHttp.Requests to assert URL,
+    /// headers, and body.
+    /// </summary>
+    public CapturingHttpMessageHandler WebhookHttp { get; } = new();
+
+    private void ReplaceWebhookHttpClient(IServiceCollection services)
+    {
+        services.ConfigureHttpClientDefaults(builder =>
+        {
+            // No-op; per-client handler swap below.
+        });
+        services.AddHttpClient<IWebhookSender, Infrastructure.Compliance.Notifications.HttpWebhookSender>()
+            .ConfigurePrimaryHttpMessageHandler(() => WebhookHttp);
     }
 
     private static void DisableHangfire(IServiceCollection services)
