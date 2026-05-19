@@ -40,11 +40,24 @@ public class TestAuthHandler(
     public static readonly Guid TestUserId = Guid.NewGuid();
     public static readonly Guid TestCompanyId = Guid.NewGuid();
 
+    /// <summary>
+    /// Tests can opt out of the default superAdmin role by setting X-Test-Role on the
+    /// request — useful for permission-gate verification (e.g. SignalR broadcast denial).
+    /// Absent or empty header → default superAdmin which bypasses every DynamicPermission
+    /// check.
+    /// </summary>
+    public const string RoleOverrideHeader = "X-Test-Role";
+
     protected override Task<AuthenticateResult> HandleAuthenticateAsync()
     {
+        var role = Request.Headers.TryGetValue(RoleOverrideHeader, out var headerValue)
+                   && !string.IsNullOrWhiteSpace(headerValue)
+            ? headerValue.ToString()
+            : "superAdmin";
+
         var claims = new[]
         {
-            new Claim(ClaimTypes.Role, "superAdmin"),
+            new Claim(ClaimTypes.Role, role),
             new Claim(ClaimTypes.NameIdentifier, TestUserId.ToString()), // Для GetCurrentUserId()
             new Claim("CompanyId", TestCompanyId.ToString())
         };

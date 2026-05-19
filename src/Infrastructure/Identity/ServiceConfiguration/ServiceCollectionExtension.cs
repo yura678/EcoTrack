@@ -135,6 +135,19 @@ public static class ServiceCollectionExtension
             options.TokenValidationParameters = validationParameters;
             options.Events = new JwtBearerEvents
             {
+                OnMessageReceived = context =>
+                {
+                    // WebSocket handshakes can't carry custom Authorization headers, so the
+                    // SignalR client passes the JWT via ?access_token=... query string. Only
+                    // honor it for /hubs/* paths to keep REST endpoints on header-only auth.
+                    var accessToken = context.Request.Query["access_token"];
+                    var path = context.HttpContext.Request.Path;
+                    if (!string.IsNullOrEmpty(accessToken) && path.StartsWithSegments("/hubs"))
+                    {
+                        context.Token = accessToken;
+                    }
+                    return Task.CompletedTask;
+                },
                 OnAuthenticationFailed = context =>
                 {
                     //var logger = context.HttpContext.RequestServices.GetRequiredService<ILoggerFactory>().CreateLogger(nameof(JwtBearerEvents));

@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Threading.RateLimiting;
+using Api.Hubs;
 using Api.Modules;
 using Api.Swagger;
 using Application.ServiceConfiguration;
@@ -32,6 +33,7 @@ builder.Services.SetupServices(configuration)
 
 builder.Services.RegisterValidatorsAsServices();
 builder.Services.AddMemoryCache();
+builder.Services.AddSignalR();
 
 builder.Services.AddRateLimiter(options =>
 {
@@ -93,6 +95,7 @@ app.UseAuthorization();
 app.UseHangfireDashboardWithAuth();
 
 app.MapControllers();
+app.MapHub<ComplianceEventsHub>("/hubs/compliance");
 
 app.Run();
 
