@@ -25,6 +25,26 @@ public record ComplianceHeatmapPoint(
     int OpenEventCount,
     DateTime? MeasuredAt);
 
+/// <summary>
+/// One installation-level "Type II" limit (MassFlow / AnnualLoad) summed across the
+/// installation's sources. AggregateValue is in the limit's unit; Severity is the same
+/// number divided by LimitValue. ExcludedSourcesCount reports how many sources fell out
+/// of the sum (missing measurement, incompatible dimension, missing flow for derivation).
+/// </summary>
+public record ComplianceAggregatePoint(
+    Guid LimitId,
+    LimitType LimitType,
+    AveragingWindow LimitPeriod,
+    decimal LimitValue,
+    string LimitUnitSymbol,
+    decimal? AggregateValue,
+    decimal? Severity,
+    int ContributingSourcesCount,
+    int DerivedSourcesCount,
+    int ExcludedSourcesCount,
+    int OpenEventCount,
+    DateTime? MeasuredAt);
+
 public interface IMeasurementQueries
 {
     Task<Option<Measurement>> GetByIdAsync(Guid id, CancellationToken cancellationToken);
@@ -39,5 +59,15 @@ public interface IMeasurementQueries
     /// returned but with Severity / LimitValue / CurrentValue = null.
     /// </summary>
     Task<IReadOnlyList<ComplianceHeatmapPoint>> GetComplianceHeatmapAsync(
+        Guid installationId, Guid pollutantId, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Installation-level "Type II" limits (MassFlow + AnnualLoad) summed across the
+    /// installation's sources. Mirrors the detector's ProcessInstallationAggregates /
+    /// ProcessAnnualLoadAggregates logic — including derived mass flow when a source reports
+    /// concentration + volumetric flow instead of mass flow directly, and O₂ normalization
+    /// for AnnualLoad Concentration limits.
+    /// </summary>
+    Task<IReadOnlyList<ComplianceAggregatePoint>> GetComplianceAggregatesAsync(
         Guid installationId, Guid pollutantId, CancellationToken cancellationToken);
 }

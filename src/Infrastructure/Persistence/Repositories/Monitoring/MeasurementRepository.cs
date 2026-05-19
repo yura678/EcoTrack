@@ -10,7 +10,9 @@ using Microsoft.EntityFrameworkCore;
 
 namespace Infrastructure.Persistence.Repositories.Monitoring;
 
-internal class MeasurementRepository(ApplicationDbContext context)
+internal class MeasurementRepository(
+    ApplicationDbContext context,
+    IComplianceDetectionQueries detectionQueries)
     : BaseAsyncRepository<Measurement>(context), IMeasurementRepository, IMeasurementQueries
 {
     public async Task AddRangeAsync(IEnumerable<Measurement> entities, CancellationToken cancellationToken)
@@ -249,6 +251,325 @@ internal class MeasurementRepository(ApplicationDbContext context)
         }
         return result;
     }
+
+    public async Task<IReadOnlyList<ComplianceAggregatePoint>> GetComplianceAggregatesAsync(
+        Guid installationId, Guid pollutantId, CancellationToken ct)
+    {
+        var now = DateTime.UtcNow;
+
+        // 1. Active installation-level limits of type MassFlow / AnnualLoad. Concentration
+        // installation-level limits are intensive and already covered by the per-source
+        // heatmap endpoint, so they're excluded here.
+        var limits = await context.Set<EmissionLimit>()
+            .Where(l =>
+                l.InstallationId == installationId
+                && !l.EmissionSourceId.HasValue
+                && l.PollutantId == pollutantId
+                && (l.LimitType == LimitType.MassFlow || l.LimitType == LimitType.AnnualLoad)
+                && l.ValidFrom <= now
+                && (l.ValidTo == null || l.ValidTo >= now)
+                && l.Permit!.PermitStatus == PermitStatus.Active
+                && l.Permit!.ValidUntil >= now)
+            .Select(l => new AggregateLimitRow(
+                l.Id, l.LimitType, l.Period, l.Value,
+                l.Unit!.ToBaseFactor, l.Unit!.Symbol, l.Unit!.Dimension))
+            .ToListAsync(ct);
+        if (limits.Count == 0) return [];
+
+        // 2. Sources of installation.
+        var sourceIds = await context.Set<EmissionSource>()
+            .Where(s => s.InstallationId == installationId)
+            .Select(s => s.Id)
+            .ToListAsync(ct);
+        if (sourceIds.Count == 0) return [];
+        var sourceIdsArr = sourceIds.ToArray();
+        var pollutantIdsArr = new[] { pollutantId };
+
+        // 3. Open events grouped by LimitId.
+        var openByLimit = await context.Set<ComplianceEvent>()
+            .Where(e => e.LimitId.HasValue
+                        && limits.Select(l => l.Id).Contains(e.LimitId.Value)
+                        && e.Status == ComplianceEventStatus.Open)
+            .GroupBy(e => e.LimitId!.Value)
+            .Select(g => new { LimitId = g.Key, Count = g.Count() })
+            .ToDictionaryAsync(x => x.LimitId, x => x.Count, ct);
+
+        // 4. Pollutant O2 reference (cached once — applies across AnnualLoad limits).
+        var pollutantO2Refs = await detectionQueries.GetPollutantO2ReferencesAsync(
+            pollutantIdsArr, ct);
+
+        var result = new List<ComplianceAggregatePoint>(limits.Count);
+        foreach (var lim in limits)
+        {
+            var openCount = openByLimit.GetValueOrDefault(lim.Id, 0);
+            var aggregate = lim.LimitType == LimitType.MassFlow
+                ? await ComputeMassFlowAggregateAsync(lim, sourceIdsArr, pollutantId, now, ct)
+                : await ComputeAnnualLoadAggregateAsync(lim, sourceIdsArr, pollutantId, now, pollutantO2Refs, ct);
+
+            var severity = aggregate.AggregateBase is { } sumBase && lim.Value != 0m
+                ? (decimal?)Math.Round(sumBase / (lim.Value * lim.UnitToBaseFactor), 4)
+                : null;
+
+            // Report aggregate in the limit's own unit so the UI doesn't have to know about
+            // base-unit conventions. Convert back from base by dividing by ToBaseFactor.
+            var aggregateInLimitUnit = aggregate.AggregateBase is { } b && lim.UnitToBaseFactor != 0m
+                ? (decimal?)Math.Round(b / lim.UnitToBaseFactor, 6)
+                : null;
+
+            result.Add(new ComplianceAggregatePoint(
+                lim.Id, lim.LimitType, lim.Period, lim.Value, lim.UnitSymbol,
+                AggregateValue: aggregateInLimitUnit,
+                Severity: severity,
+                ContributingSourcesCount: aggregate.Contributing,
+                DerivedSourcesCount: aggregate.Derived,
+                ExcludedSourcesCount: aggregate.Excluded,
+                OpenEventCount: openCount,
+                MeasuredAt: aggregate.MeasuredAt));
+        }
+
+        return result;
+    }
+
+    private record AggregateRunResult(
+        decimal? AggregateBase,
+        int Contributing,
+        int Derived,
+        int Excluded,
+        DateTime? MeasuredAt);
+
+    private async Task<AggregateRunResult> ComputeMassFlowAggregateAsync(
+        AggregateLimitRow lim, Guid[] sourceIds, Guid pollutantId,
+        DateTime now, CancellationToken ct)
+    {
+        // Same approach as ProcessInstallationAggregates: read the latest closed window for
+        // this limit's period across all sources, sum same-dim measurements directly and
+        // derive cross-dim ones via volumetric flow.
+        var (windowFrom, windowEnd) = ComputeLastCompletedWindow(lim.Period, now);
+        if (windowEnd == default)
+            return new AggregateRunResult(null, 0, 0, 0, null);
+
+        var measurements = await detectionQueries.GetMeasurementsForWindowAsync(
+            sourceIds, new[] { pollutantId }, lim.Period, windowEnd, ct);
+        if (measurements.Count == 0)
+            return new AggregateRunResult(null, 0, 0, 0, null);
+
+        var unitIds = measurements.Select(m => m.UnitId).Distinct().ToList();
+        var units = await detectionQueries.GetUnitsAsync(unitIds, ct);
+
+        // Pre-fetch volumetric flow only if any source actually needs derivation.
+        var needsFlow = measurements.Any(m =>
+            units.TryGetValue(m.UnitId, out var u)
+            && u.Dimension == MeasureUnitDimension.MassConcentration
+            && lim.UnitDimension == MeasureUnitDimension.MassFlow);
+        var flowByKey = needsFlow
+            ? await detectionQueries.GetVolumetricFlowForRangeAsync(
+                sourceIds, windowFrom, windowEnd, ct)
+            : new Dictionary<Guid, FlowReading>();
+        if (flowByKey.Count > 0)
+        {
+            var extra = await detectionQueries.GetUnitsAsync(
+                flowByKey.Values.Select(v => v.UnitId).Distinct().ToList(), ct);
+            foreach (var (uid, info) in extra) units.TryAdd(uid, info);
+        }
+
+        decimal sumBase = 0m;
+        var contributing = 0;
+        var derived = 0;
+        var excluded = 0;
+        DateTime? measuredAt = null;
+
+        foreach (var m in measurements)
+        {
+            if (m.Quality != Quality.Valid && m.Quality != Quality.Substituted)
+            {
+                excluded++;
+                continue;
+            }
+            if (!units.TryGetValue(m.UnitId, out var measurementUnit))
+            {
+                excluded++;
+                continue;
+            }
+            measuredAt = m.WindowEnd;
+
+            if (measurementUnit.Dimension == lim.UnitDimension)
+            {
+                var effective = m.NormalizedValue ?? m.Value;
+                sumBase += effective * measurementUnit.ToBaseFactor;
+                contributing++;
+                continue;
+            }
+
+            // Cross-dim: try MassConcentration × VolumetricFlow → kg/h derivation.
+            var derivedKgPerH = TryDeriveMassFlowKgPerH(
+                m.Value, measurementUnit, lim.UnitDimension, m.EmissionSourceId, flowByKey, units);
+            if (derivedKgPerH is null)
+            {
+                excluded++;
+                continue;
+            }
+
+            sumBase += derivedKgPerH.Value;
+            contributing++;
+            derived++;
+        }
+
+        return new AggregateRunResult(
+            AggregateBase: contributing > 0 ? sumBase : null,
+            Contributing: contributing,
+            Derived: derived,
+            Excluded: excluded,
+            MeasuredAt: measuredAt);
+    }
+
+    private async Task<AggregateRunResult> ComputeAnnualLoadAggregateAsync(
+        AggregateLimitRow lim, Guid[] sourceIds, Guid pollutantId,
+        DateTime now, IReadOnlyDictionary<Guid, decimal?> pollutantO2Refs,
+        CancellationToken ct)
+    {
+        var window = lim.Period switch
+        {
+            AveragingWindow.Month1 => TimeSpan.FromDays(30),
+            AveragingWindow.Year1 => TimeSpan.FromDays(365),
+            _ => TimeSpan.Zero
+        };
+        if (window == TimeSpan.Zero)
+            return new AggregateRunResult(null, 0, 0, 0, null);
+
+        var from = now - window;
+        var rolling = await detectionQueries.GetRollingAverageRateAsync(
+            sourceIds, new[] { pollutantId }, from, now, ct);
+        if (rolling.Count == 0)
+            return new AggregateRunResult(null, 0, 0, 0, null);
+
+        var unitIds = rolling.Values.Select(r => r.UnitId).Distinct().ToList();
+        var units = await detectionQueries.GetUnitsAsync(unitIds, ct);
+
+        var needsFlow = lim.UnitDimension == MeasureUnitDimension.MassFlow
+            && rolling.Values.Any(r =>
+                units.TryGetValue(r.UnitId, out var u)
+                && u.Dimension == MeasureUnitDimension.MassConcentration);
+        var flowByKey = needsFlow
+            ? await detectionQueries.GetVolumetricFlowForRangeAsync(sourceIds, from, now, ct)
+            : new Dictionary<Guid, FlowReading>();
+        if (flowByKey.Count > 0)
+        {
+            var extra = await detectionQueries.GetUnitsAsync(
+                flowByKey.Values.Select(v => v.UnitId).Distinct().ToList(), ct);
+            foreach (var (uid, info) in extra) units.TryAdd(uid, info);
+        }
+
+        // O2 normalization needed only for Concentration AnnualLoad limits — the detector
+        // mirrors this restriction.
+        var needsO2 = lim.UnitDimension == MeasureUnitDimension.MassConcentration
+                      && pollutantO2Refs.GetValueOrDefault(pollutantId).HasValue;
+        var o2Avgs = needsO2
+            ? await detectionQueries.GetO2AverageForRangeAsync(sourceIds, from, now, ct)
+            : new Dictionary<Guid, decimal>();
+
+        decimal sumBase = 0m;
+        var contributing = 0;
+        var derived = 0;
+        var excluded = 0;
+
+        foreach (var (key, r) in rolling)
+        {
+            if (!units.TryGetValue(r.UnitId, out var measurementUnit))
+            {
+                excluded++;
+                continue;
+            }
+
+            if (measurementUnit.Dimension == lim.UnitDimension)
+            {
+                var rate = r.AvgRate;
+                if (lim.UnitDimension == MeasureUnitDimension.MassConcentration)
+                {
+                    var normalized = TryComputeAnnualO2Normalization(
+                        rate, pollutantO2Refs.GetValueOrDefault(pollutantId),
+                        o2Avgs.GetValueOrDefault(key.SourceId));
+                    if (normalized.HasValue) rate = normalized.Value;
+                }
+                sumBase += rate * measurementUnit.ToBaseFactor;
+                contributing++;
+                continue;
+            }
+
+            var derivedKgPerH = TryDeriveMassFlowKgPerH(
+                r.AvgRate, measurementUnit, lim.UnitDimension, key.SourceId, flowByKey, units);
+            if (derivedKgPerH is null)
+            {
+                excluded++;
+                continue;
+            }
+
+            sumBase += derivedKgPerH.Value;
+            contributing++;
+            derived++;
+        }
+
+        return new AggregateRunResult(
+            AggregateBase: contributing > 0 ? sumBase : null,
+            Contributing: contributing,
+            Derived: derived,
+            Excluded: excluded,
+            MeasuredAt: contributing > 0 ? now : null);
+    }
+
+    private static decimal? TryDeriveMassFlowKgPerH(
+        decimal measurementValue,
+        UnitInfo measurementUnit,
+        MeasureUnitDimension limitDimension,
+        Guid sourceId,
+        IReadOnlyDictionary<Guid, FlowReading> flowByKey,
+        IReadOnlyDictionary<Guid, UnitInfo> units)
+    {
+        if (limitDimension != MeasureUnitDimension.MassFlow) return null;
+        if (measurementUnit.Dimension != MeasureUnitDimension.MassConcentration) return null;
+        if (!flowByKey.TryGetValue(sourceId, out var flow)) return null;
+        if (!units.TryGetValue(flow.UnitId, out var flowUnit)) return null;
+        if (flowUnit.Dimension != MeasureUnitDimension.VolumetricFlow) return null;
+
+        var concBase = measurementValue * measurementUnit.ToBaseFactor; // mg/m³
+        var flowBase = flow.Value * flowUnit.ToBaseFactor;               // m³/h
+        return Math.Round((concBase * flowBase) / 1_000_000m, 6);        // mg/h → kg/h
+    }
+
+    private static decimal? TryComputeAnnualO2Normalization(
+        decimal rawAvgRate, decimal? o2Reference, decimal o2Actual)
+    {
+        if (o2Reference is null) return null;
+        if (o2Actual >= 21m || o2Actual < 0.5m) return null;
+        if (o2Actual == 0m) return null;
+        return Math.Round(rawAvgRate * (21m - o2Reference.Value) / (21m - o2Actual), 6);
+    }
+
+    private static (DateTime From, DateTime End) ComputeLastCompletedWindow(
+        AveragingWindow period, DateTime now)
+    {
+        var ts = period switch
+        {
+            AveragingWindow.Minute1 => TimeSpan.FromMinutes(1),
+            AveragingWindow.Minute10 => TimeSpan.FromMinutes(10),
+            AveragingWindow.HalfHour => TimeSpan.FromMinutes(30),
+            AveragingWindow.Hour1 => TimeSpan.FromHours(1),
+            AveragingWindow.Hour24 => TimeSpan.FromHours(24),
+            _ => TimeSpan.Zero
+        };
+        if (ts == TimeSpan.Zero) return (default, default);
+
+        var floored = new DateTime(now.Ticks - (now.Ticks % ts.Ticks), DateTimeKind.Utc);
+        return (floored - ts, floored);
+    }
+
+    private record AggregateLimitRow(
+        Guid Id,
+        LimitType LimitType,
+        AveragingWindow Period,
+        decimal Value,
+        decimal UnitToBaseFactor,
+        string UnitSymbol,
+        MeasureUnitDimension UnitDimension);
 
     private record MeasurementRow(
         Guid SourceId,

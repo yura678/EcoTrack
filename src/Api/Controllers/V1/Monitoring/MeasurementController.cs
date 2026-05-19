@@ -128,6 +128,24 @@ public class MeasurementController(
         return Ok(points.Select(ComplianceHeatmapPointDto.FromReadModel).ToList());
     }
 
+    /// <summary>
+    /// Installation-level "Type II" aggregates: MassFlow and AnnualLoad limits where the
+    /// regulator caps the sum across all sources of the installation. One row per active
+    /// limit with the summed value, severity, and how many sources were excluded or
+    /// derived to compute it.
+    /// </summary>
+    [HttpGet("/api/v{version:apiVersion}/installations/{installationId:guid}/compliance-aggregates")]
+    [ProducesOkApiResponseType<IReadOnlyList<ComplianceAggregatePointDto>>]
+    public async Task<IActionResult> GetComplianceAggregates(
+        [FromRoute] Guid installationId,
+        [FromQuery] Guid pollutantId,
+        CancellationToken cancellationToken)
+    {
+        var points = await measurementQueries.GetComplianceAggregatesAsync(
+            installationId, pollutantId, cancellationToken);
+        return Ok(points.Select(ComplianceAggregatePointDto.FromReadModel).ToList());
+    }
+
     [HttpPut("{id:guid}/reject")]
     [ProducesOkApiResponseType<MeasurementDto>]
     public async Task<IActionResult> RejectMeasurement(
