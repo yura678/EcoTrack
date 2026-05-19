@@ -41,6 +41,40 @@ public record HeatmapPointDto(
             p.TotalPointsCount, p.ValidPointsCount);
 }
 
+public record ComplianceHeatmapPointDto(
+    Guid EmissionSourceId,
+    string EmissionSourceCode,
+    double Latitude,
+    double Longitude,
+    Guid? LimitId,
+    AveragingWindow? LimitPeriod,
+    decimal? LimitValue,
+    string? LimitUnitSymbol,
+    decimal? CurrentValue,
+    bool CurrentValueIsNormalized,
+    decimal? Severity,
+    string SeverityLevel,
+    int OpenEventCount,
+    DateTime? MeasuredAt)
+{
+    public static ComplianceHeatmapPointDto FromReadModel(ComplianceHeatmapPoint p) =>
+        new(p.EmissionSourceId, p.EmissionSourceCode, p.Latitude, p.Longitude,
+            p.LimitId, p.LimitPeriod, p.LimitValue, p.LimitUnitSymbol,
+            p.CurrentValue, p.CurrentValueIsNormalized, p.Severity,
+            BuildSeverityLevel(p.Severity, p.OpenEventCount),
+            p.OpenEventCount, p.MeasuredAt);
+
+    private static string BuildSeverityLevel(decimal? severity, int openEvents)
+    {
+        // Any open ComplianceEvent → critical regardless of current value (operator must act).
+        if (openEvents > 0) return "exceedance";
+        if (severity is null) return "unknown";
+        if (severity > 1.0m) return "exceedance";
+        if (severity > 0.7m) return "warning";
+        return "green";
+    }
+}
+
 public record MeasurementQueryDto(
     Guid InstallationId,
     DateTime? From,

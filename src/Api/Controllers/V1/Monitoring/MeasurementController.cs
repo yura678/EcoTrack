@@ -110,6 +110,24 @@ public class MeasurementController(
         return Ok(points.Select(HeatmapPointDto.FromReadModel).ToList());
     }
 
+    /// <summary>
+    /// Compliance-coloured heatmap: per source, returns severity (latest normalized value ÷
+    /// active limit, both in base units) plus open-event count. Sources without an active
+    /// rate-based limit on the pollutant are returned with severity=null so the UI can mark
+    /// them as unmonitored instead of dropping them off the map.
+    /// </summary>
+    [HttpGet("/api/v{version:apiVersion}/installations/{installationId:guid}/compliance-heatmap")]
+    [ProducesOkApiResponseType<IReadOnlyList<ComplianceHeatmapPointDto>>]
+    public async Task<IActionResult> GetComplianceHeatmap(
+        [FromRoute] Guid installationId,
+        [FromQuery] Guid pollutantId,
+        CancellationToken cancellationToken)
+    {
+        var points = await measurementQueries.GetComplianceHeatmapAsync(
+            installationId, pollutantId, cancellationToken);
+        return Ok(points.Select(ComplianceHeatmapPointDto.FromReadModel).ToList());
+    }
+
     [HttpPut("{id:guid}/reject")]
     [ProducesOkApiResponseType<MeasurementDto>]
     public async Task<IActionResult> RejectMeasurement(
