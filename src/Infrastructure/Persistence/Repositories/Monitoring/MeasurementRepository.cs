@@ -63,36 +63,57 @@ internal class MeasurementRepository(
     public async Task<IReadOnlyList<ComplianceHeatmapPoint>> GetComplianceHeatmapAsync(
         Guid installationId, Guid pollutantId, CancellationToken ct)
     {
-        // 1. Sources of the installation with PostGIS location. Includes soft-delete-filtered.
         var sources = await context.Set<EmissionSource>()
             .Where(s => s.InstallationId == installationId)
-            .Select(s => new
-            {
-                s.Id,
-                s.Code,
-                Latitude = s.Location.Y,
-                Longitude = s.Location.X
-            })
+            .Select(s => new HeatmapSourceRow(
+                s.Id, s.Code, s.InstallationId, s.Installation!.Name,
+                s.Location.Y, s.Location.X))
             .ToListAsync(ct);
         if (sources.Count == 0) return [];
 
+        return await BuildHeatmapPointsAsync(sources, pollutantId, ct);
+    }
+
+    public async Task<IReadOnlyList<ComplianceHeatmapPoint>> GetComplianceHeatmapBySiteAsync(
+        Guid siteId, Guid pollutantId, CancellationToken ct)
+    {
+        var sources = await context.Set<EmissionSource>()
+            .Where(s => s.Installation!.SiteId == siteId)
+            .Select(s => new HeatmapSourceRow(
+                s.Id, s.Code, s.InstallationId, s.Installation!.Name,
+                s.Location.Y, s.Location.X))
+            .ToListAsync(ct);
+        if (sources.Count == 0) return [];
+
+        return await BuildHeatmapPointsAsync(sources, pollutantId, ct);
+    }
+
+    private async Task<IReadOnlyList<ComplianceHeatmapPoint>> BuildHeatmapPointsAsync(
+        IReadOnlyList<HeatmapSourceRow> sources, Guid pollutantId, CancellationToken ct)
+    {
         var sourceIds = sources.Select(s => s.Id).ToArray();
+        var installationIds = sources.Select(s => s.InstallationId).Distinct().ToArray();
+        var sourcesByInstallation = sources
+            .GroupBy(s => s.InstallationId)
+            .ToDictionary(g => g.Key, g => g.Select(s => s.Id).ToArray());
         var now = DateTime.UtcNow;
 
-        // 2. Active limits for this pollutant. Two flavours pass the filter:
-        //    a) per-source limits (EmissionSourceId set, applies only to that source);
-        //    b) installation-level Concentration limits (InstallationId set) — these are
-        //       intensive, every source under the installation is held to the same number,
-        //       so we expand them per-source below.
-        //    Installation-level MassFlow / AnnualLoad are extensive (need sum across sources)
-        //    and don't map to a single source colour, so they stay excluded; a separate
-        //    aggregate endpoint will surface them.
+        // Active limits for this pollutant:
+        //   a) per-source — applies only to that source;
+        //   b) installation-level Concentration — intensive, applies to every source of THAT
+        //      installation (expanded below). For site scope this expansion is per-installation:
+        //      a limit on installation A does NOT touch sources of installation B.
+        // Installation-level MassFlow / AnnualLoad are extensive (need sum across sources) and
+        // don't map to a single source colour, so they stay excluded; the aggregate endpoint
+        // surfaces them separately.
         var activeLimits = await context.Set<EmissionLimit>()
             .Where(l =>
                 l.PollutantId == pollutantId
                 && (
                     (l.EmissionSourceId.HasValue && sourceIds.Contains(l.EmissionSourceId.Value))
-                    || (l.InstallationId == installationId && l.LimitType == LimitType.Concentration)
+                    || (l.InstallationId.HasValue
+                        && installationIds.Contains(l.InstallationId.Value)
+                        && l.LimitType == LimitType.Concentration)
                 )
                 && l.LimitType != LimitType.AnnualLoad
                 && l.ValidFrom <= now
@@ -110,10 +131,9 @@ internal class MeasurementRepository(
                 l.Unit!.Dimension))
             .ToListAsync(ct);
 
-        // Expand installation-level limits into per-source rows so the rest of the pipeline
-        // sees one uniform shape. A source that already has its own per-source limit AND an
-        // installation-level limit will end up with both candidates — the shortest-period
-        // pick in step 3 then decides which wins.
+        // Expand installation-level limits to their installation's sources only. A source that
+        // has BOTH a per-source limit and an inherited installation-level limit will compete in
+        // step "shortest period wins" below.
         var perSourceLimits = new List<LimitRow>(activeLimits.Count);
         foreach (var l in activeLimits)
         {
@@ -121,22 +141,22 @@ internal class MeasurementRepository(
             {
                 perSourceLimits.Add(l);
             }
-            else
+            else if (l.InstallationId.HasValue
+                     && sourcesByInstallation.TryGetValue(l.InstallationId.Value, out var sidsOfInst))
             {
-                foreach (var sid in sourceIds)
+                foreach (var sid in sidsOfInst)
                     perSourceLimits.Add(l with { SourceId = sid });
             }
         }
 
-        // 3. Pick the shortest-period limit per source (smallest enum value).
+        // Shortest-period limit per source wins.
         var limitBySource = perSourceLimits
             .GroupBy(l => l.SourceId!.Value)
             .ToDictionary(
                 g => g.Key,
                 g => g.OrderBy(l => (int)l.Period).First());
 
-        // 4. Latest Measurement per (source, period) for the selected limit pairs. Two-step
-        // EF pattern: scalar Max + IN filter — same as IComplianceDetectionQueries does.
+        // Latest Measurement per (source, period). Two-step EF: scalar Max + IN filter.
         Dictionary<(Guid SourceId, AveragingWindow Window), MeasurementRow> latestByKey = new();
         if (limitBySource.Count > 0)
         {
@@ -190,7 +210,6 @@ internal class MeasurementRepository(
             }
         }
 
-        // 5. Open ComplianceEvent count per source.
         var openCounts = await context.Set<ComplianceEvent>()
             .Where(e => sourceIds.Contains(e.EmissionSourceId)
                         && e.Status == ComplianceEventStatus.Open)
@@ -198,8 +217,8 @@ internal class MeasurementRepository(
             .Select(g => new { SourceId = g.Key, Count = g.Count() })
             .ToDictionaryAsync(x => x.SourceId, x => x.Count, ct);
 
-        // 6. Combine. Sources without an active limit are still returned with severity=null —
-        // they show on the map as "unmonitored" instead of disappearing.
+        // Sources without an active limit are still returned with severity=null — they show on
+        // the map as "unmonitored" instead of disappearing.
         var result = new List<ComplianceHeatmapPoint>(sources.Count);
         foreach (var s in sources)
         {
@@ -208,7 +227,8 @@ internal class MeasurementRepository(
             if (!limitBySource.TryGetValue(s.Id, out var lim))
             {
                 result.Add(new ComplianceHeatmapPoint(
-                    s.Id, s.Code, s.Latitude, s.Longitude,
+                    s.Id, s.Code, s.InstallationId, s.InstallationName,
+                    s.Latitude, s.Longitude,
                     LimitId: null, LimitPeriod: null, LimitValue: null,
                     LimitUnitSymbol: null, CurrentValue: null,
                     CurrentValueIsNormalized: false, Severity: null,
@@ -219,16 +239,16 @@ internal class MeasurementRepository(
             if (!latestByKey.TryGetValue((s.Id, lim.Period), out var meas))
             {
                 result.Add(new ComplianceHeatmapPoint(
-                    s.Id, s.Code, s.Latitude, s.Longitude,
+                    s.Id, s.Code, s.InstallationId, s.InstallationName,
+                    s.Latitude, s.Longitude,
                     lim.Id, lim.Period, lim.Value, lim.UnitSymbol,
                     CurrentValue: null, CurrentValueIsNormalized: false,
                     Severity: null, OpenEventCount: openCount, MeasuredAt: null));
                 continue;
             }
 
-            // Same-dimension only. Cross-dimension (e.g. concentration vs mass-flow limit)
-            // requires derived flow — out of scope for the heatmap simplification; show
-            // value without severity in that case.
+            // Same-dimension only — cross-dimension severity needs derived flow which is out of
+            // scope for the heatmap. Show the value without severity in that case.
             decimal? severity = null;
             var isNormalized = meas.NormalizedValue.HasValue;
             var effective = meas.NormalizedValue ?? meas.Value;
@@ -243,7 +263,8 @@ internal class MeasurementRepository(
             }
 
             result.Add(new ComplianceHeatmapPoint(
-                s.Id, s.Code, s.Latitude, s.Longitude,
+                s.Id, s.Code, s.InstallationId, s.InstallationName,
+                s.Latitude, s.Longitude,
                 lim.Id, lim.Period, lim.Value, lim.UnitSymbol,
                 CurrentValue: effective, CurrentValueIsNormalized: isNormalized,
                 Severity: severity, OpenEventCount: openCount,
@@ -251,6 +272,10 @@ internal class MeasurementRepository(
         }
         return result;
     }
+
+    private record HeatmapSourceRow(
+        Guid Id, string Code, Guid InstallationId, string InstallationName,
+        double Latitude, double Longitude);
 
     public async Task<IReadOnlyList<ComplianceAggregatePoint>> GetComplianceAggregatesAsync(
         Guid installationId, Guid pollutantId, CancellationToken ct)

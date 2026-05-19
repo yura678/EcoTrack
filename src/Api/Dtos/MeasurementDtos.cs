@@ -76,6 +76,8 @@ public record ComplianceAggregatePointDto(
 public record ComplianceHeatmapPointDto(
     Guid EmissionSourceId,
     string EmissionSourceCode,
+    Guid InstallationId,
+    string InstallationName,
     double Latitude,
     double Longitude,
     Guid? LimitId,
@@ -90,7 +92,8 @@ public record ComplianceHeatmapPointDto(
     DateTime? MeasuredAt)
 {
     public static ComplianceHeatmapPointDto FromReadModel(ComplianceHeatmapPoint p) =>
-        new(p.EmissionSourceId, p.EmissionSourceCode, p.Latitude, p.Longitude,
+        new(p.EmissionSourceId, p.EmissionSourceCode, p.InstallationId, p.InstallationName,
+            p.Latitude, p.Longitude,
             p.LimitId, p.LimitPeriod, p.LimitValue, p.LimitUnitSymbol,
             p.CurrentValue, p.CurrentValueIsNormalized, p.Severity,
             BuildSeverityLevel(p.Severity, p.OpenEventCount),

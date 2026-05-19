@@ -13,6 +13,8 @@ namespace Application.Common.Interfaces.Queries.Monitoring;
 public record ComplianceHeatmapPoint(
     Guid EmissionSourceId,
     string EmissionSourceCode,
+    Guid InstallationId,
+    string InstallationName,
     double Latitude,
     double Longitude,
     Guid? LimitId,
@@ -60,6 +62,15 @@ public interface IMeasurementQueries
     /// </summary>
     Task<IReadOnlyList<ComplianceHeatmapPoint>> GetComplianceHeatmapAsync(
         Guid installationId, Guid pollutantId, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Same shape as <see cref="GetComplianceHeatmapAsync"/> but scoped to a Site — returns every
+    /// emission source of every installation belonging to the site. Per-installation limits
+    /// (Concentration installation-wide) only apply to their own installation's sources, not
+    /// across the whole site.
+    /// </summary>
+    Task<IReadOnlyList<ComplianceHeatmapPoint>> GetComplianceHeatmapBySiteAsync(
+        Guid siteId, Guid pollutantId, CancellationToken cancellationToken);
 
     /// <summary>
     /// Installation-level "Type II" limits (MassFlow + AnnualLoad) summed across the

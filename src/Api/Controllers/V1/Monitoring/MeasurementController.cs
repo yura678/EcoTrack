@@ -129,6 +129,24 @@ public class MeasurementController(
     }
 
     /// <summary>
+    /// Site-wide variant of the per-source compliance heatmap. One row per emission source of
+    /// every installation belonging to the site, each carrying its InstallationId/Name so the
+    /// UI can cluster sources by installation. Installation-level Concentration limits apply
+    /// only to sources of their own installation, not across the whole site.
+    /// </summary>
+    [HttpGet("/api/v{version:apiVersion}/sites/{siteId:guid}/compliance-heatmap")]
+    [ProducesOkApiResponseType<IReadOnlyList<ComplianceHeatmapPointDto>>]
+    public async Task<IActionResult> GetSiteComplianceHeatmap(
+        [FromRoute] Guid siteId,
+        [FromQuery] Guid pollutantId,
+        CancellationToken cancellationToken)
+    {
+        var points = await measurementQueries.GetComplianceHeatmapBySiteAsync(
+            siteId, pollutantId, cancellationToken);
+        return Ok(points.Select(ComplianceHeatmapPointDto.FromReadModel).ToList());
+    }
+
+    /// <summary>
     /// Installation-level "Type II" aggregates: MassFlow and AnnualLoad limits where the
     /// regulator caps the sum across all sources of the installation. One row per active
     /// limit with the summed value, severity, and how many sources were excluded or
