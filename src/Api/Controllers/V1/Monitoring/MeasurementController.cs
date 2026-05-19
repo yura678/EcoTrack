@@ -164,6 +164,24 @@ public class MeasurementController(
         return Ok(points.Select(ComplianceAggregatePointDto.FromReadModel).ToList());
     }
 
+    /// <summary>
+    /// Site-wide variant of <see cref="GetComplianceAggregates"/>. Returns one row per
+    /// installation-level MassFlow/AnnualLoad limit across every installation of the site.
+    /// Sums are still scoped per-installation; each row carries InstallationId/Name so the UI
+    /// can label or group the rows.
+    /// </summary>
+    [HttpGet("/api/v{version:apiVersion}/sites/{siteId:guid}/compliance-aggregates")]
+    [ProducesOkApiResponseType<IReadOnlyList<ComplianceAggregatePointDto>>]
+    public async Task<IActionResult> GetSiteComplianceAggregates(
+        [FromRoute] Guid siteId,
+        [FromQuery] Guid pollutantId,
+        CancellationToken cancellationToken)
+    {
+        var points = await measurementQueries.GetComplianceAggregatesBySiteAsync(
+            siteId, pollutantId, cancellationToken);
+        return Ok(points.Select(ComplianceAggregatePointDto.FromReadModel).ToList());
+    }
+
     [HttpPut("{id:guid}/reject")]
     [ProducesOkApiResponseType<MeasurementDto>]
     public async Task<IActionResult> RejectMeasurement(

@@ -35,6 +35,8 @@ public record ComplianceHeatmapPoint(
 /// </summary>
 public record ComplianceAggregatePoint(
     Guid LimitId,
+    Guid InstallationId,
+    string InstallationName,
     LimitType LimitType,
     AveragingWindow LimitPeriod,
     decimal LimitValue,
@@ -81,4 +83,14 @@ public interface IMeasurementQueries
     /// </summary>
     Task<IReadOnlyList<ComplianceAggregatePoint>> GetComplianceAggregatesAsync(
         Guid installationId, Guid pollutantId, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Site-wide variant of <see cref="GetComplianceAggregatesAsync"/> — returns one row per
+    /// installation-level MassFlow/AnnualLoad limit across every installation that belongs to
+    /// the site. Each row carries InstallationId/Name so the UI can group rows by installation.
+    /// Sums are still scoped per-installation (a limit on installation A only sums sources of
+    /// installation A).
+    /// </summary>
+    Task<IReadOnlyList<ComplianceAggregatePoint>> GetComplianceAggregatesBySiteAsync(
+        Guid siteId, Guid pollutantId, CancellationToken cancellationToken);
 }

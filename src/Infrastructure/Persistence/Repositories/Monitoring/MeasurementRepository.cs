@@ -280,14 +280,45 @@ internal class MeasurementRepository(
     public async Task<IReadOnlyList<ComplianceAggregatePoint>> GetComplianceAggregatesAsync(
         Guid installationId, Guid pollutantId, CancellationToken ct)
     {
-        var now = DateTime.UtcNow;
+        var installation = await context.Set<Installation>()
+            .Where(i => i.Id == installationId)
+            .Select(i => new { i.Id, i.Name })
+            .FirstOrDefaultAsync(ct);
+        if (installation is null) return [];
 
-        // 1. Active installation-level limits of type MassFlow / AnnualLoad. Concentration
-        // installation-level limits are intensive and already covered by the per-source
-        // heatmap endpoint, so they're excluded here.
+        return await BuildAggregatePointsAsync(
+            new[] { (installation.Id, installation.Name) }, pollutantId, ct);
+    }
+
+    public async Task<IReadOnlyList<ComplianceAggregatePoint>> GetComplianceAggregatesBySiteAsync(
+        Guid siteId, Guid pollutantId, CancellationToken ct)
+    {
+        var installations = await context.Set<Installation>()
+            .Where(i => i.SiteId == siteId)
+            .Select(i => new { i.Id, i.Name })
+            .ToListAsync(ct);
+        if (installations.Count == 0) return [];
+
+        return await BuildAggregatePointsAsync(
+            installations.Select(i => (i.Id, i.Name)).ToArray(), pollutantId, ct);
+    }
+
+    private async Task<IReadOnlyList<ComplianceAggregatePoint>> BuildAggregatePointsAsync(
+        IReadOnlyCollection<(Guid Id, string Name)> installations,
+        Guid pollutantId,
+        CancellationToken ct)
+    {
+        var now = DateTime.UtcNow;
+        var installationIds = installations.Select(i => i.Id).ToArray();
+        var nameByInstallation = installations.ToDictionary(i => i.Id, i => i.Name);
+
+        // Type-II installation-level limits across the requested installations. Concentration
+        // installation-level limits stay out (they're intensive and surface via the per-source
+        // heatmap).
         var limits = await context.Set<EmissionLimit>()
             .Where(l =>
-                l.InstallationId == installationId
+                l.InstallationId.HasValue
+                && installationIds.Contains(l.InstallationId.Value)
                 && !l.EmissionSourceId.HasValue
                 && l.PollutantId == pollutantId
                 && (l.LimitType == LimitType.MassFlow || l.LimitType == LimitType.AnnualLoad)
@@ -295,54 +326,66 @@ internal class MeasurementRepository(
                 && (l.ValidTo == null || l.ValidTo >= now)
                 && l.Permit!.PermitStatus == PermitStatus.Active
                 && l.Permit!.ValidUntil >= now)
-            .Select(l => new AggregateLimitRow(
-                l.Id, l.LimitType, l.Period, l.Value,
-                l.Unit!.ToBaseFactor, l.Unit!.Symbol, l.Unit!.Dimension))
+            .Select(l => new
+            {
+                Row = new AggregateLimitRow(
+                    l.Id, l.LimitType, l.Period, l.Value,
+                    l.Unit!.ToBaseFactor, l.Unit!.Symbol, l.Unit!.Dimension),
+                InstallationId = l.InstallationId!.Value
+            })
             .ToListAsync(ct);
         if (limits.Count == 0) return [];
 
-        // 2. Sources of installation.
-        var sourceIds = await context.Set<EmissionSource>()
-            .Where(s => s.InstallationId == installationId)
-            .Select(s => s.Id)
-            .ToListAsync(ct);
-        if (sourceIds.Count == 0) return [];
-        var sourceIdsArr = sourceIds.ToArray();
-        var pollutantIdsArr = new[] { pollutantId };
+        // Per-installation source lists. Sums never cross installation boundaries — a limit on
+        // installation A only sees sources of installation A even when we run site-wide.
+        var sourcesByInstallation = (await context.Set<EmissionSource>()
+                .Where(s => installationIds.Contains(s.InstallationId))
+                .Select(s => new { s.Id, s.InstallationId })
+                .ToListAsync(ct))
+            .GroupBy(s => s.InstallationId)
+            .ToDictionary(g => g.Key, g => g.Select(x => x.Id).ToArray());
 
-        // 3. Open events grouped by LimitId.
+        var allLimitIds = limits.Select(x => x.Row.Id).ToList();
         var openByLimit = await context.Set<ComplianceEvent>()
             .Where(e => e.LimitId.HasValue
-                        && limits.Select(l => l.Id).Contains(e.LimitId.Value)
+                        && allLimitIds.Contains(e.LimitId.Value)
                         && e.Status == ComplianceEventStatus.Open)
             .GroupBy(e => e.LimitId!.Value)
             .Select(g => new { LimitId = g.Key, Count = g.Count() })
             .ToDictionaryAsync(x => x.LimitId, x => x.Count, ct);
 
-        // 4. Pollutant O2 reference (cached once — applies across AnnualLoad limits).
         var pollutantO2Refs = await detectionQueries.GetPollutantO2ReferencesAsync(
-            pollutantIdsArr, ct);
+            new[] { pollutantId }, ct);
 
         var result = new List<ComplianceAggregatePoint>(limits.Count);
-        foreach (var lim in limits)
+        foreach (var entry in limits)
         {
+            if (!sourcesByInstallation.TryGetValue(entry.InstallationId, out var sources) ||
+                sources.Length == 0) continue;
+
+            var lim = entry.Row;
             var openCount = openByLimit.GetValueOrDefault(lim.Id, 0);
             var aggregate = lim.LimitType == LimitType.MassFlow
-                ? await ComputeMassFlowAggregateAsync(lim, sourceIdsArr, pollutantId, now, ct)
-                : await ComputeAnnualLoadAggregateAsync(lim, sourceIdsArr, pollutantId, now, pollutantO2Refs, ct);
+                ? await ComputeMassFlowAggregateAsync(lim, sources, pollutantId, now, ct)
+                : await ComputeAnnualLoadAggregateAsync(lim, sources, pollutantId, now, pollutantO2Refs, ct);
 
             var severity = aggregate.AggregateBase is { } sumBase && lim.Value != 0m
                 ? (decimal?)Math.Round(sumBase / (lim.Value * lim.UnitToBaseFactor), 4)
                 : null;
 
-            // Report aggregate in the limit's own unit so the UI doesn't have to know about
-            // base-unit conventions. Convert back from base by dividing by ToBaseFactor.
+            // Report aggregate in the limit's own unit — UI never needs to know base-unit math.
             var aggregateInLimitUnit = aggregate.AggregateBase is { } b && lim.UnitToBaseFactor != 0m
                 ? (decimal?)Math.Round(b / lim.UnitToBaseFactor, 6)
                 : null;
 
             result.Add(new ComplianceAggregatePoint(
-                lim.Id, lim.LimitType, lim.Period, lim.Value, lim.UnitSymbol,
+                LimitId: lim.Id,
+                InstallationId: entry.InstallationId,
+                InstallationName: nameByInstallation[entry.InstallationId],
+                LimitType: lim.LimitType,
+                LimitPeriod: lim.Period,
+                LimitValue: lim.Value,
+                LimitUnitSymbol: lim.UnitSymbol,
                 AggregateValue: aggregateInLimitUnit,
                 Severity: severity,
                 ContributingSourcesCount: aggregate.Contributing,

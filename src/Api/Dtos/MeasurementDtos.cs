@@ -43,6 +43,8 @@ public record HeatmapPointDto(
 
 public record ComplianceAggregatePointDto(
     Guid LimitId,
+    Guid InstallationId,
+    string InstallationName,
     LimitType LimitType,
     AveragingWindow LimitPeriod,
     decimal LimitValue,
@@ -57,7 +59,8 @@ public record ComplianceAggregatePointDto(
     DateTime? MeasuredAt)
 {
     public static ComplianceAggregatePointDto FromReadModel(ComplianceAggregatePoint p) =>
-        new(p.LimitId, p.LimitType, p.LimitPeriod, p.LimitValue, p.LimitUnitSymbol,
+        new(p.LimitId, p.InstallationId, p.InstallationName,
+            p.LimitType, p.LimitPeriod, p.LimitValue, p.LimitUnitSymbol,
             p.AggregateValue, p.Severity,
             BuildSeverityLevel(p.Severity, p.OpenEventCount),
             p.ContributingSourcesCount, p.DerivedSourcesCount, p.ExcludedSourcesCount,
