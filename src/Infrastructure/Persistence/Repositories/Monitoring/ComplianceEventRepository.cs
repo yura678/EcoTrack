@@ -49,6 +49,8 @@ internal class ComplianceEventRepository(ApplicationDbContext context) :
         ComplianceEventType? eventType,
         Guid? emissionSourceId,
         Guid? deviceId,
+        Guid? installationId,
+        Guid? siteId,
         DateTime? from,
         DateTime? to,
         int page,
@@ -63,6 +65,24 @@ internal class ComplianceEventRepository(ApplicationDbContext context) :
         if (deviceId.HasValue) query = query.Where(x => x.DeviceId == deviceId.Value);
         if (from.HasValue) query = query.Where(x => x.WindowEnd >= from.Value);
         if (to.HasValue) query = query.Where(x => x.WindowEnd <= to.Value);
+
+        // Installation/site scoping is resolved via subquery on EmissionSource — keeps the
+        // ComplianceEvent table free of denormalised installation/site columns and stays
+        // tenant-filter-aware (the global query filter applies to both tables).
+        if (installationId.HasValue)
+        {
+            var installationSourceIds = context.Set<Domain.Entities.EmissionSources.EmissionSource>()
+                .Where(s => s.InstallationId == installationId.Value)
+                .Select(s => s.Id);
+            query = query.Where(x => installationSourceIds.Contains(x.EmissionSourceId));
+        }
+        if (siteId.HasValue)
+        {
+            var siteSourceIds = context.Set<Domain.Entities.EmissionSources.EmissionSource>()
+                .Where(s => s.Installation!.SiteId == siteId.Value)
+                .Select(s => s.Id);
+            query = query.Where(x => siteSourceIds.Contains(x.EmissionSourceId));
+        }
 
         var total = await query.CountAsync(cancellationToken);
         var items = await query

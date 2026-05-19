@@ -19,6 +19,8 @@ public interface IComplianceEventQueries
         ComplianceEventType? eventType,
         Guid? emissionSourceId,
         Guid? deviceId,
+        Guid? installationId,
+        Guid? siteId,
         DateTime? from,
         DateTime? to,
         int page,

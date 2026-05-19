@@ -27,13 +27,46 @@ public class ComplianceEventController(
 {
     [HttpGet("compliance-events")]
     [ProducesOkApiResponseType<PageResult<ComplianceEventDto>>]
-    public async Task<IActionResult> GetPaged(
+    public Task<IActionResult> GetPaged(
         [FromQuery] ComplianceEventListQueryDto query,
+        CancellationToken cancellationToken)
+        => GetPagedScopedAsync(query, installationId: null, siteId: null, cancellationToken);
+
+    /// <summary>
+    /// Same paged listing as <see cref="GetPaged"/>, scoped to events whose emission source
+    /// belongs to the installation. The route pins the installation; query params (status,
+    /// type, date range, paging) still apply.
+    /// </summary>
+    [HttpGet("installations/{installationId:guid}/compliance-events")]
+    [ProducesOkApiResponseType<PageResult<ComplianceEventDto>>]
+    public Task<IActionResult> GetByInstallation(
+        [FromRoute] Guid installationId,
+        [FromQuery] ComplianceEventListQueryDto query,
+        CancellationToken cancellationToken)
+        => GetPagedScopedAsync(query, installationId, siteId: null, cancellationToken);
+
+    /// <summary>
+    /// Same paged listing as <see cref="GetPaged"/>, scoped to events whose emission source
+    /// belongs to any installation of the site.
+    /// </summary>
+    [HttpGet("sites/{siteId:guid}/compliance-events")]
+    [ProducesOkApiResponseType<PageResult<ComplianceEventDto>>]
+    public Task<IActionResult> GetBySite(
+        [FromRoute] Guid siteId,
+        [FromQuery] ComplianceEventListQueryDto query,
+        CancellationToken cancellationToken)
+        => GetPagedScopedAsync(query, installationId: null, siteId, cancellationToken);
+
+    private async Task<IActionResult> GetPagedScopedAsync(
+        ComplianceEventListQueryDto query,
+        Guid? installationId,
+        Guid? siteId,
         CancellationToken cancellationToken)
     {
         var result = await queries.GetPagedAsync(
             query.Status, query.EventType,
             query.EmissionSourceId, query.DeviceId,
+            installationId, siteId,
             query.From, query.To,
             query.Page, query.PageSize, cancellationToken);
 
