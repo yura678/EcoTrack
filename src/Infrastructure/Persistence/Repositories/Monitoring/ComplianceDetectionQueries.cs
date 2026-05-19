@@ -214,6 +214,30 @@ internal class ComplianceDetectionQueries(ApplicationDbContext context) : ICompl
         return rows;
     }
 
+    public async Task<IReadOnlyList<MeasurementSnapshot>> GetMeasurementsForWindowRangeAsync(
+        IReadOnlyCollection<Guid> sourceIds,
+        IReadOnlyCollection<Guid> pollutantIds,
+        AveragingWindow period,
+        DateTime fromWindowEndInclusive,
+        DateTime toWindowEndInclusive,
+        CancellationToken ct)
+    {
+        if (sourceIds.Count == 0 || pollutantIds.Count == 0) return [];
+        return await context.Set<Measurement>()
+            .Where(m => sourceIds.Contains(m.EmissionSourceId)
+                        && pollutantIds.Contains(m.PollutantId)
+                        && m.Window == period
+                        && m.Aggregation == Aggregation.Average
+                        && m.WindowEnd >= fromWindowEndInclusive
+                        && m.WindowEnd <= toWindowEndInclusive)
+            .Select(m => new MeasurementSnapshot(
+                m.Id, m.EmissionSourceId, m.PollutantId,
+                m.Value, m.NormalizedValue, m.UnitId, m.Quality,
+                m.ValidPointsCount, m.ExpectedPointsCount,
+                m.WindowStart, m.WindowEnd, m.Window))
+            .ToListAsync(ct);
+    }
+
     public async Task<IReadOnlyList<MeasurementSnapshot>> GetLatestMeasurementsAsync(
         IReadOnlyCollection<(Guid SourceId, Guid PollutantId)> pairs,
         AveragingWindow period,

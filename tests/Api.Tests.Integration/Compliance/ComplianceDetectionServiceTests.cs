@@ -130,6 +130,82 @@ public class ComplianceDetectionServiceTests : BaseIntegrationTest, IAsyncLifeti
     }
 
     [Fact]
+    public async Task ShouldDetectExceedanceInOlderWindowAfterLateArrivingRescan()
+    {
+        // Simulates: materializer rewrote a Measurement two hours ago (within the default 6-window
+        // rescan tail) so that its value now exceeds the limit, even though the latest window's
+        // measurement is fine. Before this change the detector only inspected the last completed
+        // window and the rewrite would silently miss SignalR + email/webhook notification.
+        var (permit, limit) = ActivePermitWithLimit(value: 200m, unitId: _mg.Id);
+        await Context.Set<Permit>().AddAsync(permit);
+        await Context.Set<EmissionLimit>().AddAsync(limit);
+
+        // Latest window — under the limit. Detector must not flag this one.
+        await Context.Set<Measurement>().AddAsync(HourlyMeasurement(value: 50m, unitId: _mg.Id));
+
+        // Two hours back — value above the limit (post-rewrite state).
+        var olderEnd = _lastClosedHourEnd - TimeSpan.FromHours(2);
+        var olderStart = olderEnd - TimeSpan.FromHours(1);
+        await Context.Set<Measurement>().AddAsync(Measurement.New(
+            id: Guid.NewGuid(),
+            windowStart: olderStart, windowEnd: olderEnd,
+            window: AveragingWindow.Hour1, aggregation: Aggregation.Average,
+            emissionSourceId: _source.Id, pollutantId: _pollutant.Id,
+            deviceId: _device.Id, unitId: _mg.Id,
+            value: 250m, validPointsCount: 60, expectedPointsCount: 60));
+        await SaveChangesAsync();
+
+        await RunDetectionAsync();
+
+        var events = await GetEventsAsync(ComplianceEventType.LimitExceedance, limit.Id);
+        events.Should().HaveCount(1);
+        events[0].Ratio.Should().BeApproximately(1.25m, 0.0001m); // 250/200
+        events[0].WindowStart.Should().Be(olderStart);
+        events[0].WindowEnd.Should().Be(olderEnd);
+    }
+
+    [Fact]
+    public async Task ShouldNotDuplicateExceedanceAcrossMultipleRescanWindowsForSameLimit()
+    {
+        // Two older windows both above the limit. Detector iterates newest-first; once it fires
+        // for the most recent in-range exceedance, the (limit, source) pair must be marked taken
+        // so the older window's exceedance does not spawn a second event.
+        var (permit, limit) = ActivePermitWithLimit(value: 200m, unitId: _mg.Id);
+        await Context.Set<Permit>().AddAsync(permit);
+        await Context.Set<EmissionLimit>().AddAsync(limit);
+
+        await Context.Set<Measurement>().AddAsync(HourlyMeasurement(value: 50m, unitId: _mg.Id));
+
+        var twoHoursBackEnd = _lastClosedHourEnd - TimeSpan.FromHours(2);
+        var twoHoursBackStart = twoHoursBackEnd - TimeSpan.FromHours(1);
+        var threeHoursBackEnd = _lastClosedHourEnd - TimeSpan.FromHours(3);
+        var threeHoursBackStart = threeHoursBackEnd - TimeSpan.FromHours(1);
+        await Context.Set<Measurement>().AddRangeAsync(
+            Measurement.New(
+                id: Guid.NewGuid(),
+                windowStart: twoHoursBackStart, windowEnd: twoHoursBackEnd,
+                window: AveragingWindow.Hour1, aggregation: Aggregation.Average,
+                emissionSourceId: _source.Id, pollutantId: _pollutant.Id,
+                deviceId: _device.Id, unitId: _mg.Id,
+                value: 250m, validPointsCount: 60, expectedPointsCount: 60),
+            Measurement.New(
+                id: Guid.NewGuid(),
+                windowStart: threeHoursBackStart, windowEnd: threeHoursBackEnd,
+                window: AveragingWindow.Hour1, aggregation: Aggregation.Average,
+                emissionSourceId: _source.Id, pollutantId: _pollutant.Id,
+                deviceId: _device.Id, unitId: _mg.Id,
+                value: 300m, validPointsCount: 60, expectedPointsCount: 60));
+        await SaveChangesAsync();
+
+        await RunDetectionAsync();
+
+        var events = await GetEventsAsync(ComplianceEventType.LimitExceedance, limit.Id);
+        events.Should().HaveCount(1);
+        // Newest exceedance wins (two hours back, not three).
+        events[0].WindowEnd.Should().Be(twoHoursBackEnd);
+    }
+
+    [Fact]
     public async Task ShouldNotDuplicateOpenExceedanceEvent()
     {
         var (permit, limit) = ActivePermitWithLimit(value: 50m, unitId: _mg.Id);

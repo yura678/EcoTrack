@@ -124,6 +124,20 @@ public interface IComplianceDetectionQueries
         DateTime windowEnd,
         CancellationToken ct);
 
+    /// <summary>
+    /// Returns every Measurement whose WindowEnd falls in [fromWindowEndInclusive, toWindowEndInclusive].
+    /// Used by the LimitExceedance detector to re-evaluate windows that may have been mutated in
+    /// place by late-arriving raw data — the per-tick "rescan" symmetric to the materializer's
+    /// LateArrivingRescanWindows knob.
+    /// </summary>
+    Task<IReadOnlyList<MeasurementSnapshot>> GetMeasurementsForWindowRangeAsync(
+        IReadOnlyCollection<Guid> sourceIds,
+        IReadOnlyCollection<Guid> pollutantIds,
+        AveragingWindow period,
+        DateTime fromWindowEndInclusive,
+        DateTime toWindowEndInclusive,
+        CancellationToken ct);
+
     // ── Measurement materialization ─────────────────────────────────────────
     Task<Dictionary<(Guid SourceId, Guid PollutantId), DateTime?>> GetLastWindowEndsAsync(
         IReadOnlyCollection<Guid> sourceIds,

@@ -103,95 +103,118 @@ public class ComplianceDetectionService(
             .ToHashSet();
 
         var newEvents = new List<ComplianceEvent>();
+        var rescanWindows = Math.Max(0, _settings.LateArrivingRescanWindows);
 
         foreach (var byPeriod in targets.GroupBy(t => t.Period))
         {
-            var (_, to) = ComputeLastCompletedWindow(byPeriod.Key);
-            if (to == default) continue;
+            var (_, lastWindowEnd) = ComputeLastCompletedWindow(byPeriod.Key);
+            if (lastWindowEnd == default) continue;
+
+            var periodSpan = PeriodToTimeSpan(byPeriod.Key);
+            if (periodSpan == TimeSpan.Zero) continue;
 
             var sourceIds = byPeriod.Select(t => t.EmissionSourceId).Distinct().ToArray();
             var pollutantIds = byPeriod.Select(t => t.PollutantId).Distinct().ToArray();
 
-            var measurements = await queries.GetMeasurementsForWindowAsync(
-                sourceIds, pollutantIds, byPeriod.Key, to, ct);
-            var byKey = measurements.ToDictionary(m => (m.EmissionSourceId, m.PollutantId));
+            // Scan the last completed window plus the configured rescan tail so windows whose
+            // Measurement was rewritten by late-arriving raw data (materialization rescan) still
+            // get evaluated against the limit. Iterate newest-first and mark (limit, source)
+            // pairs as taken after firing so an older rescan window doesn't double-open.
+            var earliestWindowEnd = lastWindowEnd - TimeSpan.FromTicks(periodSpan.Ticks * rescanWindows);
+            var allMeasurements = await queries.GetMeasurementsForWindowRangeAsync(
+                sourceIds, pollutantIds, byPeriod.Key, earliestWindowEnd, lastWindowEnd, ct);
+            if (allMeasurements.Count == 0) continue;
 
             var unitIds = byPeriod.Select(t => t.UnitId)
-                .Concat(measurements.Select(m => m.UnitId))
+                .Concat(allMeasurements.Select(m => m.UnitId))
                 .Distinct()
                 .ToArray();
             var units = await queries.GetUnitsAsync(unitIds, ct);
 
-            // Pre-fetch volumetric flow if any MassFlow limit might need a derived path.
             var needsFlow = byPeriod.Any(t =>
                 units.TryGetValue(t.UnitId, out var u)
                 && u.Dimension == MeasureUnitDimension.MassFlow);
-            var flowByKey = needsFlow
-                ? await queries.GetVolumetricFlowForRangeAsync(
-                    sourceIds, to - PeriodToTimeSpan(byPeriod.Key), to, ct)
-                : new Dictionary<Guid, FlowReading>();
-            if (flowByKey.Count > 0)
+
+            var orderedWindows = allMeasurements
+                .GroupBy(m => m.WindowEnd)
+                .OrderByDescending(g => g.Key)
+                .ToList();
+
+            foreach (var byWindow in orderedWindows)
             {
-                var extra = await queries.GetUnitsAsync(
-                    flowByKey.Values.Select(v => v.UnitId).Distinct().ToArray(), ct);
-                foreach (var (uid, info) in extra) units.TryAdd(uid, info);
-            }
+                var windowEnd = byWindow.Key;
+                var windowStart = windowEnd - periodSpan;
+                var byKey = byWindow.ToDictionary(m => (m.EmissionSourceId, m.PollutantId));
 
-            // Installation-level MassFlow: sum mass-flow values across all sources, compare once.
-            // Concentration installation-level stays per-source (concentration is intensive).
-            var aggregateLimitIds = ProcessInstallationAggregates(
-                byPeriod.ToList(), byKey, units, flowByKey, existingKeys, to, newEvents);
-
-            foreach (var t in byPeriod)
-            {
-                if (aggregateLimitIds.Contains(t.LimitId)) continue; // handled above
-                if (existingKeys.Contains((t.LimitId, t.EmissionSourceId))) continue;
-                if (!byKey.TryGetValue((t.EmissionSourceId, t.PollutantId), out var m)) continue;
-                // Allow Valid and Substituted — both are IED-acceptable regulatory values.
-                // Invalid/Missing/Calibration/Maintenance are skipped.
-                if (m.Quality != Quality.Valid && m.Quality != Quality.Substituted) continue;
-                if (!units.TryGetValue(t.UnitId, out var limitUnit)
-                    || !units.TryGetValue(m.UnitId, out var measurementUnit)) continue;
-
-                if (limitUnit.Dimension != measurementUnit.Dimension)
+                // Volumetric flow is averaged over the matching window only — using a wider range
+                // for the whole rescan span would smear flow data across non-comparable windows.
+                var flowByKey = needsFlow
+                    ? await queries.GetVolumetricFlowForRangeAsync(
+                        sourceIds, windowStart, windowEnd, ct)
+                    : new Dictionary<Guid, FlowReading>();
+                if (flowByKey.Count > 0)
                 {
-                    var derived = TryDeriveMassFlow(t, m.Value, limitUnit, measurementUnit, flowByKey, units);
-                    if (derived is null)
-                    {
-                        logger.LogWarning(
-                            "Limit {LimitId} ({LimitDim}) and measurement {MeasurementId} ({MeasDim}) " +
-                            "use incompatible dimensions and no derivation path applies; skipping.",
-                            t.LimitId, limitUnit.Dimension, m.Id, measurementUnit.Dimension);
-                        continue;
-                    }
-                    if (derived.MassFlowKgPerH <= derived.LimitKgPerH) continue;
-
-                    var derivedRatio = Math.Round(derived.MassFlowKgPerH / derived.LimitKgPerH, 4);
-                    newEvents.Add(ComplianceEvent.ForLimitExceedance(
-                        Guid.NewGuid(), t.EmissionSourceId,
-                        measurementId: m.Id, t.LimitId, derivedRatio, m.WindowStart, m.WindowEnd,
-                        notes: $"Derived mass flow {derived.MassFlowKgPerH:0.###} kg/h " +
-                               $"({m.Value:0.###} {measurementUnit.Symbol} × " +
-                               $"{derived.FlowDescription}) > " +
-                               $"{t.Value:0.###} {limitUnit.Symbol} (ratio {derivedRatio:0.##})"));
-                    continue;
+                    var extra = await queries.GetUnitsAsync(
+                        flowByKey.Values.Select(v => v.UnitId).Distinct().ToArray(), ct);
+                    foreach (var (uid, info) in extra) units.TryAdd(uid, info);
                 }
 
-                // For Concentration limits, regulator expresses limits at reference conditions
-                // (e.g. "200 mg/m³ NOx @ 6% O₂"). Prefer NormalizedValue when available.
-                var effectiveValue = m.NormalizedValue ?? m.Value;
-                var measuredBase = effectiveValue * measurementUnit.ToBaseFactor;
-                var limitBase = t.Value * limitUnit.ToBaseFactor;
-                if (measuredBase <= limitBase) continue;
+                var aggregateLimitIds = ProcessInstallationAggregates(
+                    byPeriod.ToList(), byKey, units, flowByKey, existingKeys, windowEnd, newEvents);
 
-                var ratio = Math.Round(measuredBase / limitBase, 4);
-                var valueLabel = m.NormalizedValue.HasValue
-                    ? $"{effectiveValue:0.###} {measurementUnit.Symbol} (normalized)"
-                    : $"{m.Value:0.###} {measurementUnit.Symbol}";
-                newEvents.Add(ComplianceEvent.ForLimitExceedance(
-                    Guid.NewGuid(), t.EmissionSourceId,
-                    measurementId: m.Id, t.LimitId, ratio, m.WindowStart, m.WindowEnd,
-                    notes: $"{valueLabel} > {t.Value:0.###} {limitUnit.Symbol} (ratio {ratio:0.##})"));
+                foreach (var t in byPeriod)
+                {
+                    if (aggregateLimitIds.Contains(t.LimitId)) continue; // handled above
+                    if (existingKeys.Contains((t.LimitId, t.EmissionSourceId))) continue;
+                    if (!byKey.TryGetValue((t.EmissionSourceId, t.PollutantId), out var m)) continue;
+                    // Allow Valid and Substituted — both are IED-acceptable regulatory values.
+                    // Invalid/Missing/Calibration/Maintenance are skipped.
+                    if (m.Quality != Quality.Valid && m.Quality != Quality.Substituted) continue;
+                    if (!units.TryGetValue(t.UnitId, out var limitUnit)
+                        || !units.TryGetValue(m.UnitId, out var measurementUnit)) continue;
+
+                    if (limitUnit.Dimension != measurementUnit.Dimension)
+                    {
+                        var derived = TryDeriveMassFlow(t, m.Value, limitUnit, measurementUnit, flowByKey, units);
+                        if (derived is null)
+                        {
+                            logger.LogWarning(
+                                "Limit {LimitId} ({LimitDim}) and measurement {MeasurementId} ({MeasDim}) " +
+                                "use incompatible dimensions and no derivation path applies; skipping.",
+                                t.LimitId, limitUnit.Dimension, m.Id, measurementUnit.Dimension);
+                            continue;
+                        }
+                        if (derived.MassFlowKgPerH <= derived.LimitKgPerH) continue;
+
+                        var derivedRatio = Math.Round(derived.MassFlowKgPerH / derived.LimitKgPerH, 4);
+                        newEvents.Add(ComplianceEvent.ForLimitExceedance(
+                            Guid.NewGuid(), t.EmissionSourceId,
+                            measurementId: m.Id, t.LimitId, derivedRatio, m.WindowStart, m.WindowEnd,
+                            notes: $"Derived mass flow {derived.MassFlowKgPerH:0.###} kg/h " +
+                                   $"({m.Value:0.###} {measurementUnit.Symbol} × " +
+                                   $"{derived.FlowDescription}) > " +
+                                   $"{t.Value:0.###} {limitUnit.Symbol} (ratio {derivedRatio:0.##})"));
+                        existingKeys.Add((t.LimitId, t.EmissionSourceId));
+                        continue;
+                    }
+
+                    // For Concentration limits, regulator expresses limits at reference conditions
+                    // (e.g. "200 mg/m³ NOx @ 6% O₂"). Prefer NormalizedValue when available.
+                    var effectiveValue = m.NormalizedValue ?? m.Value;
+                    var measuredBase = effectiveValue * measurementUnit.ToBaseFactor;
+                    var limitBase = t.Value * limitUnit.ToBaseFactor;
+                    if (measuredBase <= limitBase) continue;
+
+                    var ratio = Math.Round(measuredBase / limitBase, 4);
+                    var valueLabel = m.NormalizedValue.HasValue
+                        ? $"{effectiveValue:0.###} {measurementUnit.Symbol} (normalized)"
+                        : $"{m.Value:0.###} {measurementUnit.Symbol}";
+                    newEvents.Add(ComplianceEvent.ForLimitExceedance(
+                        Guid.NewGuid(), t.EmissionSourceId,
+                        measurementId: m.Id, t.LimitId, ratio, m.WindowStart, m.WindowEnd,
+                        notes: $"{valueLabel} > {t.Value:0.###} {limitUnit.Symbol} (ratio {ratio:0.##})"));
+                    existingKeys.Add((t.LimitId, t.EmissionSourceId));
+                }
             }
         }
         return newEvents;
@@ -286,6 +309,9 @@ public class ComplianceDetectionService(
                 notes: $"Installation aggregate: sum {sumBase:0.###} {limitUnit.Symbol} " +
                        $"across {contributingSources.Count} source(s){fidelityTail} > " +
                        $"{primary.Value:0.###} {limitUnit.Symbol} (ratio {ratio:0.##})"));
+            // Mark this aggregate limit as taken so the rescan loop's older windows skip it via
+            // the existingKeys.Any(...) check at the top of this helper.
+            existingKeys.Add((primary.LimitId, contributingSources[0]));
         }
 
         return processed;
