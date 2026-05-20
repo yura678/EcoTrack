@@ -17,5 +17,7 @@ public enum AuditAction
     RoleDeleted = 8,
     RolePermissionsChanged = 9,
     /// <summary>Admin pressed "force password reset" — reset link sent. Completion lands as <see cref="UserPasswordResetCompleted"/>.</summary>
-    UserPasswordResetRequested = 10
+    UserPasswordResetRequested = 10,
+    /// <summary>Admin-initiated revoke of all the target user's sessions in the admin's enterprise.</summary>
+    UserSessionsRevoked = 11
 }

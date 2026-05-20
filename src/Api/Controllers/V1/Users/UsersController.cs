@@ -6,8 +6,12 @@ using Application.Features.Admin.Commands.AddAdminCommand;
 using Application.Features.Users.Commands.ChangeMemberRole;
 using Application.Features.Users.Commands.ForcePasswordReset;
 using Application.Features.Users.Commands.RevokeMembership;
+using Application.Features.Users.Commands.RevokeUserSessions;
 using Application.Features.Users.Commands.SendInvitation;
+using Application.Features.Users.Commands.UnlockUser;
+using Application.Features.Users.Queries.GetUserDetail;
 using Application.Features.Users.Queries.GetUsers;
+using Application.Models.Users;
 using Asp.Versioning;
 using MediatR;
 using Microsoft.AspNetCore.Authorization;
@@ -97,6 +101,53 @@ public class UsersController(ISender sender) : BaseController
     public async Task<IActionResult> ForcePasswordReset([FromRoute] Guid userId)
     {
         var result = await sender.Send(new ForcePasswordResetCommand(userId));
+        return result.Match(
+            response => Ok(response),
+            error => error.ToObjectResult());
+    }
+
+    /// <summary>
+    /// Admin user-detail page payload: identity + membership in caller's enterprise + lockout
+    /// state. Returns 404 for users without an active membership in this enterprise (admin
+    /// must not enumerate cross-tenant users).
+    /// </summary>
+    [Authorize(Roles = "admin,superAdmin")]
+    [HttpGet("{userId:guid}")]
+    [ProducesOkApiResponseType<UserDetailInfo>]
+    public async Task<IActionResult> GetUserDetail([FromRoute] Guid userId)
+    {
+        var result = await sender.Send(new GetUserDetailQuery(userId));
+        return result.Match(
+            detail => Ok(detail),
+            error => error.ToObjectResult());
+    }
+
+    /// <summary>
+    /// Admin unlock — clears LockoutEnd + AccessFailedCount. Idempotent; audited as
+    /// <see cref="Domain.Entities.Auditing.AuditAction.UserAccountUnlocked"/>.
+    /// </summary>
+    [Authorize(Roles = "admin,superAdmin")]
+    [HttpPost("{userId:guid}/unlock")]
+    [ProducesOkApiResponseType]
+    public async Task<IActionResult> UnlockUser([FromRoute] Guid userId)
+    {
+        var result = await sender.Send(new UnlockUserCommand(userId));
+        return result.Match(
+            response => Ok(response),
+            error => error.ToObjectResult());
+    }
+
+    /// <summary>
+    /// Admin "log out everywhere in my tenant" — kills the target user's refresh tokens for
+    /// the admin's enterprise only. Sessions in other tenants stay live. Audited as
+    /// <see cref="Domain.Entities.Auditing.AuditAction.UserSessionsRevoked"/>.
+    /// </summary>
+    [Authorize(Roles = "admin,superAdmin")]
+    [HttpDelete("{userId:guid}/sessions")]
+    [ProducesOkApiResponseType]
+    public async Task<IActionResult> RevokeUserSessions([FromRoute] Guid userId)
+    {
+        var result = await sender.Send(new RevokeUserSessionsCommand(userId));
         return result.Match(
             response => Ok(response),
             error => error.ToObjectResult());
