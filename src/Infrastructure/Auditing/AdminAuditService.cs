@@ -60,6 +60,34 @@ internal class AdminAuditService(
         await repository.AddAsync(entity, cancellationToken);
     }
 
+    public async Task LogWithExplicitActorAsync(
+        Guid actorUserId,
+        string actorEmail,
+        AuditAction action,
+        AuditTargetType targetType,
+        Guid? targetId,
+        string? targetLabel,
+        Guid? enterpriseId = null,
+        JsonDocument? details = null,
+        CancellationToken cancellationToken = default)
+    {
+        var httpContext = httpContextAccessor.HttpContext;
+        var entity = AdminAuditLog.Create(
+            enterpriseId: enterpriseId,
+            actorUserId: actorUserId,
+            actorEmail: actorEmail,
+            actorRole: null, // unauthenticated path — no role claim to record
+            action: action,
+            targetType: targetType,
+            targetId: targetId,
+            targetLabel: targetLabel,
+            details: details,
+            ipAddress: ResolveIpAddress(httpContext),
+            userAgent: ResolveUserAgent(httpContext));
+
+        await repository.AddAsync(entity, cancellationToken);
+    }
+
     /// <summary>
     /// Resolves the originating IP, honouring X-Forwarded-For when present (first hop wins).
     /// Keep in mind that the proxy must be trusted — ASP.NET's ForwardedHeadersMiddleware should

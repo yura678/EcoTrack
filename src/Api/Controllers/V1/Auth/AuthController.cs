@@ -3,7 +3,9 @@ using Api.Controllers.Common;
 using Api.Modules.Errors;
 using Api.Swagger;
 using Application.Features.Auth.Commands.ConfirmEmail;
+using Application.Features.Auth.Commands.RequestPasswordReset;
 using Application.Features.Auth.Commands.ResendEmailConfirmation;
+using Application.Features.Auth.Commands.ResetPassword;
 using Application.Features.Auth.Commands.SwitchEnterprise;
 using Application.Features.Auth.Queries.GetMemberships;
 using Application.Features.Auth.Queries.LoginByCode;
@@ -74,6 +76,37 @@ public class AuthController(ISender sender) : BaseController
         var result = await sender.Send(model);
         return result.Match(
             response => Ok(response),
+            error => error.ToObjectResult());
+    }
+
+    // ---- Password reset (self-service) ----
+
+    /// <summary>
+    /// Step 1 of self-service password reset. Always returns 200 regardless of whether the
+    /// email is known — anti-enumeration. If the address exists, an email with a single-use
+    /// reset link is sent.
+    /// </summary>
+    [HttpPost("forgot-password")]
+    [EnableRateLimiting("auth")]
+    [ProducesOkApiResponseType]
+    public async Task<IActionResult> ForgotPassword(RequestPasswordResetCommand model)
+    {
+        await sender.Send(model);
+        return Ok();
+    }
+
+    /// <summary>
+    /// Step 2 of self-service password reset. Consumes the token, sets the new password,
+    /// invalidates all of the user's refresh tokens.
+    /// </summary>
+    [HttpPost("reset-password")]
+    [EnableRateLimiting("auth")]
+    [ProducesOkApiResponseType]
+    public async Task<IActionResult> ResetPassword(ResetPasswordCommand model)
+    {
+        var result = await sender.Send(model);
+        return result.Match<IActionResult>(
+            _ => Ok(),
             error => error.ToObjectResult());
     }
 

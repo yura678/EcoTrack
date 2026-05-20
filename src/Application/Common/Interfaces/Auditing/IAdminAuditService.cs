@@ -22,4 +22,20 @@ public interface IAdminAuditService
         Guid? enterpriseId = null,
         JsonDocument? details = null,
         CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// For flows where the actor is known but the request is unauthenticated (e.g. self-service
+    /// password reset — token submission has no JWT). The caller supplies actor identity
+    /// directly; HttpContext is still consulted for IP / user-agent.
+    /// </summary>
+    Task LogWithExplicitActorAsync(
+        Guid actorUserId,
+        string actorEmail,
+        AuditAction action,
+        AuditTargetType targetType,
+        Guid? targetId,
+        string? targetLabel,
+        Guid? enterpriseId = null,
+        JsonDocument? details = null,
+        CancellationToken cancellationToken = default);
 }

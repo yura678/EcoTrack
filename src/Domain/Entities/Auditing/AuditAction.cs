@@ -10,9 +10,12 @@ public enum AuditAction
     UserCreated = 2,
     UserRoleChanged = 3,
     UserMembershipRevoked = 4,
-    UserPasswordReset = 5,
+    /// <summary>Password reset finalised (token consumed, hash rotated).</summary>
+    UserPasswordResetCompleted = 5,
     UserAccountUnlocked = 6,
     RoleCreated = 7,
     RoleDeleted = 8,
-    RolePermissionsChanged = 9
+    RolePermissionsChanged = 9,
+    /// <summary>Admin pressed "force password reset" — reset link sent. Completion lands as <see cref="UserPasswordResetCompleted"/>.</summary>
+    UserPasswordResetRequested = 10
 }

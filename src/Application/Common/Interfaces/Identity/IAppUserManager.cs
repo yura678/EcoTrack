@@ -41,4 +41,17 @@ public interface IAppUserManager
 
     Task<bool> IsPasswordValidAsync(User user, string password);
     Task<string[]> GetRoleAsync(User user);
+
+    /// <summary>
+    /// Generates an ASP.NET Identity stateless reset token for the user. Token is signed +
+    /// time-bound and embeds the user's security stamp — rotating the stamp invalidates it.
+    /// </summary>
+    Task<string> GeneratePasswordResetTokenAsync(User user);
+
+    /// <summary>
+    /// Consumes a reset token and sets a new password. On success the user's security stamp
+    /// is rotated automatically by the underlying UserManager, which invalidates the token
+    /// and any other reset link in flight for the same user.
+    /// </summary>
+    Task<IdentityResult> ResetPasswordAsync(User user, string token, string newPassword);
 }

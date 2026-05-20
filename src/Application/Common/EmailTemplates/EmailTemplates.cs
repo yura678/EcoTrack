@@ -31,4 +31,13 @@ public static class EmailTemplates
             <p>Click the link below to complete your registration:</p>
             <a href='{inviteLink}'>Join Now</a>";
     }
+
+    public static string PasswordResetByEmail(string resetLink)
+    {
+        return $@"<h3>Reset your EcoTrack password</h3>
+            <p>We received a request to reset the password for your account.</p>
+            <p>If you didn't make this request, you can ignore this email — no changes will be made.</p>
+            <p>Otherwise, click the link below to choose a new password. The link is single-use and expires soon.</p>
+            <a href='{resetLink}'>Reset password</a>";
+    }
 }

@@ -186,4 +186,10 @@ public class AppUserManagerImplementation(AppUserManager userManager, ICurrentUs
     {
         return (await userManager.GetRolesAsync(user)).ToArray();
     }
+
+    public Task<string> GeneratePasswordResetTokenAsync(User user) =>
+        userManager.GeneratePasswordResetTokenAsync(user);
+
+    public Task<IdentityResult> ResetPasswordAsync(User user, string token, string newPassword) =>
+        userManager.ResetPasswordAsync(user, token, newPassword);
 }
