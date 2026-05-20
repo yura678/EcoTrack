@@ -62,4 +62,12 @@ public interface IAppUserManager
     /// invalidate the refresh tokens explicitly if "log out everywhere" semantics are wanted.
     /// </summary>
     Task<IdentityResult> ChangePasswordAsync(User user, string currentPassword, string newPassword);
+
+    /// <summary>
+    /// Admin-initiated email change: sets Email + UserName (and their normalized variants) to
+    /// the new value, keeps EmailConfirmed=true (the admin is trusted to verify the address
+    /// out-of-band), and rotates the security stamp. Custom refresh tokens are NOT killed
+    /// here — callers should invalidate them explicitly to force re-login.
+    /// </summary>
+    Task<IdentityResult> AdminChangeEmailAsync(User user, string newEmail);
 }

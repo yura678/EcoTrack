@@ -19,5 +19,7 @@ public enum AuditAction
     /// <summary>Admin pressed "force password reset" — reset link sent. Completion lands as <see cref="UserPasswordResetCompleted"/>.</summary>
     UserPasswordResetRequested = 10,
     /// <summary>Admin-initiated revoke of all the target user's sessions in the admin's enterprise.</summary>
-    UserSessionsRevoked = 11
+    UserSessionsRevoked = 11,
+    /// <summary>Admin replaced the user's email address. Details carry old/new addresses.</summary>
+    UserEmailChanged = 12
 }

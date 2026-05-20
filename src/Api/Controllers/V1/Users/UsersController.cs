@@ -5,6 +5,7 @@ using Api.Modules.Errors;
 using Application.Common.Models;
 using Application.Features.Admin.Commands.AddAdminCommand;
 using Application.Features.Users.Commands.ChangeMemberRole;
+using Application.Features.Users.Commands.ChangeUserEmail;
 using Application.Features.Users.Commands.ForcePasswordReset;
 using Application.Features.Users.Commands.RevokeMembership;
 using Application.Features.Users.Commands.RevokeUserSessions;
@@ -157,6 +158,25 @@ public class UsersController(ISender sender) : BaseController
     }
 
     /// <summary>
+    /// Admin-initiated email change. Replaces user's Email + UserName, invalidates current-tenant
+    /// refresh tokens, audits as <see cref="Domain.Entities.Auditing.AuditAction.UserEmailChanged"/>.
+    /// No OTP — the admin is trusted to verify the new address out-of-band.
+    /// </summary>
+    [Authorize(Roles = "admin,superAdmin")]
+    [HttpPut("{userId:guid}/email")]
+    [ProducesOkApiResponseType]
+    public async Task<IActionResult> ChangeUserEmail(
+        [FromRoute] Guid userId,
+        [FromBody] ChangeUserEmailBody body)
+    {
+        var command = new ChangeUserEmailCommand { UserId = userId, NewEmail = body.NewEmail };
+        var result = await sender.Send(command);
+        return result.Match(
+            response => Ok(response),
+            error => error.ToObjectResult());
+    }
+
+    /// <summary>
     /// Admin view of a user's login history. Same tenant scoping as user-detail — admin only
     /// sees history of users in their enterprise; 404 otherwise.
     /// </summary>
@@ -178,4 +198,5 @@ public class UsersController(ISender sender) : BaseController
     }
 
     public record ChangeMemberRoleBody(Guid RoleId);
+    public record ChangeUserEmailBody(string NewEmail);
 }

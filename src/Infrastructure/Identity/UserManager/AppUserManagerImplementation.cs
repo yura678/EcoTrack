@@ -195,4 +195,27 @@ public class AppUserManagerImplementation(AppUserManager userManager, ICurrentUs
 
     public Task<IdentityResult> ChangePasswordAsync(User user, string currentPassword, string newPassword) =>
         userManager.ChangePasswordAsync(user, currentPassword, newPassword);
+
+    public async Task<IdentityResult> AdminChangeEmailAsync(User user, string newEmail)
+    {
+        // SetEmailAsync clears EmailConfirmed as a precaution (the user must reverify the new
+        // address). Admin-initiated change is the exception — admin has presumably verified
+        // the address out-of-band, so we restore EmailConfirmed after the swap. UserName has
+        // to follow because in this codebase email IS the username (login by email-as-name).
+        var setEmail = await userManager.SetEmailAsync(user, newEmail);
+        if (!setEmail.Succeeded) return setEmail;
+
+        var setName = await userManager.SetUserNameAsync(user, newEmail);
+        if (!setName.Succeeded) return setName;
+
+        user.EmailConfirmed = true;
+        var update = await userManager.UpdateAsync(user);
+        if (!update.Succeeded) return update;
+
+        // Rotate the security stamp so ASP.NET Identity cookies / tickets minted against the
+        // old email become invalid. Our custom refresh tokens are not stamp-linked — the
+        // caller invalidates those separately if it wants a full "log out everywhere".
+        await userManager.UpdateSecurityStampAsync(user);
+        return IdentityResult.Success;
+    }
 }
