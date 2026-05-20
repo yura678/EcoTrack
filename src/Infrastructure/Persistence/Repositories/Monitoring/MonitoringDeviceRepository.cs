@@ -96,7 +96,12 @@ internal class MonitoringDeviceRepository(ApplicationDbContext context)
 
     public Task<bool> HasDependenciesAsync(Guid id, CancellationToken cancellationToken)
     {
-        return DbContext.Set<Measurement>().AnyAsync(x => x.DeviceId.Equals(id), cancellationToken);
+        // Source-of-truth for "what this device has produced" is raw_measurement, not
+        // Measurement: materialised aggregates leave DeviceId null because a window can have
+        // contributions from multiple devices, so checking Measurement.DeviceId would both
+        // miss real dependencies AND falsely block deletion of devices that just happened to
+        // be picked as the (now removed) "first device" representative.
+        return DbContext.Set<RawMeasurement>().AnyAsync(x => x.DeviceId == id, cancellationToken);
     }
 
     public async Task<IReadOnlyList<MonitoringDevice>> GetByInstallationIdsAsync(

@@ -140,7 +140,7 @@ public record MeasurementDto(
     EmissionSourceDto? EmissionSourceDto,
     Guid PollutantId,
     PollutantDto? PollutantDto,
-    Guid DeviceId,
+    Guid? DeviceId,
     Guid UnitId,
     MeasureUnitDto? MeasureUnitDto,
     AveragingWindow Window,

@@ -113,9 +113,6 @@ public interface IComplianceDetectionQueries
     Task<Dictionary<Guid, decimal?>> GetPollutantO2ReferencesAsync(
         IReadOnlyCollection<Guid> pollutantIds, CancellationToken ct);
 
-    Task<Dictionary<Guid, Guid>> GetFirstDevicePerSourceAsync(
-        IReadOnlyCollection<Guid> sourceIds, CancellationToken ct);
-
     // ── Measurement reads (detection) ───────────────────────────────────────
     Task<IReadOnlyList<MeasurementSnapshot>> GetMeasurementsForWindowAsync(
         IReadOnlyCollection<Guid> sourceIds,

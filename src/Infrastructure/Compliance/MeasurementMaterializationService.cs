@@ -35,7 +35,6 @@ public class MeasurementMaterializationService(
         }
 
         var sourceIds = tuples.Select(t => t.SourceId).Distinct().ToArray();
-        var deviceLookup = await queries.GetFirstDevicePerSourceAsync(sourceIds, cancellationToken);
         var o2RefByPollutant = await queries.GetPollutantO2ReferencesAsync(
             tuples.Select(t => t.PollutantId).Distinct().ToArray(), cancellationToken);
 
@@ -108,7 +107,6 @@ public class MeasurementMaterializationService(
 
             foreach (var tuple in groupTuples)
             {
-                if (!deviceLookup.TryGetValue(tuple.SourceId, out var deviceId)) continue;
                 if (!buckets.TryGetValue((tuple.SourceId, tuple.PollutantId), out var tupleBuckets)) continue;
 
                 var tupleStart = perTupleStart[(tuple.SourceId, tuple.PollutantId)];
@@ -150,11 +148,14 @@ public class MeasurementMaterializationService(
                     else
                     {
                         if (insertedThisTick >= _settings.BackfillWindowsPerTick) break;
+                        // DeviceId is null for materialized aggregates — a window can be built
+                        // from multiple devices' raw rows and naming one would be a lie. Raw
+                        // device lineage stays queryable via raw_measurement.
                         var measurement = Measurement.New(
                             Guid.NewGuid(),
                             windowStart, windowEnd,
                             tuple.Period, Aggregation.Average,
-                            tuple.SourceId, tuple.PollutantId, deviceId, entry.UnitId,
+                            tuple.SourceId, tuple.PollutantId, deviceId: null, entry.UnitId,
                             value: entry.Avg.Value,
                             validPointsCount: validCount,
                             expectedPointsCount: expected,

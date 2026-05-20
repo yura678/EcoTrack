@@ -17,7 +17,15 @@ public class Measurement : BaseEntity, ITenantOwned
     public Guid PollutantId { get; private set; }
     public Pollutant? Pollutant { get; private set; }
 
-    public Guid DeviceId { get; private set; }
+    /// <summary>
+    /// Device that produced this row, when one can be named: manual readings entered via
+    /// <see cref="Application.Features.Measurements.Command.CreateMeasurementCommand"/> set it
+    /// to the user's chosen device, but materialised aggregates leave it null because a window
+    /// can be built from raw_measurement rows belonging to multiple devices and naming one is
+    /// a lie. For per-device lineage of an aggregate, join raw_measurement on
+    /// (emission_source_id, pollutant_id, time ∈ window).
+    /// </summary>
+    public Guid? DeviceId { get; private set; }
     public MonitoringDevice? Device { get; private set; }
 
     public Guid UnitId { get; private set; }
@@ -49,7 +57,7 @@ public class Measurement : BaseEntity, ITenantOwned
 
     private Measurement(Guid id, DateTime windowStart, DateTime windowEnd,
         AveragingWindow window, Aggregation aggregation,
-        Guid emissionSourceId, Guid pollutantId, Guid deviceId, Guid unitId,
+        Guid emissionSourceId, Guid pollutantId, Guid? deviceId, Guid unitId,
         decimal value, decimal? normalizedValue, decimal? uncertainty,
         int validPointsCount, int expectedPointsCount,
         Quality quality, string? qualityNote, DateTime createdAt, DateTime? updatedAt)
@@ -76,7 +84,7 @@ public class Measurement : BaseEntity, ITenantOwned
 
     public static Measurement New(Guid id, DateTime windowStart, DateTime windowEnd,
         AveragingWindow window, Aggregation aggregation,
-        Guid emissionSourceId, Guid pollutantId, Guid deviceId, Guid unitId,
+        Guid emissionSourceId, Guid pollutantId, Guid? deviceId, Guid unitId,
         decimal value, int validPointsCount, int expectedPointsCount,
         decimal? normalizedValue = null, decimal? uncertainty = null,
         string? qualityNote = null) =>

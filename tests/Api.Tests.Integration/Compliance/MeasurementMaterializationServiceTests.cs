@@ -363,6 +363,29 @@ public class MeasurementMaterializationServiceTests : BaseIntegrationTest, IAsyn
     }
 
     [Fact]
+    public async Task ShouldLeaveDeviceIdNullForMaterializedAggregates()
+    {
+        // Materialised rows are aggregates over (source, pollutant, window); the underlying raw
+        // rows may belong to multiple devices, so naming a single one on the aggregate would be
+        // a lie. The materializer writes null and per-device lineage stays in raw_measurement.
+        var pollutant = PollutantsData.WithO2Reference(6m);
+        await Context.Set<Pollutant>().AddAsync(pollutant);
+        var (permit, limit) = ActivePermitWithLimit(pollutant.Id, 1000m);
+        await Context.Set<Permit>().AddAsync(permit);
+        await Context.Set<EmissionLimit>().AddAsync(limit);
+
+        await Context.Set<RawMeasurement>().AddAsync(RawMeasurement.New(
+            _midWindow, _source.Id, pollutant.Id, _device.Id, _mg.Id, 50m));
+        await SaveChangesAsync();
+        await RefreshCasAsync();
+        await RunMaterializationAsync();
+
+        var m = await Context.Set<Measurement>().AsNoTracking()
+            .FirstAsync(x => x.WindowEnd == _windowEnd && x.PollutantId == pollutant.Id);
+        m.DeviceId.Should().BeNull("materialised aggregates carry no single-device attribution");
+    }
+
+    [Fact]
     public async Task ShouldTriggerIedSubstitutionWhenDistinctMinuteCoverageBelowThreshold()
     {
         // Seed 20 readings across 20 distinct minutes of a 60-minute window → coverage 20/60

@@ -86,10 +86,13 @@ public class MeasurementConfiguration : IEntityTypeConfiguration<Measurement>
             .HasForeignKey(x => x.PollutantId)
             .OnDelete(DeleteBehavior.Restrict);
 
+        // DeviceId is nullable: materialized aggregates leave it null; manual readings keep
+        // their attribution. SetNull on delete so a hard-deleted device doesn't block historical
+        // manual rows — the row stays, the attribution just disappears.
         builder.HasOne(x => x.Device)
             .WithMany()
             .HasForeignKey(x => x.DeviceId)
-            .OnDelete(DeleteBehavior.Restrict);
+            .OnDelete(DeleteBehavior.SetNull);
 
         builder.HasOne(x => x.Unit)
             .WithMany(x => x.Measurements)

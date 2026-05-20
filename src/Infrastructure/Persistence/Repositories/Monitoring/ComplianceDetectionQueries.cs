@@ -178,17 +178,6 @@ internal class ComplianceDetectionQueries(ApplicationDbContext context) : ICompl
             .ToDictionaryAsync(p => p.Id, p => p.DefaultO2Reference, ct);
     }
 
-    public async Task<Dictionary<Guid, Guid>> GetFirstDevicePerSourceAsync(
-        IReadOnlyCollection<Guid> sourceIds, CancellationToken ct)
-    {
-        if (sourceIds.Count == 0) return [];
-        var rows = await context.Set<MonitoringDevice>()
-            .Where(d => d.EmissionSourceId != null && sourceIds.Contains(d.EmissionSourceId!.Value))
-            .Select(d => new { d.Id, SourceId = d.EmissionSourceId!.Value })
-            .ToListAsync(ct);
-        return rows.GroupBy(d => d.SourceId).ToDictionary(g => g.Key, g => g.First().Id);
-    }
-
     // ─── Measurement reads (detection) ──────────────────────────────────────────
 
     public async Task<IReadOnlyList<MeasurementSnapshot>> GetMeasurementsForWindowAsync(
