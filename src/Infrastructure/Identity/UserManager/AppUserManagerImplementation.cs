@@ -192,4 +192,7 @@ public class AppUserManagerImplementation(AppUserManager userManager, ICurrentUs
 
     public Task<IdentityResult> ResetPasswordAsync(User user, string token, string newPassword) =>
         userManager.ResetPasswordAsync(user, token, newPassword);
+
+    public Task<IdentityResult> ChangePasswordAsync(User user, string currentPassword, string newPassword) =>
+        userManager.ChangePasswordAsync(user, currentPassword, newPassword);
 }

@@ -48,6 +48,14 @@ public class TestAuthHandler(
     /// </summary>
     public const string RoleOverrideHeader = "X-Test-Role";
 
+    /// <summary>
+    /// Tests that need a real database User (profile endpoints, change-password, etc.) seed
+    /// one with a fresh Guid and pass it via this header so the auth handler issues a JWT
+    /// pointing at that exact user. Without the header the default fake TestUserId is used,
+    /// which is fine for endpoints that don't touch the User row.
+    /// </summary>
+    public const string UserIdOverrideHeader = "X-Test-User-Id";
+
     protected override Task<AuthenticateResult> HandleAuthenticateAsync()
     {
         var role = Request.Headers.TryGetValue(RoleOverrideHeader, out var headerValue)
@@ -55,10 +63,15 @@ public class TestAuthHandler(
             ? headerValue.ToString()
             : "superAdmin";
 
+        var userId = Request.Headers.TryGetValue(UserIdOverrideHeader, out var userIdHeader)
+                     && Guid.TryParse(userIdHeader, out var parsed)
+            ? parsed
+            : TestUserId;
+
         var claims = new[]
         {
             new Claim(ClaimTypes.Role, role),
-            new Claim(ClaimTypes.NameIdentifier, TestUserId.ToString()), // Для GetCurrentUserId()
+            new Claim(ClaimTypes.NameIdentifier, userId.ToString()), // Для GetCurrentUserId()
             new Claim("CompanyId", TestCompanyId.ToString())
         };
         var identity = new ClaimsIdentity(claims, "TestScheme");

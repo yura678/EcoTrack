@@ -54,4 +54,12 @@ public interface IAppUserManager
     /// and any other reset link in flight for the same user.
     /// </summary>
     Task<IdentityResult> ResetPasswordAsync(User user, string token, string newPassword);
+
+    /// <summary>
+    /// Authenticated password change: verifies the current password, then sets a new one.
+    /// Used by the self-service profile endpoint. UserManager updates the security stamp
+    /// on success, but our custom refresh tokens are not stamp-linked — callers should also
+    /// invalidate the refresh tokens explicitly if "log out everywhere" semantics are wanted.
+    /// </summary>
+    Task<IdentityResult> ChangePasswordAsync(User user, string currentPassword, string newPassword);
 }
