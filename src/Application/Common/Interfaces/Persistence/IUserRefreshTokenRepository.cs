@@ -1,3 +1,4 @@
+using Application.Models.Profile;
 using Domain.Entities.User;
 using LanguageExt;
 
@@ -18,4 +19,19 @@ public interface IUserRefreshTokenRepository
     /// </summary>
     Task InvalidateAllForUserAndEnterpriseAsync(
         Guid userId, Guid enterpriseId, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Returns active (IsValid=true, ExpiresAt &gt; now) sessions for the user with the
+    /// enterprise name joined in for UI display. Ordered newest-first.
+    /// </summary>
+    Task<IReadOnlyList<SessionInfo>> GetActiveSessionsForUserAsync(
+        Guid userId, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Flips IsValid=false on a single token, scoped to the owning user. The userId predicate
+    /// is a security guard — without it a leaked token id could be revoked by an attacker for
+    /// any user. Returns true when a row was flipped, false when no live token matched.
+    /// </summary>
+    Task<bool> InvalidateForUserAsync(
+        Guid tokenId, Guid userId, CancellationToken cancellationToken);
 }

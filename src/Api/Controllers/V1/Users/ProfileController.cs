@@ -3,8 +3,11 @@ using Api.Controllers.Common;
 using Api.Dtos;
 using Api.Modules.Errors;
 using Application.Features.Profile.Commands.ChangeMyPassword;
+using Application.Features.Profile.Commands.RevokeAllMySessions;
+using Application.Features.Profile.Commands.RevokeMySession;
 using Application.Features.Profile.Commands.UpdateMyProfile;
 using Application.Features.Profile.Queries.GetMyProfile;
+using Application.Features.Profile.Queries.GetMySessions;
 using Application.Models.Profile;
 using Asp.Versioning;
 using MediatR;
@@ -63,6 +66,42 @@ public class ProfileController(ISender sender) : BaseController
             NewPassword = body.NewPassword
         };
         var result = await sender.Send(command, cancellationToken);
+        return result.Match<IActionResult>(
+            _ => Ok(),
+            error => error.ToObjectResult());
+    }
+
+    [HttpGet("sessions")]
+    [ProducesOkApiResponseType<IReadOnlyList<SessionInfo>>]
+    public async Task<IActionResult> GetMySessions(CancellationToken cancellationToken)
+    {
+        var result = await sender.Send(new GetMySessionsQuery(), cancellationToken);
+        return result.Match(
+            sessions => Ok(sessions),
+            error => error.ToObjectResult());
+    }
+
+    /// <summary>
+    /// Revoke a single session. Idempotent — 200 even if the session was already invalid /
+    /// belonged to someone else, the post-condition "this session is not live" holds either way.
+    /// </summary>
+    [HttpDelete("sessions/{sessionId:guid}")]
+    [ProducesOkApiResponseType]
+    public async Task<IActionResult> RevokeMySession(
+        [FromRoute] Guid sessionId, CancellationToken cancellationToken)
+    {
+        var result = await sender.Send(new RevokeMySessionCommand(sessionId), cancellationToken);
+        return result.Match<IActionResult>(
+            _ => Ok(),
+            error => error.ToObjectResult());
+    }
+
+    /// <summary>"Log out everywhere" — flips IsValid=false on every active token of the caller.</summary>
+    [HttpDelete("sessions")]
+    [ProducesOkApiResponseType]
+    public async Task<IActionResult> RevokeAllMySessions(CancellationToken cancellationToken)
+    {
+        var result = await sender.Send(new RevokeAllMySessionsCommand(), cancellationToken);
         return result.Match<IActionResult>(
             _ => Ok(),
             error => error.ToObjectResult());
