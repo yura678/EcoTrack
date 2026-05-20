@@ -22,15 +22,20 @@ public class BroadcastComplianceEventHandler(
     public async Task Handle(ComplianceEventOpenedNotification notification, CancellationToken cancellationToken)
     {
         var option = await queries.GetByIdAsync(notification.ComplianceEventId, cancellationToken);
-        var ev = option.Match(e => e, () => null!);
-        if (ev is null)
-        {
-            logger.LogWarning(
-                "ComplianceEvent {EventId} disappeared before SignalR broadcast",
-                notification.ComplianceEventId);
-            return;
-        }
+        await option.Match(
+            Some: ev => BroadcastAsync(ev, cancellationToken),
+            None: () =>
+            {
+                logger.LogWarning(
+                    "ComplianceEvent {EventId} disappeared before SignalR broadcast",
+                    notification.ComplianceEventId);
+                return Task.CompletedTask;
+            });
+    }
 
+    private async Task BroadcastAsync(
+        Domain.Entities.Monitoring.ComplianceEvent ev, CancellationToken cancellationToken)
+    {
         try
         {
             var dto = ComplianceEventDto.FromDomainModel(ev);

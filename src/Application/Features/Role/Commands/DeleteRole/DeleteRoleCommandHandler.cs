@@ -14,16 +14,13 @@ internal class DeleteRoleCommandHandler(
         CancellationToken cancellationToken)
     {
         var roleOption = await roleManagerService.GetRoleByIdAsync(request.RoleId);
-        var role = roleOption.Match(r => r, () => null!);
-        if (role is null)
+        var caller = currentUserService;
+        var authorized = roleOption.Match(
+            Some: r => caller.IsSuperAdmin()
+                       || (caller.GetCurrentEnterpriseId() is Guid eid && r.EnterpriseId == eid),
+            None: () => false);
+        if (!authorized)
             return new RoleNotFoundException(Guid.Empty, request.RoleId);
-
-        if (!currentUserService.IsSuperAdmin())
-        {
-            var currentEnterpriseId = currentUserService.GetCurrentEnterpriseId();
-            if (currentEnterpriseId is null || role.EnterpriseId != currentEnterpriseId)
-                return new RoleNotFoundException(Guid.Empty, request.RoleId);
-        }
 
         var deleted = await roleManagerService.DeleteRoleAsync(request.RoleId);
         return deleted

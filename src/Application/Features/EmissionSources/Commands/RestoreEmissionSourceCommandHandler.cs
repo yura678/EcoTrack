@@ -18,21 +18,24 @@ public class RestoreEmissionSourceCommandHandler(
         var entityOption = await unitOfWork.EmissionSourceRepository
             .GetByIdIncludingDeletedAsync(request.Id, cancellationToken);
 
-        var entity = entityOption.Match(e => e, () => null!);
-        if (entity is null || entity.DeletedAt is null)
-            return new EmissionSourceNotFoundException(request.Id);
+        return await entityOption.MatchAsync<EmissionSource, Either<EmissionSourceException, EmissionSource>>(
+            Some: async entity =>
+            {
+                if (entity.DeletedAt is null)
+                    return new EmissionSourceNotFoundException(request.Id);
 
-        if (!currentUserService.IsSuperAdmin())
-        {
-            var currentEnterpriseId = currentUserService.GetCurrentEnterpriseId();
-            if (currentEnterpriseId is null || entity.EnterpriseId != currentEnterpriseId)
-                return new EmissionSourceNotFoundException(request.Id);
-        }
+                if (!currentUserService.IsSuperAdmin())
+                {
+                    var currentEnterpriseId = currentUserService.GetCurrentEnterpriseId();
+                    if (currentEnterpriseId is null || entity.EnterpriseId != currentEnterpriseId)
+                        return new EmissionSourceNotFoundException(request.Id);
+                }
 
-        entity.Restore();
-        unitOfWork.EmissionSourceRepository.Update(entity);
-        await unitOfWork.SaveChangesAsync(cancellationToken);
-
-        return entity;
+                entity.Restore();
+                unitOfWork.EmissionSourceRepository.Update(entity);
+                await unitOfWork.SaveChangesAsync(cancellationToken);
+                return entity;
+            },
+            None: () => new EmissionSourceNotFoundException(request.Id));
     }
 }

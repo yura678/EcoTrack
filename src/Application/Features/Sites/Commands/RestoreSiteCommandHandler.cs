@@ -18,21 +18,24 @@ public class RestoreSiteCommandHandler(
         var siteOption = await unitOfWork.SiteRepository
             .GetByIdIncludingDeletedAsync(request.Id, cancellationToken);
 
-        var site = siteOption.Match(s => s, () => null!);
-        if (site is null || site.DeletedAt is null)
-            return new SiteNotFoundException(request.Id);
+        return await siteOption.MatchAsync<Site, Either<SiteException, Site>>(
+            Some: async site =>
+            {
+                if (site.DeletedAt is null)
+                    return new SiteNotFoundException(request.Id);
 
-        if (!currentUserService.IsSuperAdmin())
-        {
-            var currentEnterpriseId = currentUserService.GetCurrentEnterpriseId();
-            if (currentEnterpriseId is null || site.EnterpriseId != currentEnterpriseId)
-                return new SiteNotFoundException(request.Id);
-        }
+                if (!currentUserService.IsSuperAdmin())
+                {
+                    var currentEnterpriseId = currentUserService.GetCurrentEnterpriseId();
+                    if (currentEnterpriseId is null || site.EnterpriseId != currentEnterpriseId)
+                        return new SiteNotFoundException(request.Id);
+                }
 
-        site.Restore();
-        unitOfWork.SiteRepository.Update(site);
-        await unitOfWork.SaveChangesAsync(cancellationToken);
-
-        return site;
+                site.Restore();
+                unitOfWork.SiteRepository.Update(site);
+                await unitOfWork.SaveChangesAsync(cancellationToken);
+                return site;
+            },
+            None: () => new SiteNotFoundException(request.Id));
     }
 }

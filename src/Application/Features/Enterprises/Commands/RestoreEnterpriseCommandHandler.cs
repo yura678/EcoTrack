@@ -15,14 +15,17 @@ public class RestoreEnterpriseCommandHandler(IUnitOfWork unitOfWork)
         var entityOption = await unitOfWork.EnterpriseRepository
             .GetByIdIncludingDeletedAsync(request.Id, cancellationToken);
 
-        var entity = entityOption.Match(e => e, () => null!);
-        if (entity is null || entity.DeletedAt is null)
-            return new EnterpriseNotFoundException(request.Id);
+        return await entityOption.MatchAsync<Enterprise, Either<EnterpriseException, Enterprise>>(
+            Some: async entity =>
+            {
+                if (entity.DeletedAt is null)
+                    return new EnterpriseNotFoundException(request.Id);
 
-        entity.Restore();
-        unitOfWork.EnterpriseRepository.Update(entity);
-        await unitOfWork.SaveChangesAsync(cancellationToken);
-
-        return entity;
+                entity.Restore();
+                unitOfWork.EnterpriseRepository.Update(entity);
+                await unitOfWork.SaveChangesAsync(cancellationToken);
+                return entity;
+            },
+            None: () => new EnterpriseNotFoundException(request.Id));
     }
 }

@@ -2,6 +2,7 @@ using Application.Common.Interfaces.Notifications;
 using Application.Common.Interfaces.Persistence;
 using Application.Common.Interfaces.Queries.Monitoring;
 using Application.Common.Interfaces.Queries.Notifications;
+using Domain.Entities.Monitoring;
 using Domain.Entities.Notifications;
 using Hangfire;
 using Microsoft.Extensions.Logging;
@@ -27,15 +28,19 @@ public class ComplianceNotificationDispatcher(
     public async Task DispatchAsync(Guid complianceEventId, CancellationToken cancellationToken)
     {
         var eventOption = await complianceEventQueries.GetByIdAsync(complianceEventId, cancellationToken);
-        var complianceEvent = eventOption.Match(e => e, () => null!);
-        if (complianceEvent is null)
-        {
-            logger.LogWarning(
-                "Compliance event {EventId} not found — dispatcher skipped",
-                complianceEventId);
-            return;
-        }
+        await eventOption.Match(
+            Some: ev => DispatchForEventAsync(ev, cancellationToken),
+            None: () =>
+            {
+                logger.LogWarning(
+                    "Compliance event {EventId} not found — dispatcher skipped",
+                    complianceEventId);
+                return Task.CompletedTask;
+            });
+    }
 
+    private async Task DispatchForEventAsync(ComplianceEvent complianceEvent, CancellationToken cancellationToken)
+    {
         var subscriptions = await subscriptionQueries.GetMatchingForEventAsync(
             complianceEvent.EnterpriseId,
             complianceEvent.EventType,
@@ -46,7 +51,7 @@ public class ComplianceNotificationDispatcher(
         {
             logger.LogDebug(
                 "No matching subscriptions for event {EventId} ({EventType}/{SourceId})",
-                complianceEventId, complianceEvent.EventType, complianceEvent.EmissionSourceId);
+                complianceEvent.Id, complianceEvent.EventType, complianceEvent.EmissionSourceId);
             return;
         }
 
@@ -89,13 +94,13 @@ public class ComplianceNotificationDispatcher(
                 // global failures (e.g. whole SMTP down) by re-running this method.
                 logger.LogError(ex,
                     "Failed to deliver compliance event {EventId} via {Channel} to subscription {SubId}",
-                    complianceEventId, sub.Channel, sub.Id);
+                    complianceEvent.Id, sub.Channel, sub.Id);
             }
         }
 
         logger.LogInformation(
             "Compliance notification dispatched for event {EventId}: " +
             "{EmailCount} email(s), {WebhookCount} webhook(s) of {Total} matching subscription(s)",
-            complianceEventId, sentEmails, sentWebhooks, subscriptions.Count);
+            complianceEvent.Id, sentEmails, sentWebhooks, subscriptions.Count);
     }
 }

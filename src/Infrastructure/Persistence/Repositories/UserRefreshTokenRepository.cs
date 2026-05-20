@@ -47,4 +47,14 @@ internal class UserRefreshTokenRepository(ApplicationDbContext dbContext)
             .Where(t => t.UserId == userId && t.IsValid)
             .ExecuteUpdateAsync(s => s.SetProperty(t => t.IsValid, false), cancellationToken);
     }
+
+    public async Task InvalidateAllForUserAndEnterpriseAsync(
+        Guid userId, Guid enterpriseId, CancellationToken cancellationToken)
+    {
+        await base.Table
+            .Where(t => t.UserId == userId
+                        && t.EnterpriseId == enterpriseId
+                        && t.IsValid)
+            .ExecuteUpdateAsync(s => s.SetProperty(t => t.IsValid, false), cancellationToken);
+    }
 }

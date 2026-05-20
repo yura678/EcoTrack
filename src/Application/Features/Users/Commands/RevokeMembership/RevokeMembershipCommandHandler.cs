@@ -26,19 +26,29 @@ internal class RevokeMembershipCommandHandler(
 
         var membershipOption = await unitOfWork.UserEnterpriseMembershipRepository
             .GetByUserAndEnterpriseAsync(request.UserId, enterpriseId.Value, cancellationToken);
-        var membership = membershipOption.Match(m => m, () => null!);
-        if (membership is null || !membership.IsActive)
-            return new UserNotFoundException(request.UserId);
 
-        membership.Revoke();
-        unitOfWork.UserEnterpriseMembershipRepository.Update(membership);
-        await unitOfWork.SaveChangesAsync(cancellationToken);
+        return await membershipOption.MatchAsync<UserEnterpriseMembership, Either<UserException, bool>>(
+            Some: async membership =>
+            {
+                if (!membership.IsActive)
+                    return new UserNotFoundException(request.UserId);
 
-        var userOption = await userManager.GetUserByIdAsync(request.UserId);
-        await userOption.MatchAsync<User, bool>(
-            Some: async u => { await userManager.UpdateSecurityStampAsync(u); return true; },
-            None: () => false);
+                membership.Revoke();
+                unitOfWork.UserEnterpriseMembershipRepository.Update(membership);
 
-        return true;
+                // Kill any live sessions this user has for THIS enterprise so the revoked
+                // membership takes effect on the next API call instead of riding the existing
+                // JWT until natural expiration. Sessions for other enterprises stay valid —
+                // revoking from one tenant must not log the user out of unrelated tenants.
+                await unitOfWork.UserRefreshTokenRepository.InvalidateAllForUserAndEnterpriseAsync(
+                    request.UserId, enterpriseId.Value, cancellationToken);
+
+                await unitOfWork.SaveChangesAsync(cancellationToken);
+
+                var userOption = await userManager.GetUserByIdAsync(request.UserId);
+                await userOption.IfSomeAsync(u => userManager.UpdateSecurityStampAsync(u));
+                return true;
+            },
+            None: () => new UserNotFoundException(request.UserId));
     }
 }
