@@ -22,4 +22,12 @@ public interface IMonitoringDeviceRepository
         CancellationToken cancellationToken);
     Task<IReadOnlyList<MonitoringDevice>> GetByEmissionSourceIdAsync(Guid emissionSourceId,
         CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Loads devices of the installation whose Status is anything but Decommissioned, tracked
+    /// so the caller can mutate them and SaveChanges in the same UoW. Used by the
+    /// installation-decommission cascade.
+    /// </summary>
+    Task<IReadOnlyList<MonitoringDevice>> GetNonDecommissionedByInstallationAsync(
+        Guid installationId, CancellationToken cancellationToken);
 }

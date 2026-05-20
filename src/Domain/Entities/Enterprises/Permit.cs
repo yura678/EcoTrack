@@ -68,6 +68,19 @@ public class Permit : BaseEntity, ITenantOwned
         UpdatedAt = DateTime.UtcNow;
     }
 
+    /// <summary>
+    /// Idempotent transition to Revoked. Only Active permits move — Draft (never effective),
+    /// Archived (already past their lifecycle), and Revoked (already terminal) stay where they
+    /// are. Used by the installation-decommission cascade so revoking the parent installation
+    /// terminates only the permits that were actually in effect.
+    /// </summary>
+    public void Revoke()
+    {
+        if (PermitStatus != PermitStatus.Active) return;
+        PermitStatus = PermitStatus.Revoked;
+        UpdatedAt = DateTime.UtcNow;
+    }
+
     public void AssignTenant(Guid enterpriseId)
     {
         if (EnterpriseId == Guid.Empty)

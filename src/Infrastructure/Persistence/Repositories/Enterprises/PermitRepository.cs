@@ -105,4 +105,13 @@ internal class PermitRepository(ApplicationDbContext context)
 
         return entity ?? Option<Permit>.None;
     }
+
+    public async Task<IReadOnlyList<Permit>> GetActiveByInstallationAsync(
+        Guid installationId, CancellationToken cancellationToken)
+    {
+        return await base.Table
+            .Where(x => x.InstallationId == installationId
+                        && x.PermitStatus == PermitStatus.Active)
+            .ToListAsync(cancellationToken);
+    }
 }

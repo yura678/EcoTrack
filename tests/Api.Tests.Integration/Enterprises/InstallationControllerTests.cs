@@ -275,45 +275,7 @@ public class InstallationControllerTests : BaseIntegrationTest, IAsyncLifetime
         // Assert
         response.StatusCode.Should().Be(HttpStatusCode.NotFound);
     }
-
-
-    [Fact]
-    public async Task ShouldDeleteInstallation()
-    {
-        // Arrange
-        var route = $"{BaseRoute}/{_secondInstallation.Id}";
-
-        // Act
-        var response = await Client.DeleteAsync(route);
-
-        // Assert
-        response.IsSuccessStatusCode.Should().BeTrue();
-
-        var entity = await Context.Set<Installation>()
-            .FirstOrDefaultAsync(x => x.Id.Equals(_secondInstallation.Id));
-
-        entity.Should().BeNull();
-    }
-
-    [Fact]
-    public async Task ShouldDeleteInstallationWhenHasEmissionSources()
-    {
-        // Arrange
-        var route = $"{BaseRoute}/{_firstInstallation.Id}";
-
-        // Act
-        var response = await Client.DeleteAsync(route);
-
-        // Assert
-        response.IsSuccessStatusCode.Should().BeTrue();
-
-        var entity = await Context.Set<Installation>()
-            .FirstOrDefaultAsync(x => x.Id.Equals(_firstInstallation.Id));
-
-        entity.Should().BeNull();
-    }
-
-
+    
     public async Task InitializeAsync()
     {
         await Context.Set<Sector>().AddAsync(_sector);

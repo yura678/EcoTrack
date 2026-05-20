@@ -17,4 +17,12 @@ public interface IPermitRepository
 
     Task<Option<Permit>> GetActiveByEmissionSourceAsync(
         Guid sourceId, DateTime activeAt, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Loads all permits of the installation in <see cref="PermitStatus.Active"/>, tracked so
+    /// the caller can mutate them. Used by the installation-decommission cascade to revoke
+    /// active permits while leaving Draft/Archived/Revoked ones alone.
+    /// </summary>
+    Task<IReadOnlyList<Permit>> GetActiveByInstallationAsync(
+        Guid installationId, CancellationToken cancellationToken);
 }

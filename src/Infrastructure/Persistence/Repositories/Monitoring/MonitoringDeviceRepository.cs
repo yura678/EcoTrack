@@ -114,4 +114,13 @@ internal class MonitoringDeviceRepository(ApplicationDbContext context)
             .Where(x => x.EmissionSourceId == emissionSourceId)
             .ToListAsync(cancellationToken);
     }
+
+    public async Task<IReadOnlyList<MonitoringDevice>> GetNonDecommissionedByInstallationAsync(
+        Guid installationId, CancellationToken cancellationToken)
+    {
+        return await base.Table
+            .Where(x => x.InstallationId == installationId
+                        && x.Status != DeviceStatus.Decommissioned)
+            .ToListAsync(cancellationToken);
+    }
 }

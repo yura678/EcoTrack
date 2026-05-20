@@ -37,10 +37,30 @@ public class UpdateInstallationStatusCommandHandler(
     {
         try
         {
+            var isDecommissioningTransition =
+                entity.Status != InstallationStatus.Decommissioned
+                && request.Status == InstallationStatus.Decommissioned;
+
             entity.ChangeStatus(request.Status);
-            var updatedInstallation = unitOfWork.InstallationRepository.Update(entity);
+            unitOfWork.InstallationRepository.Update(entity);
+
+            // Cascade only on the Operating/Shutdown → Decommissioned transition. Reverse moves
+            // (Decommissioned → Operating, e.g. re-commissioning a site) intentionally do NOT
+            // restore devices or permits — bringing infrastructure back into service is an
+            // explicit per-asset decision the operator must make.
+            if (isDecommissioningTransition)
+            {
+                var devices = await unitOfWork.MonitoringDeviceRepository
+                    .GetNonDecommissionedByInstallationAsync(entity.Id, cancellationToken);
+                foreach (var device in devices) device.Decommission();
+
+                var activePermits = await unitOfWork.PermitRepository
+                    .GetActiveByInstallationAsync(entity.Id, cancellationToken);
+                foreach (var permit in activePermits) permit.Revoke();
+            }
+
             await unitOfWork.SaveChangesAsync(cancellationToken);
-            return updatedInstallation;
+            return entity;
         }
         catch (Exception exception)
         {
