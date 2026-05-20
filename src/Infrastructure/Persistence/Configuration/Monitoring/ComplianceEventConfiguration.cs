@@ -81,6 +81,14 @@ public class ComplianceEventConfiguration : IEntityTypeConfiguration<ComplianceE
 
         builder.HasIndex(x => new { x.EmissionSourceId, x.DetectedAt });
 
+        // Partial index for the "Open" subset — covers GetOpenByTypeAsync, which fast-detection
+        // calls 5×/tick (= ~1440×/day). The full table grows monotonically (closed events stay
+        // for audit), but the Open subset stays small (dozens to hundreds), so the partial
+        // index stays hot in cache. Status enum: Open=0 (see MonitoringEnums.cs).
+        builder.HasIndex(x => new { x.EventType, x.EmissionSourceId })
+            .HasDatabaseName("ix_compliance_event_open_by_type")
+            .HasFilter("status = 0");
+
         builder.Property(x => x.EnterpriseId).IsRequired();
         builder.HasIndex(x => x.EnterpriseId);
     }
