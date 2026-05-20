@@ -1,8 +1,11 @@
-﻿using Application.Common.EmailTemplates;
+﻿using System.Text.Json;
+using Application.Common.EmailTemplates;
+using Application.Common.Interfaces.Auditing;
 using Application.Common.Interfaces.Identity;
 using Application.Common.Interfaces.Persistence;
 using Application.Features.Admin.Exceptions;
 using Application.Features.Users.Exceptions;
+using Domain.Entities.Auditing;
 using Domain.Entities.User;
 using LanguageExt;
 using MediatR;
@@ -14,7 +17,8 @@ internal class SendInvitationCommandHandler(
     ICurrentUserService currentUserService,
     IRoleManagerService roleManagerService,
     IAppUserManager userManager,
-    IEmailService emailService)
+    IEmailService emailService,
+    IAdminAuditService adminAudit)
     : IRequestHandler<SendInvitationCommand, Either<UserException, string>>
 {
     public async Task<Either<UserException, string>> Handle(SendInvitationCommand request,
@@ -46,6 +50,21 @@ internal class SendInvitationCommandHandler(
 
         var invitation = EnterpriseInvitation.Create(adminEnterpriseId, request.Email, request.RoleId);
         await unitOfWork.InvitationRepository.AddAsync(invitation, cancellationToken);
+
+        var details = JsonSerializer.SerializeToDocument(new
+        {
+            invitationId = invitation.Id,
+            email = request.Email,
+            roleId = request.RoleId
+        });
+        await adminAudit.LogAsync(
+            action: AuditAction.UserInvited,
+            targetType: AuditTargetType.Invitation,
+            targetId: invitation.Id,
+            targetLabel: request.Email,
+            enterpriseId: adminEnterpriseId,
+            details: details,
+            cancellationToken: cancellationToken);
 
         using var transaction = await unitOfWork.BeginTransactionAsync(cancellationToken);
         try

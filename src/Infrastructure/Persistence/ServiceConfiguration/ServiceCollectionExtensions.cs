@@ -1,4 +1,5 @@
-﻿using Application.Common.Interfaces.Ingestion;
+﻿using Application.Common.Interfaces.Auditing;
+using Application.Common.Interfaces.Ingestion;
 using Application.Common.Interfaces.Notifications;
 using Application.Common.Interfaces.Persistence;
 using Application.Common.Interfaces.Queries;
@@ -6,11 +7,14 @@ using Application.Common.Interfaces.Queries.Emissions;
 using Application.Common.Interfaces.Queries.Enterprises;
 using Application.Common.Interfaces.Queries.Monitoring;
 using Application.Common.Interfaces.Repositories;
+using Application.Common.Interfaces.Repositories.Auditing;
 using Application.Common.Interfaces.Repositories.Emissions;
 using Application.Common.Interfaces.Repositories.Enterprises;
 using Application.Common.Interfaces.Repositories.Monitoring;
 using Application.Common.Interfaces.Repositories.Notifications;
 using Application.Common.Interfaces.Queries.Notifications;
+using Infrastructure.Auditing;
+using Infrastructure.Persistence.Repositories.Auditing;
 using Infrastructure.Persistence.Repositories.Notifications;
 using Application.Common.Settings;
 using Infrastructure.Compliance;
@@ -169,6 +173,10 @@ public static class ServiceCollectionExtensions
         services.AddScoped<NotificationSubscriptionRepository>();
         services.AddScoped<INotificationSubscriptionRepository>(provider => provider.GetRequiredService<NotificationSubscriptionRepository>());
         services.AddScoped<INotificationSubscriptionQueries>(provider => provider.GetRequiredService<NotificationSubscriptionRepository>());
+
+        services.AddScoped<AdminAuditLogRepository>();
+        services.AddScoped<IAdminAuditLogRepository>(provider => provider.GetRequiredService<AdminAuditLogRepository>());
+        services.AddScoped<IAdminAuditService, AdminAuditService>();
     }
      
 

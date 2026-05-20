@@ -1,5 +1,6 @@
 using Application.Common.Interfaces.Identity;
 using Domain.Common;
+using Domain.Entities.Auditing;
 using Domain.Entities.EmissionSources;
 using Domain.Entities.Enterprises;
 using Domain.Entities.Monitoring;
@@ -125,5 +126,11 @@ public class ApplicationDbContext
 
         modelBuilder.Entity<EnterpriseInvitation>().HasQueryFilter(x =>
             x.Enterprise!.DeletedAt == null);
+
+        // Admin audit log: tenant admins see their own enterprise's rows only; superAdmin and
+        // system contexts see everything. Rows with EnterpriseId == null are global actions
+        // (only superAdmin should view them, which is exactly what BypassTenantFilter allows).
+        modelBuilder.Entity<AdminAuditLog>().HasQueryFilter(x =>
+            BypassTenantFilter || x.EnterpriseId == TenantFilterId);
     }
 }
