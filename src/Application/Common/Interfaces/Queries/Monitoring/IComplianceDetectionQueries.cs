@@ -172,8 +172,15 @@ public interface IComplianceDetectionQueries
     Task<IReadOnlyList<DeviceCalibrationSnapshot>> GetDevicesWithLatestCalibrationAsync(
         CancellationToken ct);
 
+    /// <summary>
+    /// Latest raw_measurement time per device, restricted to rows newer than <paramref name="since"/>.
+    /// Devices with no rows in that window are absent from the result — callers treat that as
+    /// "offline" (same semantics as a row older than the cutoff). The time lower bound is
+    /// mandatory: without it the query scans every Timescale chunk of raw_measurement and
+    /// can time out on production-sized data.
+    /// </summary>
     Task<Dictionary<Guid, DateTime?>> GetDeviceLastSeenAsync(
-        IReadOnlyCollection<Guid> deviceIds, CancellationToken ct);
+        IReadOnlyCollection<Guid> deviceIds, DateTime since, CancellationToken ct);
 
     // ── Process parameters ──────────────────────────────────────────────────
     Task<Dictionary<(Guid SourceId, DateTime WindowStart), ProcessParamReadings>>

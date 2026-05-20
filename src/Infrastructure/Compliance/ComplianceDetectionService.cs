@@ -624,7 +624,7 @@ public class ComplianceDetectionService(
             .ToHashSet();
 
         var lastSeen = await queries.GetDeviceLastSeenAsync(
-            devices.Select(d => d.Id).ToArray(), ct);
+            devices.Select(d => d.Id).ToArray(), cutoff, ct);
 
         var newEvents = new List<ComplianceEvent>();
         foreach (var d in devices)

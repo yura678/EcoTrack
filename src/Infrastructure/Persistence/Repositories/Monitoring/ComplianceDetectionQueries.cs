@@ -449,17 +449,26 @@ internal class ComplianceDetectionQueries(ApplicationDbContext context) : ICompl
     }
 
     public async Task<Dictionary<Guid, DateTime?>> GetDeviceLastSeenAsync(
-        IReadOnlyCollection<Guid> deviceIds, CancellationToken ct)
+        IReadOnlyCollection<Guid> deviceIds, DateTime since, CancellationToken ct)
     {
         if (deviceIds.Count == 0) return [];
+
+        // The time >= @since predicate is what makes this query Timescale-friendly: it lets the
+        // planner prune all chunks older than the window and reduces the scan to the one or two
+        // newest chunks. Without it the planner has to MAX-aggregate over every chunk ever
+        // written, which times out once the hypertable has a few months of data.
+        // Callers are expected to pass their offline cutoff — anything older is irrelevant to
+        // the "is this device online right now" decision they're making.
         var sql = @"
             SELECT device_id, MAX(time) AS last_seen
             FROM raw_measurement
             WHERE device_id = ANY(@device_ids)
+              AND time >= @since
             GROUP BY device_id";
 
         await using var command = await CreateCommandAsync(sql, ct);
         AddParam(command, "device_ids", NpgsqlDbType.Array | NpgsqlDbType.Uuid, deviceIds.ToArray());
+        AddParam(command, "since", NpgsqlDbType.TimestampTz, EnsureUtc(since));
 
         var dict = new Dictionary<Guid, DateTime?>();
         await using var reader = await command.ExecuteReaderAsync(ct);

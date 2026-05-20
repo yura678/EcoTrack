@@ -195,9 +195,9 @@ public class CurrentViolationProbe(
             return;
         }
 
-        var lastSeen = await queries.GetDeviceLastSeenAsync(deviceIds, ct);
         var now = DateTime.UtcNow;
         var cutoff = now - TimeSpan.FromMinutes(_settings.DeviceOfflineThresholdMinutes);
+        var lastSeen = await queries.GetDeviceLastSeenAsync(deviceIds, cutoff, ct);
 
         foreach (var e in eventsArr)
         {
