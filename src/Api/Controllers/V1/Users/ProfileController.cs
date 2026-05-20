@@ -2,10 +2,12 @@ using Api.Attributes;
 using Api.Controllers.Common;
 using Api.Dtos;
 using Api.Modules.Errors;
+using Application.Common.Models;
 using Application.Features.Profile.Commands.ChangeMyPassword;
 using Application.Features.Profile.Commands.RevokeAllMySessions;
 using Application.Features.Profile.Commands.RevokeMySession;
 using Application.Features.Profile.Commands.UpdateMyProfile;
+using Application.Features.Profile.Queries.GetMyLoginHistory;
 using Application.Features.Profile.Queries.GetMyProfile;
 using Application.Features.Profile.Queries.GetMySessions;
 using Application.Models.Profile;
@@ -104,6 +106,26 @@ public class ProfileController(ISender sender) : BaseController
         var result = await sender.Send(new RevokeAllMySessionsCommand(), cancellationToken);
         return result.Match<IActionResult>(
             _ => Ok(),
+            error => error.ToObjectResult());
+    }
+
+    /// <summary>
+    /// Paged login history for the caller — both successes and failures, newest first.
+    /// Optional from/to bounds; defaults to the most recent <paramref name="pageSize"/> rows.
+    /// </summary>
+    [HttpGet("login-history")]
+    [ProducesOkApiResponseType<PageResult<LoginHistoryEntry>>]
+    public async Task<IActionResult> GetMyLoginHistory(
+        [FromQuery] DateTime? from,
+        [FromQuery] DateTime? to,
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 20,
+        CancellationToken cancellationToken = default)
+    {
+        var result = await sender.Send(
+            new GetMyLoginHistoryQuery(from, to, page, pageSize), cancellationToken);
+        return result.Match(
+            history => Ok(history),
             error => error.ToObjectResult());
     }
 }

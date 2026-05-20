@@ -1,4 +1,5 @@
 ﻿using Application.Common.Interfaces.Auditing;
+using Application.Common.Interfaces.Identity;
 using Application.Common.Interfaces.Ingestion;
 using Application.Common.Interfaces.Notifications;
 using Application.Common.Interfaces.Persistence;
@@ -14,6 +15,7 @@ using Application.Common.Interfaces.Repositories.Monitoring;
 using Application.Common.Interfaces.Repositories.Notifications;
 using Application.Common.Interfaces.Queries.Notifications;
 using Infrastructure.Auditing;
+using Infrastructure.Identity;
 using Infrastructure.Persistence.Repositories.Auditing;
 using Infrastructure.Persistence.Repositories.Notifications;
 using Application.Common.Settings;
@@ -177,6 +179,10 @@ public static class ServiceCollectionExtensions
         services.AddScoped<AdminAuditLogRepository>();
         services.AddScoped<IAdminAuditLogRepository>(provider => provider.GetRequiredService<AdminAuditLogRepository>());
         services.AddScoped<IAdminAuditService, AdminAuditService>();
+
+        services.AddScoped<LoginAttemptRepository>();
+        services.AddScoped<ILoginAttemptRepository>(provider => provider.GetRequiredService<LoginAttemptRepository>());
+        services.AddScoped<ILoginAttemptRecorder, LoginAttemptRecorder>();
     }
      
 

@@ -9,7 +9,10 @@ using Shared.Extensions;
 
 namespace Application.Features.Auth.Queries.LoginByCode;
 
-internal class LoginByCodeQueryHandler(IAppUserManager userManager, IJwtService jwtService)
+internal class LoginByCodeQueryHandler(
+    IAppUserManager userManager,
+    IJwtService jwtService,
+    ILoginAttemptRecorder loginRecorder)
     : IRequestHandler<LoginByCodeQuery, Either<UserException, AccessToken>>
 {
     public async Task<Either<UserException, AccessToken>> Handle(LoginByCodeQuery request,
@@ -21,14 +24,29 @@ internal class LoginByCodeQueryHandler(IAppUserManager userManager, IJwtService 
             Some: async u =>
             {
                 if (!u.EmailConfirmed)
+                {
+                    await loginRecorder.RecordAsync(u.Id, request.Email,
+                        LoginMethod.EmailCode, LoginOutcome.EmailNotConfirmed, cancellationToken);
                     return new UserVerificationException(u.Id, "Email is not confirmed.");
+                }
 
                 var result = await userManager.VerifyUserCode(u, request.Code);
                 if (!result.Succeeded)
+                {
+                    await loginRecorder.RecordAsync(u.Id, request.Email,
+                        LoginMethod.EmailCode, LoginOutcome.InvalidCredentials, cancellationToken);
                     return new UserVerificationException(u.Id, result.Errors.StringifyIdentityResultErrors());
+                }
 
+                await loginRecorder.RecordAsync(u.Id, request.Email,
+                    LoginMethod.EmailCode, LoginOutcome.Success, cancellationToken);
                 return await jwtService.GenerateAsync(u, null, cancellationToken);
             },
-            None: () => new InvalidCredentialsException(Guid.Empty));
+            None: async () =>
+            {
+                await loginRecorder.RecordAsync(userId: null, request.Email,
+                    LoginMethod.EmailCode, LoginOutcome.UnknownEmail, cancellationToken);
+                return new InvalidCredentialsException(Guid.Empty);
+            });
     }
 }

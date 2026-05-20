@@ -12,6 +12,7 @@ namespace Application.Features.Auth.Queries.LoginByPassword;
 internal class LoginByPasswordQueryHandler(
     IAppUserManager userManager,
     IJwtService jwtService,
+    ILoginAttemptRecorder loginRecorder,
     ILogger<LoginByPasswordQueryHandler> logger)
     : IRequestHandler<LoginByPasswordQuery, Either<UserException, AccessToken>>
 {
@@ -26,6 +27,8 @@ internal class LoginByPasswordQueryHandler(
                 if (await userManager.IsUserLockedOutAsync(u))
                 {
                     logger.LogWarning("Login attempt on locked user {UserId}", u.Id);
+                    await loginRecorder.RecordAsync(u.Id, request.Email,
+                        LoginMethod.Password, LoginOutcome.UserLocked, cancellationToken);
                     return new InvalidCredentialsException(Guid.Empty);
                 }
 
@@ -33,18 +36,28 @@ internal class LoginByPasswordQueryHandler(
                 {
                     await userManager.IncrementAccessFailedCountAsync(u);
                     logger.LogWarning("Failed login attempt for user {UserId}", u.Id);
+                    await loginRecorder.RecordAsync(u.Id, request.Email,
+                        LoginMethod.Password, LoginOutcome.InvalidCredentials, cancellationToken);
                     return new InvalidCredentialsException(Guid.Empty);
                 }
 
                 if (!u.EmailConfirmed)
+                {
+                    await loginRecorder.RecordAsync(u.Id, request.Email,
+                        LoginMethod.Password, LoginOutcome.EmailNotConfirmed, cancellationToken);
                     return new UserVerificationException(u.Id, "Email is not confirmed.");
+                }
 
                 await userManager.ResetUserLockoutAsync(u);
+                await loginRecorder.RecordAsync(u.Id, request.Email,
+                    LoginMethod.Password, LoginOutcome.Success, cancellationToken);
                 return await jwtService.GenerateAsync(u, null, cancellationToken);
             },
-            None: () =>
+            None: async () =>
             {
                 logger.LogWarning("Login attempt with unknown email");
+                await loginRecorder.RecordAsync(userId: null, request.Email,
+                    LoginMethod.Password, LoginOutcome.UnknownEmail, cancellationToken);
                 return new InvalidCredentialsException(Guid.Empty);
             });
     }

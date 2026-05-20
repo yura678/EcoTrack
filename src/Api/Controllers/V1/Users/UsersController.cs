@@ -2,6 +2,7 @@ using System.ComponentModel.DataAnnotations;
 using Api.Attributes;
 using Api.Controllers.Common;
 using Api.Modules.Errors;
+using Application.Common.Models;
 using Application.Features.Admin.Commands.AddAdminCommand;
 using Application.Features.Users.Commands.ChangeMemberRole;
 using Application.Features.Users.Commands.ForcePasswordReset;
@@ -10,7 +11,9 @@ using Application.Features.Users.Commands.RevokeUserSessions;
 using Application.Features.Users.Commands.SendInvitation;
 using Application.Features.Users.Commands.UnlockUser;
 using Application.Features.Users.Queries.GetUserDetail;
+using Application.Features.Users.Queries.GetUserLoginHistory;
 using Application.Features.Users.Queries.GetUsers;
+using Application.Models.Profile;
 using Application.Models.Users;
 using Asp.Versioning;
 using MediatR;
@@ -150,6 +153,27 @@ public class UsersController(ISender sender) : BaseController
         var result = await sender.Send(new RevokeUserSessionsCommand(userId));
         return result.Match(
             response => Ok(response),
+            error => error.ToObjectResult());
+    }
+
+    /// <summary>
+    /// Admin view of a user's login history. Same tenant scoping as user-detail — admin only
+    /// sees history of users in their enterprise; 404 otherwise.
+    /// </summary>
+    [Authorize(Roles = "admin,superAdmin")]
+    [HttpGet("{userId:guid}/login-history")]
+    [ProducesOkApiResponseType<PageResult<LoginHistoryEntry>>]
+    public async Task<IActionResult> GetUserLoginHistory(
+        [FromRoute] Guid userId,
+        [FromQuery] DateTime? from,
+        [FromQuery] DateTime? to,
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 20)
+    {
+        var result = await sender.Send(
+            new GetUserLoginHistoryQuery(userId, from, to, page, pageSize));
+        return result.Match(
+            history => Ok(history),
             error => error.ToObjectResult());
     }
 
