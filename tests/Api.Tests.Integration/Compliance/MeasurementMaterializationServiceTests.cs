@@ -350,12 +350,48 @@ public class MeasurementMaterializationServiceTests : BaseIntegrationTest, IAsyn
             .FirstAsync(m => m.WindowEnd == _windowEnd && m.PollutantId == pollutant.Id);
         refreshed.Id.Should().Be(firstPass.Id, "rescan must update in place, not insert duplicate");
         refreshed.Value.Should().BeApproximately(39.6m, 0.1m);
-        refreshed.ValidPointsCount.Should().Be(50);
+        // ValidPointsCount is "minutes of usable data" (1m-buckets with at least one valid
+        // reading), not the raw count of points. The 50 readings span minutes 5..53 (the late
+        // batch covers minute 30 too, but the first pass already put a row there), so 49
+        // distinct minutes have data.
+        refreshed.ValidPointsCount.Should().Be(49);
         refreshed.Quality.Should().Be(Quality.Valid,
             "availability is back above threshold → substitution must be cleared");
         refreshed.SubstitutedAt.Should().BeNull();
         refreshed.SubstitutionReason.Should().BeNull();
         refreshed.UpdatedAt.Should().BeAfter(firstUpdatedAt);
+    }
+
+    [Fact]
+    public async Task ShouldTriggerIedSubstitutionWhenDistinctMinuteCoverageBelowThreshold()
+    {
+        // Seed 20 readings across 20 distinct minutes of a 60-minute window → coverage 20/60
+        // ≈ 33%, well below the 75% IED Annex V threshold. Each minute carries 10 raw rows so
+        // any code path that confuses "raw rows" with "valid minutes" would see availability
+        // 200/60 ≈ 3.3 (above 1.0) and silently skip substitution — this test pins down the
+        // corrected semantic.
+        var pollutant = PollutantsData.SecondTestPollutant();
+        await Context.Set<Pollutant>().AddAsync(pollutant);
+        var (permit, limit) = ActivePermitWithLimit(pollutant.Id, 1000m);
+        await Context.Set<Permit>().AddAsync(permit);
+        await Context.Set<EmissionLimit>().AddAsync(limit);
+
+        var raws = Enumerable.Range(0, 20).SelectMany(minute =>
+            Enumerable.Range(0, 10).Select(secondOffset =>
+                RawMeasurement.New(
+                    _windowStart.AddMinutes(minute).AddSeconds(secondOffset * 5),
+                    _source.Id, pollutant.Id, _device.Id, _mg.Id, 30m)));
+        await Context.Set<RawMeasurement>().AddRangeAsync(raws);
+        await SaveChangesAsync();
+        await RefreshCasAsync();
+        await RunMaterializationAsync();
+
+        var m = await Context.Set<Measurement>().AsNoTracking()
+            .FirstAsync(x => x.WindowEnd == _windowEnd && x.PollutantId == pollutant.Id);
+        m.ValidPointsCount.Should().Be(20, "20 distinct minutes carried valid readings");
+        m.ExpectedPointsCount.Should().Be(60, "1h window = 60 expected minutes");
+        m.Quality.Should().Be(Quality.Substituted,
+            "33% coverage is below the 75% IED threshold — substitution must fire");
     }
 
     // ─── helpers ─────────────────────────────────────────────────────────────────

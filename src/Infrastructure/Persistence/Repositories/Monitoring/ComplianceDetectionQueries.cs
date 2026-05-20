@@ -365,13 +365,20 @@ internal class ComplianceDetectionQueries(ApplicationDbContext context) : ICompl
         CancellationToken ct)
     {
         var periodLiteral = PeriodToPgInterval(period);
+        // valid_count returned here is the number of 1-minute buckets that contained at least
+        // one Quality=Valid reading — i.e. "minutes of usable data in this window". The
+        // materializer compares this against expected = period.TotalMinutes to compute
+        // DataAvailability (IED Annex V Part 4). Using SUM(valid_count) — the raw-row count —
+        // produced ratios > 1 once devices sampled faster than 1/min and silently disabled IED
+        // substitution. Switching to "buckets with valid data" matches the per-minute semantic
+        // that expected uses.
         var sql = $@"
             SELECT
                 emission_source_id,
                 pollutant_id,
                 time_bucket(INTERVAL '{periodLiteral}', bucket) AS window_start,
                 (SUM(sum_value) / NULLIF(SUM(sample_count), 0))::numeric(18,6) AS avg,
-                COALESCE(SUM(valid_count), 0)::bigint AS valid_count,
+                COUNT(*) FILTER (WHERE valid_count > 0)::bigint AS valid_count,
                 COALESCE(SUM(sample_count), 0)::bigint AS sample_count,
                 (array_agg(unit_id))[1] AS unit_id
             FROM measurement_1m
