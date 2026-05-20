@@ -12,7 +12,8 @@ public static class MonitoringDeviceErrorFactory
             StatusCode = error switch
             {
                 MonitoringDeviceNumberAlreadyExistsException
-                    or MonitoringDeviceHasDependenciesException => StatusCodes.Status409Conflict,
+                    or MonitoringDeviceHasDependenciesException
+                    or ParentInstallationDecommissionedException => StatusCodes.Status409Conflict,
                 InvalidEmissionSourceInstallationException => StatusCodes.Status400BadRequest,
                 EmissionSourceNotFoundException
                     or MonitoringDeviceNotFoundException

@@ -42,6 +42,17 @@ public class InvalidEmissionSourceInstallationException(
     : MonitoringDeviceException(monitoringDeviceId,
         $"Emission source {sourceId} (Installation: {actualInstallationId}) cannot be linked to device {monitoringDeviceId} because the device belongs to another installation ({expectedInstallationId}).");
 
+/// <summary>
+/// Operator tried to set the device to anything other than Decommissioned while its parent
+/// installation is itself Decommissioned. Bringing the device back to life implies the
+/// installation is alive — so we force the operator to recommission the installation first.
+/// </summary>
+public class ParentInstallationDecommissionedException(
+    Guid monitoringDeviceId,
+    Guid installationId)
+    : MonitoringDeviceException(monitoringDeviceId,
+        $"Device '{monitoringDeviceId}' cannot be activated: parent installation '{installationId}' is Decommissioned. Recommission the installation first.");
+
 public class UnhandledMonitoringDeviceException(
     Guid monitoringDeviceId,
     Exception? innerException = null)

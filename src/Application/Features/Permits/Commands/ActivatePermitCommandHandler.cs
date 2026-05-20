@@ -15,8 +15,27 @@ public class ActivatePermitCommandHandler(
         CancellationToken cancellationToken)
     {
         return await CheckId(request.Id, cancellationToken)
+            .BindAsync(m => CheckInstallationActive(m, cancellationToken))
             .BindAsync(m => CheckNoActivePermitExists(m, cancellationToken))
             .BindAsync(m => UpdateEntity(m, cancellationToken));
+    }
+
+    /// <summary>
+    /// Mirrors the device guard: a permit on a Decommissioned installation must not become
+    /// Active. Otherwise the compliance detector would scan limits attached to a permit whose
+    /// installation no longer operates — generating phantom LimitExceedance events.
+    /// </summary>
+    private async Task<Either<PermitException, Permit>> CheckInstallationActive(
+        Permit permit, CancellationToken cancellationToken)
+    {
+        var installationOption = await unitOfWork.InstallationRepository
+            .GetByIdAsync(permit.InstallationId, cancellationToken);
+
+        return installationOption.Match<Either<PermitException, Permit>>(
+            Some: i => i.Status == InstallationStatus.Decommissioned
+                ? new CannotActivatePermitOnDecommissionedInstallationException(permit.Id, i.Id)
+                : permit,
+            None: () => new InstallationNotFoundException(permit.Id, permit.InstallationId));
     }
 
     private async Task<Either<PermitException, Permit>> CheckId(

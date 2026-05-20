@@ -19,7 +19,8 @@ public static class PermitErrorFactory
                     or EmissionLimitNotFoundException => StatusCodes.Status404NotFound,
                 ActivePermitAlreadyExistsException
                     or PermitInvalidStatusException
-                    or PermitNumberAlreadyExistsException => StatusCodes.Status409Conflict,
+                    or PermitNumberAlreadyExistsException
+                    or CannotActivatePermitOnDecommissionedInstallationException => StatusCodes.Status409Conflict,
                 InvalidEmissionLimitDateRangeException
                     or IncompatibleLimitUnitDimensionException => StatusCodes.Status400BadRequest,
                 UnhandledPermitException => StatusCodes.Status500InternalServerError,

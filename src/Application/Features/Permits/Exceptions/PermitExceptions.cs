@@ -62,6 +62,18 @@ public class ActivePermitAlreadyExistsException(
         permitId,
         $"Active permit already exists with ID '{permitId}' for this installation.");
 
+/// <summary>
+/// Operator tried to activate a permit on an installation that is itself Decommissioned.
+/// Activating a permit on a decommissioned installation creates a phantom regulatory context
+/// — the detector would generate LimitExceedance events for devices that don't legitimately
+/// operate, polluting the audit trail.
+/// </summary>
+public class CannotActivatePermitOnDecommissionedInstallationException(
+    Guid permitId,
+    Guid installationId)
+    : PermitException(permitId,
+        $"Permit '{permitId}' cannot be activated: installation '{installationId}' is Decommissioned. Recommission the installation first.");
+
 public class IncompatibleLimitUnitDimensionException(
     Guid permitId,
     LimitType limitType,
