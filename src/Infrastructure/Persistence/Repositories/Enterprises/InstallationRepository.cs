@@ -66,4 +66,9 @@ internal class InstallationRepository(ApplicationDbContext context)
             .Where(x => siteIds.Contains(x.SiteId))
             .ToListAsync(cancellationToken);
     }
+
+    public Task<int> CountOperatingBySiteAsync(Guid siteId, CancellationToken cancellationToken) =>
+        base.TableNoTracking
+            .CountAsync(x => x.SiteId == siteId && x.Status == InstallationStatus.Operating,
+                cancellationToken);
 }

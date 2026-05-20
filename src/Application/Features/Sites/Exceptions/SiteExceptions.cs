@@ -19,5 +19,22 @@ public class SiteHasDependenciesException(
     Guid siteId)
     : SiteException(siteId, $"Site with ID '{siteId}' has dependencies and cannot be deleted.");
 
+/// <summary>
+/// Operator tried to archive a Site that still owns one or more Installations in
+/// <c>InstallationStatus.Operating</c>. Archiving an actively-operated site would silently
+/// orphan its devices (HMAC ingest would start returning 401 once the site filter hides them)
+/// and lose data — so we refuse here and force the operator to decommission the installations
+/// first.
+/// </summary>
+public class SiteHasOperatingInstallationsException(Guid siteId, int operatingCount)
+    : SiteHasDependenciesException(siteId)
+{
+    public int OperatingCount { get; } = operatingCount;
+
+    public override string Message =>
+        $"Site '{SiteId}' cannot be archived: {OperatingCount} installation(s) are still " +
+        "Operating. Decommission them first.";
+}
+
 public class UnhandledSiteException(Guid siteId, Exception? innerException = null)
     : SiteException(siteId, "Unexpected error occurred.", innerException);

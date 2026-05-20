@@ -284,19 +284,48 @@ public class SiteControllerTests : BaseIntegrationTest, IAsyncLifetime
     }
 
     [Fact]
-    public async Task ShouldDeleteSiteWhenInstallationsExist()
+    public async Task ShouldRefuseDeleteWhenInstallationIsOperating()
     {
-        // Arrange
+        // _firstInstallation is created with InstallationStatus.Operating by the data factory,
+        // so deleting its Site must be blocked by the new domain invariant.
         var route = $"{BaseRoute}/{_firstSite.Id}";
 
-        // Act
         var response = await Client.DeleteAsync(route);
 
-        // Assert
-        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        response.StatusCode.Should().Be(HttpStatusCode.Conflict);
+        var body = await response.Content.ReadAsStringAsync();
+        body.Should().Contain("Operating");
+
+        // Site must remain visible after the refusal.
+        var stillThere = await Context.Set<Site>()
+            .IgnoreQueryFilters()
+            .FirstOrDefaultAsync(x => x.Id == _firstSite.Id);
+        stillThere.Should().NotBeNull();
+        stillThere!.DeletedAt.Should().BeNull();
     }
 
-   
+    [Fact]
+    public async Task ShouldDeleteSiteWhenAllInstallationsDecommissioned()
+    {
+        // Re-fetch the installation so EF tracks it in this scope — the tracker was cleared
+        // after InitializeAsync and the cached _firstInstallation reference is detached.
+        var trackedInstallation = await Context.Set<Installation>()
+            .FirstAsync(i => i.Id == _firstInstallation.Id);
+        trackedInstallation.Decommission();
+        await SaveChangesAsync();
+
+        var route = $"{BaseRoute}/{_firstSite.Id}";
+        var response = await Client.DeleteAsync(route);
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var deleted = await Context.Set<Site>()
+            .IgnoreQueryFilters()
+            .FirstAsync(x => x.Id == _firstSite.Id);
+        deleted.DeletedAt.Should().NotBeNull();
+    }
+
+
     public async Task InitializeAsync()
     {
         await Context.Set<Sector>().AddAsync(_testSector);

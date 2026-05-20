@@ -54,21 +54,20 @@ public class DeleteSiteCommandHandler(
     {
         try
         {
-            var installations = await unitOfWork.InstallationRepository
-                .GetBySiteIdsAsync(new[] { site.Id }, cancellationToken);
-
-            foreach (var installation in installations)
-                installation.Decommission();
-
-            if (installations.Count > 0)
-            {
-                var installationIds = installations.Select(i => i.Id).ToList();
-                var devices = await unitOfWork.MonitoringDeviceRepository
-                    .GetByInstallationIdsAsync(installationIds, cancellationToken);
-
-                foreach (var device in devices)
-                    device.Decommission();
-            }
+            // Invariant: archiving a Site is an end-of-life action, not a "decommission
+            // everything for me" shortcut. Installations have their own status lifecycle and
+            // their own cascade rules (devices, permits). Forcing the operator to flip those
+            // explicitly avoids silent data loss — once a device's parent Site has DeletedAt,
+            // the global query filter hides the device, HMAC ingest starts returning 401, and
+            // the device's data goes nowhere with no clear log signal.
+            //
+            // CountOperatingBySiteAsync is no-tracking on purpose: if we loaded installations
+            // tracked, EF would see "Site marked Deleted with tracked children that have a
+            // required FK to it" and throw on save. We just need the count.
+            var operatingCount = await unitOfWork.InstallationRepository
+                .CountOperatingBySiteAsync(site.Id, cancellationToken);
+            if (operatingCount > 0)
+                return new SiteHasOperatingInstallationsException(site.Id, operatingCount);
 
             var deletedSite = unitOfWork.SiteRepository.Delete(site);
             await unitOfWork.SaveChangesAsync(cancellationToken);
