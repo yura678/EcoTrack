@@ -17,6 +17,15 @@ internal class EnterpriseRepository(ApplicationDbContext context)
             .ToListAsync(cancellationToken);
     }
 
+    public async Task<IReadOnlyList<Guid>> GetActiveEnterpriseIdsAsync(CancellationToken cancellationToken)
+    {
+        // TableNoTracking honours the soft-delete query filter, so deleted enterprises are
+        // automatically excluded — the scheduler only fans out work to live tenants.
+        return await base.TableNoTracking
+            .Select(e => e.Id)
+            .ToListAsync(cancellationToken);
+    }
+
     public async Task<PageResult<Enterprise>> GetPagedAsync(
         int page,
         int pageSize,

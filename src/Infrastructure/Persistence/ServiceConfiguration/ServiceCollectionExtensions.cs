@@ -91,6 +91,12 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IWebhookComplianceNotificationPayloadBuilder, WebhookComplianceNotificationPayloadBuilder>();
         services.AddHttpClient<IWebhookSender, HttpWebhookSender>();
         services.AddScoped<ComplianceNotificationDispatcher>();
+        // Phase C — per-tenant detection jobs registered for DI so Hangfire can resolve them.
+        // Recurring-job registration + IHostedService retirement happens in Phase D behind a
+        // runner toggle; for now both paths can coexist (advisory-lock keys don't collide
+        // because hosted services use kind-level keys while Hangfire jobs use per-(kind, tenant)).
+        services.AddScoped<Compliance.Hangfire.PerEnterpriseDetectionJob>();
+        services.AddScoped<Compliance.Hangfire.DetectionScheduler>();
         services.AddHostedService<FastDetectionHostedService>();
         services.AddHostedService<AnnualLoadHostedService>();
         services.AddHostedService<CalibrationCheckHostedService>();
