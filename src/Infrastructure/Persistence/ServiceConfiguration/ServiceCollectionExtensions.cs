@@ -91,37 +91,12 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IWebhookComplianceNotificationPayloadBuilder, WebhookComplianceNotificationPayloadBuilder>();
         services.AddHttpClient<IWebhookSender, HttpWebhookSender>();
         services.AddScoped<ComplianceNotificationDispatcher>();
-        // Per-tenant detection jobs are always registered for DI so Hangfire can resolve them
-        // when the Hangfire runner is active. They're harmless to leave wired even under the
-        // HostedService runner — they're scoped, no auto-start.
+        // Per-tenant detection jobs — invoked by Hangfire. The master DetectionScheduler runs
+        // on the cadence registered in Program.cs (ConfigureDetectionRecurringJobs) and fans
+        // out one PerEnterpriseDetectionJob per tenant per kind.
         services.AddScoped<Compliance.Hangfire.PerEnterpriseDetectionJob>();
         services.AddScoped<Compliance.Hangfire.DetectionScheduler>();
 
-        // Runner toggle (ComplianceDetection:Runner). HostedService keeps the legacy single-pass
-        // background services; Hangfire skips them and lets the recurring scheduler fan out per
-        // tenant. Recurring-job registration is wired in Program.cs after app.Build() because
-        // RecurringJob.AddOrUpdate needs Hangfire to be initialised.
-        var runner = configuration.GetSection("ComplianceDetection:Runner").Get<DetectionRunner>();
-        services.AddDetectionRunnerHostedServices(runner);
-
-        return services;
-    }
-
-    /// <summary>
-    /// Extracted from <see cref="AddPersistenceServices"/> so the runner branch is testable
-    /// without spinning up the full ASP.NET Core host. Adds the three legacy hosted services
-    /// only when <paramref name="runner"/> is <see cref="DetectionRunner.HostedService"/>;
-    /// Hangfire mode skips them and expects the recurring scheduler to drive the cadence.
-    /// </summary>
-    public static IServiceCollection AddDetectionRunnerHostedServices(
-        this IServiceCollection services, DetectionRunner runner)
-    {
-        if (runner == DetectionRunner.HostedService)
-        {
-            services.AddHostedService<FastDetectionHostedService>();
-            services.AddHostedService<AnnualLoadHostedService>();
-            services.AddHostedService<CalibrationCheckHostedService>();
-        }
         return services;
     }
      private static void AddRepositories(this IServiceCollection services)

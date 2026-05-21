@@ -51,17 +51,14 @@ public static class HangfireServiceCollectionExtensions
     }
 
     /// <summary>
-    /// Registers the three master recurring jobs (fast / annual / calibration) when
-    /// <see cref="DetectionRunner.Hangfire"/> is the active runner. No-op for HostedService
-    /// — the legacy <c>FastDetectionHostedService</c> etc. still drive the cadence in that mode.
-    /// Cadences come from <see cref="ComplianceDetectionSettings"/>, so a config edit
-    /// re-tunes the schedule on the next deploy without any code change.
+    /// Registers the three master recurring jobs (fast / annual / calibration) for the
+    /// per-tenant detection fan-out. Cadences come from <see cref="ComplianceDetectionSettings"/>
+    /// so a config edit re-tunes the schedule on the next deploy with no code change.
     /// </summary>
     public static IApplicationBuilder ConfigureDetectionRecurringJobs(this IApplicationBuilder app)
     {
         var settings = app.ApplicationServices
             .GetRequiredService<IOptions<ComplianceDetectionSettings>>().Value;
-        if (settings.Runner != DetectionRunner.Hangfire) return app;
 
         RecurringJob.AddOrUpdate<DetectionScheduler>(
             recurringJobId: "detection-fast",

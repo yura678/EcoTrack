@@ -1,27 +1,9 @@
 namespace Application.Common.Settings;
 
-/// <summary>
-/// Which background runner schedules and executes the materializer + detectors. HostedService
-/// is the legacy single-pass-per-tick model; Hangfire fans out one per-tenant job per tick so
-/// a slow tenant only blocks its own worker. Defaults to HostedService until the Hangfire path
-/// has soaked.
-/// </summary>
-public enum DetectionRunner
-{
-    HostedService = 0,
-    Hangfire = 1
-}
-
 public class ComplianceDetectionSettings
 {
     public bool Enabled { get; set; } = true;
     public int ScanIntervalMinutes { get; set; } = 5;
-
-    /// <summary>
-    /// Which runner schedules the periodic compliance work. Hot-swap by editing config —
-    /// no code change required; service registration honours this at startup.
-    /// </summary>
-    public DetectionRunner Runner { get; set; } = DetectionRunner.HostedService;
     public int DeviceOfflineThresholdMinutes { get; set; } = 30;
     public decimal DataAvailabilityThreshold { get; set; } = 0.75m;
     public int MissingMeasurementWindowMinutes { get; set; } = 60;
