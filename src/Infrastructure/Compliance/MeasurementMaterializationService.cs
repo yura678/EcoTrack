@@ -30,13 +30,32 @@ public class MeasurementMaterializationService(
     private static readonly LimitType[] RateBasedLimits = [LimitType.Concentration, LimitType.MassFlow];
     private readonly ComplianceDetectionSettings _settings = options.Value;
 
-    public async Task RunAsync(CancellationToken cancellationToken)
+    /// <summary>
+    /// Legacy entry point — materialises every active tuple across all tenants in one pass.
+    /// Kept for the IHostedService runner during the Hangfire migration; once Phase F deletes
+    /// the hosted service, this overload becomes dead code.
+    /// </summary>
+    public Task RunAsync(CancellationToken cancellationToken) =>
+        RunInternalAsync(enterpriseId: null, cancellationToken);
+
+    /// <summary>
+    /// Per-tenant entry point — used by the Hangfire fan-out so a slow tenant only blocks its
+    /// own worker. Behaviour is identical to <see cref="RunAsync"/> except that every entry
+    /// query is scoped to the given enterprise.
+    /// </summary>
+    public Task RunForEnterpriseAsync(Guid enterpriseId, CancellationToken cancellationToken) =>
+        RunInternalAsync(enterpriseId, cancellationToken);
+
+    private async Task RunInternalAsync(Guid? enterpriseId, CancellationToken cancellationToken)
     {
         var start = DateTime.UtcNow;
-        var tuples = await queries.GetActiveMaterializationTuplesAsync(RateBasedLimits, cancellationToken);
+        var tuples = await queries.GetActiveMaterializationTuplesAsync(
+            RateBasedLimits, cancellationToken, enterpriseId);
         if (tuples.Count == 0)
         {
-            logger.LogDebug("Materialization skipped: no active limits.");
+            logger.LogDebug(
+                "Materialization skipped: no active limits (enterprise: {Enterprise}).",
+                enterpriseId?.ToString() ?? "all");
             return;
         }
 
@@ -253,8 +272,9 @@ public class MeasurementMaterializationService(
         }
 
         logger.LogInformation(
-            "Materialized {New} new, updated {Updated} Measurement records in {Ms}ms",
-            newMeasurements.Count, updatedCount, (DateTime.UtcNow - start).TotalMilliseconds);
+            "Materialized {New} new, updated {Updated} Measurement records in {Ms}ms (enterprise: {Enterprise})",
+            newMeasurements.Count, updatedCount, (DateTime.UtcNow - start).TotalMilliseconds,
+            enterpriseId?.ToString() ?? "all");
     }
 
     /// <summary>

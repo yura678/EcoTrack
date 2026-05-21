@@ -28,48 +28,69 @@ public class ComplianceDetectionService(
     private readonly ComplianceDetectionSettings _settings = options.Value;
     private static readonly LimitType[] RateBasedLimits = [LimitType.Concentration, LimitType.MassFlow];
 
-    /// <summary>Fast-cadence detectors. Run every tick (5 min by default).</summary>
-    public async Task RunAsync(CancellationToken cancellationToken)
+    /// <summary>Fast-cadence detectors across all tenants. Legacy IHostedService entry.</summary>
+    public Task RunAsync(CancellationToken cancellationToken) =>
+        RunFastInternalAsync(enterpriseId: null, cancellationToken);
+
+    /// <summary>Fast-cadence detectors scoped to a single tenant — Hangfire fan-out entry.</summary>
+    public Task RunForEnterpriseAsync(Guid enterpriseId, CancellationToken cancellationToken) =>
+        RunFastInternalAsync(enterpriseId, cancellationToken);
+
+    /// <summary>Slow-cadence AnnualLoad detector across all tenants. Legacy entry.</summary>
+    public Task RunAnnualLoadAsync(CancellationToken cancellationToken) =>
+        RunAnnualLoadInternalAsync(enterpriseId: null, cancellationToken);
+
+    /// <summary>AnnualLoad scoped to a single tenant — Hangfire fan-out entry.</summary>
+    public Task RunAnnualLoadForEnterpriseAsync(Guid enterpriseId, CancellationToken cancellationToken) =>
+        RunAnnualLoadInternalAsync(enterpriseId, cancellationToken);
+
+    /// <summary>Slow-cadence calibration check across all tenants. Legacy entry.</summary>
+    public Task RunCalibrationChecksAsync(CancellationToken cancellationToken) =>
+        RunCalibrationChecksInternalAsync(enterpriseId: null, cancellationToken);
+
+    /// <summary>Calibration check scoped to a single tenant — Hangfire fan-out entry.</summary>
+    public Task RunCalibrationChecksForEnterpriseAsync(Guid enterpriseId, CancellationToken cancellationToken) =>
+        RunCalibrationChecksInternalAsync(enterpriseId, cancellationToken);
+
+    private async Task RunFastInternalAsync(Guid? enterpriseId, CancellationToken cancellationToken)
     {
         var start = DateTime.UtcNow;
         var newEvents = new List<ComplianceEvent>();
 
-        newEvents.AddRange(await DetectLimitExceedancesAsync(cancellationToken));
-        newEvents.AddRange(await DetectDeviceOfflineAsync(cancellationToken));
-        newEvents.AddRange(await DetectDataAvailabilityLossAsync(cancellationToken));
-        newEvents.AddRange(await DetectMissingMeasurementAsync(cancellationToken));
-        newEvents.AddRange(await DetectOutOfRangeReadingsAsync(cancellationToken));
+        newEvents.AddRange(await DetectLimitExceedancesAsync(cancellationToken, enterpriseId));
+        newEvents.AddRange(await DetectDeviceOfflineAsync(cancellationToken, enterpriseId));
+        newEvents.AddRange(await DetectDataAvailabilityLossAsync(cancellationToken, enterpriseId));
+        newEvents.AddRange(await DetectMissingMeasurementAsync(cancellationToken, enterpriseId));
+        newEvents.AddRange(await DetectOutOfRangeReadingsAsync(cancellationToken, enterpriseId));
 
         await PersistAsync(newEvents, cancellationToken);
 
         logger.LogInformation(
-            "Compliance detection: {New} new events in {Ms}ms",
-            newEvents.Count, (DateTime.UtcNow - start).TotalMilliseconds);
+            "Compliance detection: {New} new events in {Ms}ms (enterprise: {Enterprise})",
+            newEvents.Count, (DateTime.UtcNow - start).TotalMilliseconds,
+            enterpriseId?.ToString() ?? "all");
     }
 
-    /// <summary>Slow-cadence AnnualLoad detector. Annual rolling averages move slowly.</summary>
-    public async Task RunAnnualLoadAsync(CancellationToken cancellationToken)
+    private async Task RunAnnualLoadInternalAsync(Guid? enterpriseId, CancellationToken cancellationToken)
     {
         var start = DateTime.UtcNow;
-        var newEvents = await DetectAnnualLoadExceedancesAsync(cancellationToken);
+        var newEvents = await DetectAnnualLoadExceedancesAsync(cancellationToken, enterpriseId);
         await PersistAsync(newEvents, cancellationToken);
         logger.LogInformation(
-            "AnnualLoad detection: {New} new events in {Ms}ms",
-            newEvents.Count, (DateTime.UtcNow - start).TotalMilliseconds);
+            "AnnualLoad detection: {New} new events in {Ms}ms (enterprise: {Enterprise})",
+            newEvents.Count, (DateTime.UtcNow - start).TotalMilliseconds,
+            enterpriseId?.ToString() ?? "all");
     }
 
-    /// <summary>
-    /// Slow-cadence calibration check. Calibration records change weekly/monthly and overdue
-    /// crossings occur once per day, so checking every fast tick is wasteful.
-    /// </summary>
-    public async Task RunCalibrationChecksAsync(CancellationToken cancellationToken)
+    private async Task RunCalibrationChecksInternalAsync(Guid? enterpriseId, CancellationToken cancellationToken)
     {
         var start = DateTime.UtcNow;
-        var newEvents = await DetectCalibrationFailuresAsync(cancellationToken);
+        var newEvents = await DetectCalibrationFailuresAsync(cancellationToken, enterpriseId);
         await PersistAsync(newEvents, cancellationToken);
         logger.LogInformation(
-            "Calibration check: {New} new events in {Ms}ms",
-            newEvents.Count, (DateTime.UtcNow - start).TotalMilliseconds);
+            "Calibration check: {New} new events in {Ms}ms (enterprise: {Enterprise})",
+            newEvents.Count, (DateTime.UtcNow - start).TotalMilliseconds,
+            enterpriseId?.ToString() ?? "all");
     }
 
     private async Task PersistAsync(List<ComplianceEvent> events, CancellationToken ct)
@@ -90,9 +111,10 @@ public class ComplianceDetectionService(
 
     // ─── LimitExceedance ─────────────────────────────────────────────────────────
 
-    private async Task<List<ComplianceEvent>> DetectLimitExceedancesAsync(CancellationToken ct)
+    private async Task<List<ComplianceEvent>> DetectLimitExceedancesAsync(
+        CancellationToken ct, Guid? enterpriseId = null)
     {
-        var targets = await queries.GetActiveLimitTargetsAsync(RateBasedLimits, ct);
+        var targets = await queries.GetActiveLimitTargetsAsync(RateBasedLimits, ct, enterpriseId);
         if (targets.Count == 0) return [];
 
         var existing = await complianceEventQueries.GetOpenByTypeAsync(
@@ -353,9 +375,10 @@ public class ComplianceDetectionService(
 
     // ─── AnnualLoad ──────────────────────────────────────────────────────────────
 
-    private async Task<List<ComplianceEvent>> DetectAnnualLoadExceedancesAsync(CancellationToken ct)
+    private async Task<List<ComplianceEvent>> DetectAnnualLoadExceedancesAsync(
+        CancellationToken ct, Guid? enterpriseId = null)
     {
-        var targets = await queries.GetActiveLimitTargetsAsync([LimitType.AnnualLoad], ct);
+        var targets = await queries.GetActiveLimitTargetsAsync([LimitType.AnnualLoad], ct, enterpriseId);
         if (targets.Count == 0) return [];
 
         var existing = await complianceEventQueries.GetOpenByTypeAsync(
@@ -606,14 +629,15 @@ public class ComplianceDetectionService(
 
     // ─── DeviceOffline ───────────────────────────────────────────────────────────
 
-    private async Task<List<ComplianceEvent>> DetectDeviceOfflineAsync(CancellationToken ct)
+    private async Task<List<ComplianceEvent>> DetectDeviceOfflineAsync(
+        CancellationToken ct, Guid? enterpriseId = null)
     {
         var now = DateTime.UtcNow;
         var threshold = TimeSpan.FromMinutes(_settings.DeviceOfflineThresholdMinutes);
         var cutoff = now - threshold;
         var graceLine = now - TimeSpan.FromDays(Math.Max(0, _settings.NewDeviceGraceDays));
 
-        var devices = await queries.GetOperationalDevicesAsync(ct);
+        var devices = await queries.GetOperationalDevicesAsync(ct, enterpriseId);
         if (devices.Count == 0) return [];
 
         var existing = await complianceEventQueries.GetOpenByTypeAsync(
@@ -647,12 +671,13 @@ public class ComplianceDetectionService(
 
     // ─── CalibrationFailure ──────────────────────────────────────────────────────
 
-    private async Task<List<ComplianceEvent>> DetectCalibrationFailuresAsync(CancellationToken ct)
+    private async Task<List<ComplianceEvent>> DetectCalibrationFailuresAsync(
+        CancellationToken ct, Guid? enterpriseId = null)
     {
         var now = DateTime.UtcNow;
         var graceLine = now - TimeSpan.FromDays(Math.Max(0, _settings.NewDeviceGraceDays));
 
-        var snapshots = await queries.GetDevicesWithLatestCalibrationAsync(ct);
+        var snapshots = await queries.GetDevicesWithLatestCalibrationAsync(ct, enterpriseId);
         var existing = await complianceEventQueries.GetOpenByTypeAsync(
             ComplianceEventType.CalibrationFailure, ct);
         var existingDeviceIds = existing
@@ -693,9 +718,10 @@ public class ComplianceDetectionService(
 
     // ─── DataAvailabilityLoss ────────────────────────────────────────────────────
 
-    private async Task<List<ComplianceEvent>> DetectDataAvailabilityLossAsync(CancellationToken ct)
+    private async Task<List<ComplianceEvent>> DetectDataAvailabilityLossAsync(
+        CancellationToken ct, Guid? enterpriseId = null)
     {
-        var targets = await queries.GetActiveLimitTargetsAsync(RateBasedLimits, ct);
+        var targets = await queries.GetActiveLimitTargetsAsync(RateBasedLimits, ct, enterpriseId);
         if (targets.Count == 0) return [];
 
         var existing = await complianceEventQueries.GetOpenByTypeAsync(
@@ -737,13 +763,14 @@ public class ComplianceDetectionService(
 
     // ─── MissingMeasurement ──────────────────────────────────────────────────────
 
-    private async Task<List<ComplianceEvent>> DetectMissingMeasurementAsync(CancellationToken ct)
+    private async Task<List<ComplianceEvent>> DetectMissingMeasurementAsync(
+        CancellationToken ct, Guid? enterpriseId = null)
     {
         var window = TimeSpan.FromMinutes(_settings.MissingMeasurementWindowMinutes);
         var to = DateTime.UtcNow;
         var from = to - window;
 
-        var targets = await queries.GetActiveLimitTargetsAsync(RateBasedLimits, ct);
+        var targets = await queries.GetActiveLimitTargetsAsync(RateBasedLimits, ct, enterpriseId);
         var distinctPairs = targets
             .Select(t => (t.EmissionSourceId, t.PollutantId))
             .Distinct()
@@ -775,14 +802,15 @@ public class ComplianceDetectionService(
 
     // ─── OutOfRangeReading ───────────────────────────────────────────────────────
 
-    private async Task<List<ComplianceEvent>> DetectOutOfRangeReadingsAsync(CancellationToken ct)
+    private async Task<List<ComplianceEvent>> DetectOutOfRangeReadingsAsync(
+        CancellationToken ct, Guid? enterpriseId = null)
     {
         var now = DateTime.UtcNow;
         var windowMinutes = Math.Max(1, _settings.OutOfRangeWindowMinutes);
         var from = now - TimeSpan.FromMinutes(windowMinutes);
 
         var windows = await queries.GetOutOfRangeWindowsAsync(
-            from, now, _settings.OutOfRangeThreshold, _settings.OutOfRangeMinSampleCount, ct);
+            from, now, _settings.OutOfRangeThreshold, _settings.OutOfRangeMinSampleCount, ct, enterpriseId);
         if (windows.Count == 0) return [];
 
         var existing = await complianceEventQueries.GetOpenByTypeAsync(
