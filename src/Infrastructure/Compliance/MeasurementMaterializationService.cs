@@ -3,6 +3,7 @@ using Application.Common.Interfaces.Queries.Monitoring;
 using Application.Common.Interfaces.Repositories.Monitoring;
 using Application.Common.Settings;
 using Domain.Entities.Monitoring;
+using Domain.Services;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
@@ -12,7 +13,12 @@ namespace Infrastructure.Compliance;
 /// Builds Measurement aggregate records from measurement_1m for each closed window of every
 /// (source, pollutant, period) tuple covered by an active limit. Applies IED Annex V Part 2 §7
 /// normalization (O₂ + T + P + H₂O) when matching process parameters are available.
-/// All DB reads go through IComplianceDetectionQueries; writes through IMeasurementRepository.
+///
+/// Phase 2 of the canonical-unit refactor: measurement_1m now keeps unit_id in GROUP BY, so a
+/// window can deliver multiple per-unit AggregateBucket rows. The materializer converts each row
+/// into the pollutant's CanonicalUnit via <see cref="UnitConverter"/> and weighted-averages them
+/// (weight = sample_count) before persisting one Measurement per (source, pollutant, window) with
+/// Measurement.UnitId = pollutant.CanonicalUnitId.
 /// </summary>
 public class MeasurementMaterializationService(
     IComplianceDetectionQueries queries,
@@ -34,9 +40,9 @@ public class MeasurementMaterializationService(
             return;
         }
 
-        var sourceIds = tuples.Select(t => t.SourceId).Distinct().ToArray();
-        var o2RefByPollutant = await queries.GetPollutantO2ReferencesAsync(
-            tuples.Select(t => t.PollutantId).Distinct().ToArray(), cancellationToken);
+        var pollutantIds = tuples.Select(t => t.PollutantId).Distinct().ToArray();
+        var pollutantCanonicals = await queries.GetPollutantCanonicalsAsync(pollutantIds, cancellationToken);
+        var o2RefByPollutant = await queries.GetPollutantO2ReferencesAsync(pollutantIds, cancellationToken);
 
         var newMeasurements = new List<Measurement>();
         var updatedCount = 0;
@@ -89,6 +95,20 @@ public class MeasurementMaterializationService(
                 groupSources, groupPollutants, period, earliest, lastClosedEnd, cancellationToken);
             if (buckets.Count == 0) continue;
 
+            // Load every unit involved in this period's buckets plus each pollutant's canonical
+            // unit. Pulled together so UnitConverter has everything it needs in-memory.
+            var unitIds = buckets.Values
+                .SelectMany(rows => rows.Select(r => r.UnitId))
+                .Concat(pollutantCanonicals.Values.Select(c => c.CanonicalUnitId))
+                .Distinct()
+                .ToArray();
+            var unitInfos = await queries.GetUnitsAsync(unitIds, cancellationToken);
+            // Shadow MeasureUnit entities preserve Id so UnitConverter's identity short-circuit
+            // works; the conversion is pure on (Id, Dimension, ToBaseFactor, Symbol).
+            var unitEntities = unitInfos.ToDictionary(
+                kvp => kvp.Key,
+                kvp => MeasureUnit.New(kvp.Key, kvp.Value.Symbol, kvp.Value.Dimension, kvp.Value.ToBaseFactor));
+
             // Preload existing Measurement entities in the rescan span (tracked) so late-data
             // updates mutate in place rather than violating the unique (source,pollutant,end)
             // index. Pre-existing records outside rescanSpan are not touched.
@@ -108,39 +128,89 @@ public class MeasurementMaterializationService(
             foreach (var tuple in groupTuples)
             {
                 if (!buckets.TryGetValue((tuple.SourceId, tuple.PollutantId), out var tupleBuckets)) continue;
+                if (!pollutantCanonicals.TryGetValue(tuple.PollutantId, out var canonical))
+                {
+                    logger.LogWarning(
+                        "Pollutant {PollutantId} has no canonical-unit info; skipping materialization for this tick.",
+                        tuple.PollutantId);
+                    continue;
+                }
+                if (!unitEntities.TryGetValue(canonical.CanonicalUnitId, out var canonicalUnit))
+                {
+                    logger.LogWarning(
+                        "Canonical unit {UnitId} for pollutant {PollutantId} could not be loaded; skipping.",
+                        canonical.CanonicalUnitId, tuple.PollutantId);
+                    continue;
+                }
 
                 var tupleStart = perTupleStart[(tuple.SourceId, tuple.PollutantId)];
                 var o2Ref = o2RefByPollutant.GetValueOrDefault(tuple.PollutantId);
                 var insertedThisTick = 0;
 
-                foreach (var entry in tupleBuckets.OrderBy(b => b.WindowStart))
+                // Fan rows back together per WindowStart — each window may contain multiple
+                // per-unit slices that need converting to canonical before averaging.
+                var byWindow = tupleBuckets
+                    .GroupBy(b => b.WindowStart)
+                    .OrderBy(g => g.Key);
+
+                foreach (var windowGroup in byWindow)
                 {
-                    var windowStart = entry.WindowStart;
+                    var windowStart = windowGroup.Key;
                     var windowEnd = windowStart + period;
                     if (windowEnd > lastClosedEnd) break;
                     if (windowEnd <= tupleStart) continue;
 
-                    if (entry.SampleCount == 0 || entry.Avg is null) continue;
+                    decimal weightedSum = 0m;
+                    long totalSampleCount = 0;
+                    long validMinutes = 0;
+                    foreach (var entry in windowGroup)
+                    {
+                        validMinutes = Math.Max(validMinutes, entry.ValidMinutesInWindow);
+                        if (entry.SampleCount == 0 || entry.Avg is null) continue;
+                        if (!unitEntities.TryGetValue(entry.UnitId, out var fromUnit))
+                        {
+                            logger.LogWarning(
+                                "Raw unit {UnitId} missing from lookup for {Source}/{Pollutant}/{Window}; dropping slice.",
+                                entry.UnitId, tuple.SourceId, tuple.PollutantId, windowStart);
+                            continue;
+                        }
+                        try
+                        {
+                            var canonicalSliceAvg = UnitConverter.ToCanonical(
+                                entry.Avg.Value, fromUnit, canonicalUnit, canonical.MolarMass);
+                            weightedSum += canonicalSliceAvg * entry.SampleCount;
+                            totalSampleCount += entry.SampleCount;
+                        }
+                        catch (UnitConversionException ex)
+                        {
+                            logger.LogWarning(ex,
+                                "Cannot convert {Symbol} to canonical {CanonicalSymbol} for pollutant {Pollutant}; slice dropped.",
+                                fromUnit.Symbol, canonicalUnit.Symbol, tuple.PollutantId);
+                        }
+                    }
+
+                    if (totalSampleCount == 0) continue;
+                    var canonicalAvg = Math.Round(weightedSum / totalSampleCount, 6);
 
                     var expected = (int)period.TotalMinutes;
-                    var validCount = (int)Math.Min(int.MaxValue, entry.ValidCount);
+                    var validCount = (int)Math.Min(int.MaxValue, validMinutes);
                     var normalizedValue = TryComputeNormalized(
-                        entry.Avg.Value, o2Ref, tuple.SourceId, windowStart, paramReadings);
+                        canonicalAvg, o2Ref, tuple.SourceId, windowStart, paramReadings);
                     var existingKey = (tuple.SourceId, tuple.PollutantId, windowStart);
 
                     if (existingByKey.TryGetValue(existingKey, out var existingMeasurement))
                     {
-                        if (existingMeasurement.Value == entry.Avg.Value
+                        if (existingMeasurement.Value == canonicalAvg
                             && existingMeasurement.NormalizedValue == normalizedValue
                             && existingMeasurement.ValidPointsCount == validCount
                             && existingMeasurement.ExpectedPointsCount == expected
-                            && existingMeasurement.UnitId == entry.UnitId)
+                            && existingMeasurement.UnitId == canonical.CanonicalUnitId)
                         {
                             continue;
                         }
 
                         existingMeasurement.RecomputeAggregate(
-                            entry.Avg.Value, normalizedValue, validCount, expected, entry.UnitId);
+                            canonicalAvg, normalizedValue, validCount, expected, canonical.CanonicalUnitId);
                         await ApplyIedSubstitutionIfNeededAsync(
                             existingMeasurement, tuple, validCount, expected, windowStart, cancellationToken);
                         updatedCount++;
@@ -155,8 +225,10 @@ public class MeasurementMaterializationService(
                             Guid.NewGuid(),
                             windowStart, windowEnd,
                             tuple.Period, Aggregation.Average,
-                            tuple.SourceId, tuple.PollutantId, deviceId: null, entry.UnitId,
-                            value: entry.Avg.Value,
+                            tuple.SourceId, tuple.PollutantId,
+                            deviceId: null,
+                            unitId: canonical.CanonicalUnitId,
+                            value: canonicalAvg,
                             validPointsCount: validCount,
                             expectedPointsCount: expected,
                             normalizedValue: normalizedValue);

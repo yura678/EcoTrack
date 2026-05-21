@@ -417,6 +417,105 @@ public class MeasurementMaterializationServiceTests : BaseIntegrationTest, IAsyn
             "33% coverage is below the 75% IED threshold — substitution must fire");
     }
 
+    [Fact]
+    public async Task ShouldMergeMixedUnitsIntoCanonicalAverage()
+    {
+        // Same source+pollutant in one hour, half the minutes in mg/m³ at 100 and half in µg/m³
+        // at 200000. After Phase 2 conversion, both slices land at 100 mg/m³ and 200 mg/m³
+        // respectively, weighted average 150 mg/m³. Persisted Measurement carries UnitId = mg/m³
+        // (pollutant.CanonicalUnitId), proving cross-device temporal queries stay honest.
+        var ug = MeasureUnitsData.UgPerM3();
+        await Context.Set<MeasureUnit>().AddAsync(ug);
+        var pollutant = PollutantsData.FirstTestPollutant(_mg.Id);
+        await Context.Set<Pollutant>().AddAsync(pollutant);
+        var (permit, limit) = ActivePermitWithLimit(pollutant.Id, 1000m);
+        await Context.Set<Permit>().AddAsync(permit);
+        await Context.Set<EmissionLimit>().AddAsync(limit);
+
+        var firstHalf = Enumerable.Range(0, 30).Select(minute =>
+            RawMeasurement.New(
+                _windowStart.AddMinutes(minute).AddSeconds(30),
+                _source.Id, pollutant.Id, _device.Id, _mg.Id, 100m));
+        var secondHalf = Enumerable.Range(30, 30).Select(minute =>
+            RawMeasurement.New(
+                _windowStart.AddMinutes(minute).AddSeconds(30),
+                _source.Id, pollutant.Id, _device.Id, ug.Id, 200000m));
+        await Context.Set<RawMeasurement>().AddRangeAsync(firstHalf.Concat(secondHalf));
+        await SaveChangesAsync();
+        await RefreshCasAsync();
+        await RunMaterializationAsync();
+
+        var m = await Context.Set<Measurement>().AsNoTracking()
+            .FirstAsync(x => x.WindowEnd == _windowEnd && x.PollutantId == pollutant.Id);
+        m.UnitId.Should().Be(_mg.Id, "Measurement is persisted in the pollutant's canonical unit");
+        m.Value.Should().Be(150m, "30×100 mg/m³ + 30×200000 µg/m³ (=200 mg/m³) → weighted avg 150 mg/m³");
+        m.ValidPointsCount.Should().Be(60);
+        m.ExpectedPointsCount.Should().Be(60);
+    }
+
+    [Fact]
+    public async Task ShouldDropUnconvertiblePpmSliceAndKeepRemainingUnits()
+    {
+        // Pollutant has no MolarMass — ppm rows cannot be converted to mg/m³ and must be silently
+        // dropped, leaving the materialized value computed from the convertible mg/m³ slice only.
+        // Without this safeguard a misconfigured device shipping ppm to a non-gas pollutant would
+        // poison the aggregate.
+        var ppmUnit = MeasureUnit.New(Guid.NewGuid(), "ppm", MeasureUnitDimension.Dimensionless, 1m);
+        await Context.Set<MeasureUnit>().AddAsync(ppmUnit);
+        var pollutant = PollutantsData.FirstTestPollutant(_mg.Id); // MolarMass null by default
+        await Context.Set<Pollutant>().AddAsync(pollutant);
+        var (permit, limit) = ActivePermitWithLimit(pollutant.Id, 1000m);
+        await Context.Set<Permit>().AddAsync(permit);
+        await Context.Set<EmissionLimit>().AddAsync(limit);
+
+        var mgRaws = Enumerable.Range(0, 45).Select(minute =>
+            RawMeasurement.New(
+                _windowStart.AddMinutes(minute).AddSeconds(15),
+                _source.Id, pollutant.Id, _device.Id, _mg.Id, 80m));
+        var ppmRaws = Enumerable.Range(45, 15).Select(minute =>
+            RawMeasurement.New(
+                _windowStart.AddMinutes(minute).AddSeconds(15),
+                _source.Id, pollutant.Id, _device.Id, ppmUnit.Id, 999m));
+        await Context.Set<RawMeasurement>().AddRangeAsync(mgRaws.Concat(ppmRaws));
+        await SaveChangesAsync();
+        await RefreshCasAsync();
+        await RunMaterializationAsync();
+
+        var m = await Context.Set<Measurement>().AsNoTracking()
+            .FirstAsync(x => x.WindowEnd == _windowEnd && x.PollutantId == pollutant.Id);
+        m.UnitId.Should().Be(_mg.Id);
+        m.Value.Should().Be(80m, "ppm slice was dropped; the surviving mg/m³ readings averaged 80");
+    }
+
+    [Fact]
+    public async Task ShouldConvertPpmToCanonicalMassWhenPollutantHasMolarMass()
+    {
+        // NO₂-shaped pollutant (M = 46 g/mol). A device shipping 100 ppm corresponds to
+        // 100 × 46 / 22.414 ≈ 205.229 mg/m³ at EU STP. Materializer must convert and persist this.
+        var ppmUnit = MeasureUnit.New(Guid.NewGuid(), "ppm", MeasureUnitDimension.Dimensionless, 1m);
+        await Context.Set<MeasureUnit>().AddAsync(ppmUnit);
+        var pollutant = PollutantsData.FirstTestPollutant(_mg.Id, molarMass: 46m);
+        await Context.Set<Pollutant>().AddAsync(pollutant);
+        var (permit, limit) = ActivePermitWithLimit(pollutant.Id, 1000m);
+        await Context.Set<Permit>().AddAsync(permit);
+        await Context.Set<EmissionLimit>().AddAsync(limit);
+
+        var raws = Enumerable.Range(0, 60).Select(minute =>
+            RawMeasurement.New(
+                _windowStart.AddMinutes(minute).AddSeconds(20),
+                _source.Id, pollutant.Id, _device.Id, ppmUnit.Id, 100m));
+        await Context.Set<RawMeasurement>().AddRangeAsync(raws);
+        await SaveChangesAsync();
+        await RefreshCasAsync();
+        await RunMaterializationAsync();
+
+        var m = await Context.Set<Measurement>().AsNoTracking()
+            .FirstAsync(x => x.WindowEnd == _windowEnd && x.PollutantId == pollutant.Id);
+        m.UnitId.Should().Be(_mg.Id);
+        m.Value.Should().BeApproximately(205.229m, 0.001m,
+            "100 ppm × 46 / 22.414 ≈ 205.229 mg/m³ at EU STP");
+    }
+
     // ─── helpers ─────────────────────────────────────────────────────────────────
 
     private (Permit Permit, EmissionLimit Limit) ActivePermitWithLimit(Guid pollutantId, decimal value)

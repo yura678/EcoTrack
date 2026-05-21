@@ -354,29 +354,57 @@ internal class ComplianceDetectionQueries(ApplicationDbContext context) : ICompl
         CancellationToken ct)
     {
         var periodLiteral = PeriodToPgInterval(period);
-        // valid_count returned here is the number of 1-minute buckets that contained at least
-        // one Quality=Valid reading — i.e. "minutes of usable data in this window". The
-        // materializer compares this against expected = period.TotalMinutes to compute
-        // DataAvailability (IED Annex V Part 4). Using SUM(valid_count) — the raw-row count —
-        // produced ratios > 1 once devices sampled faster than 1/min and silently disabled IED
-        // substitution. Switching to "buckets with valid data" matches the per-minute semantic
-        // that expected uses.
+
+        // CTE computes "distinct minutes with any valid data in the window" once per
+        // (source, pollutant, window). The main SELECT preserves the per-unit split so the
+        // materializer can convert each unit's slice into the pollutant's canonical unit before
+        // weighted-averaging. Summing valid_count across per-unit rows would double-count any
+        // minute that received data in more than one unit; the CTE avoids that by counting
+        // distinct 1-minute buckets.
         var sql = $@"
+            WITH valid_minutes AS (
+                SELECT
+                    emission_source_id,
+                    pollutant_id,
+                    time_bucket(INTERVAL '{periodLiteral}', bucket) AS window_start,
+                    COUNT(DISTINCT bucket) AS minutes_with_valid
+                FROM measurement_1m
+                WHERE emission_source_id = ANY(@source_ids)
+                  AND pollutant_id = ANY(@pollutant_ids)
+                  AND bucket >= @from
+                  AND bucket < @to
+                  AND valid_count > 0
+                GROUP BY emission_source_id, pollutant_id, window_start
+            ),
+            bucketed AS (
+                SELECT
+                    emission_source_id,
+                    pollutant_id,
+                    unit_id,
+                    time_bucket(INTERVAL '{periodLiteral}', bucket) AS window_start,
+                    SUM(sum_value) AS sum_value,
+                    SUM(sample_count) AS sample_count
+                FROM measurement_1m
+                WHERE emission_source_id = ANY(@source_ids)
+                  AND pollutant_id = ANY(@pollutant_ids)
+                  AND bucket >= @from
+                  AND bucket < @to
+                GROUP BY emission_source_id, pollutant_id, unit_id, window_start
+            )
             SELECT
-                emission_source_id,
-                pollutant_id,
-                time_bucket(INTERVAL '{periodLiteral}', bucket) AS window_start,
-                (SUM(sum_value) / NULLIF(SUM(sample_count), 0))::numeric(18,6) AS avg,
-                COUNT(*) FILTER (WHERE valid_count > 0)::bigint AS valid_count,
-                COALESCE(SUM(sample_count), 0)::bigint AS sample_count,
-                (array_agg(unit_id))[1] AS unit_id
-            FROM measurement_1m
-            WHERE emission_source_id = ANY(@source_ids)
-              AND pollutant_id = ANY(@pollutant_ids)
-              AND bucket >= @from
-              AND bucket < @to
-            GROUP BY emission_source_id, pollutant_id, window_start
-            ORDER BY emission_source_id, pollutant_id, window_start";
+                b.emission_source_id,
+                b.pollutant_id,
+                b.window_start,
+                b.unit_id,
+                (b.sum_value / NULLIF(b.sample_count, 0))::numeric(18,6) AS avg,
+                COALESCE(b.sample_count, 0)::bigint AS sample_count,
+                COALESCE(v.minutes_with_valid, 0)::bigint AS valid_minutes_in_window
+            FROM bucketed b
+            LEFT JOIN valid_minutes v ON
+                v.emission_source_id = b.emission_source_id
+                AND v.pollutant_id = b.pollutant_id
+                AND v.window_start = b.window_start
+            ORDER BY b.emission_source_id, b.pollutant_id, b.window_start, b.unit_id";
 
         await using var command = await CreateCommandAsync(sql, ct);
         AddParam(command, "source_ids", NpgsqlDbType.Array | NpgsqlDbType.Uuid, sourceIds.ToArray());
@@ -391,10 +419,10 @@ internal class ComplianceDetectionQueries(ApplicationDbContext context) : ICompl
             var sourceId = reader.GetGuid(0);
             var pollutantId = reader.GetGuid(1);
             var windowStart = DateTime.SpecifyKind(reader.GetDateTime(2), DateTimeKind.Utc);
-            var avg = reader.IsDBNull(3) ? (decimal?)null : reader.GetDecimal(3);
-            var validCount = reader.GetInt64(4);
+            var unitId = reader.GetGuid(3);
+            var avg = reader.IsDBNull(4) ? (decimal?)null : reader.GetDecimal(4);
             var sampleCount = reader.GetInt64(5);
-            var unitId = reader.GetGuid(6);
+            var validMinutes = reader.GetInt64(6);
 
             var key = (sourceId, pollutantId);
             if (!dict.TryGetValue(key, out var list))
@@ -402,9 +430,22 @@ internal class ComplianceDetectionQueries(ApplicationDbContext context) : ICompl
                 list = new List<AggregateBucket>();
                 dict[key] = list;
             }
-            list.Add(new AggregateBucket(windowStart, avg, validCount, sampleCount, unitId));
+            list.Add(new AggregateBucket(windowStart, unitId, avg, sampleCount, validMinutes));
         }
         return dict;
+    }
+
+    public async Task<Dictionary<Guid, PollutantCanonical>> GetPollutantCanonicalsAsync(
+        IReadOnlyCollection<Guid> pollutantIds, CancellationToken ct)
+    {
+        if (pollutantIds.Count == 0) return [];
+        var rows = await context.Set<Pollutant>()
+            .Where(p => pollutantIds.Contains(p.Id))
+            .Select(p => new { p.Id, p.CanonicalUnitId, p.MolarMass })
+            .ToListAsync(ct);
+        return rows.ToDictionary(
+            r => r.Id,
+            r => new PollutantCanonical(r.CanonicalUnitId, r.MolarMass));
     }
 
     // ─── Devices & calibration ──────────────────────────────────────────────────

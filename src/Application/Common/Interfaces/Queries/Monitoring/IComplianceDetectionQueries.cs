@@ -55,10 +55,17 @@ public record DeviceCalibrationSnapshot(
 
 public record AggregateBucket(
     DateTime WindowStart,
+    Guid UnitId,
     decimal? Avg,
-    long ValidCount,
     long SampleCount,
-    Guid UnitId);
+    long ValidMinutesInWindow);
+
+/// <summary>
+/// Per-pollutant canonical-unit lookup. The materializer joins this against AggregateBucket rows
+/// (which can arrive in any device-side unit) to convert every value into a single unit per
+/// pollutant before persisting a Measurement.
+/// </summary>
+public record PollutantCanonical(Guid CanonicalUnitId, decimal? MolarMass);
 
 public record RollingAverage(
     decimal AvgRate,
@@ -142,6 +149,15 @@ public interface IComplianceDetectionQueries
         AveragingWindow period,
         CancellationToken ct);
 
+    /// <summary>
+    /// Re-buckets measurement_1m rows from the 1-minute CA up to the given <paramref name="period"/>.
+    /// Returns one row per (source, pollutant, window_start, unit_id) — the same window can yield
+    /// multiple rows if raw data arrived in more than one unit (device swap, mid-bucket calibration
+    /// change). The materializer fans these back together after converting each to the pollutant's
+    /// canonical unit. <c>ValidMinutesInWindow</c> is the distinct count of 1-minute buckets within
+    /// the window that contained any valid data — the same number is replicated across every
+    /// per-unit row of the same window so the caller can pick MAX/MIN without arithmetic.
+    /// </summary>
     Task<Dictionary<(Guid SourceId, Guid PollutantId), List<AggregateBucket>>> GetReBucketedBulkAsync(
         IReadOnlyCollection<Guid> sourceIds,
         IReadOnlyCollection<Guid> pollutantIds,
@@ -149,6 +165,13 @@ public interface IComplianceDetectionQueries
         DateTime from,
         DateTime to,
         CancellationToken ct);
+
+    /// <summary>
+    /// Loads CanonicalUnitId + MolarMass for each pollutant — used by the materializer to convert
+    /// per-unit AggregateBucket rows into the pollutant's canonical unit before persisting.
+    /// </summary>
+    Task<Dictionary<Guid, PollutantCanonical>> GetPollutantCanonicalsAsync(
+        IReadOnlyCollection<Guid> pollutantIds, CancellationToken ct);
 
     /// <summary>
     /// IED substitution lookup: max value among the last N valid Measurement records for
