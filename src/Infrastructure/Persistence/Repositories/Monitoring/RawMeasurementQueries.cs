@@ -1,5 +1,7 @@
 using Application.Common.Interfaces.Queries.Monitoring;
+using Domain.Entities.EmissionSources;
 using Domain.Entities.Monitoring;
+using Domain.Services;
 using Microsoft.EntityFrameworkCore;
 using Npgsql;
 using NpgsqlTypes;
@@ -35,68 +37,103 @@ internal class RawMeasurementQueries(ApplicationDbContext context) : IRawMeasure
     public async Task<ComplianceAuditResult?> GetComplianceAuditAsync(
         ComplianceAuditQueryParams query, CancellationToken cancellationToken)
     {
-        var limitUnit = await context.Set<MeasureUnit>()
-            .Where(u => u.Id == query.LimitUnitId)
-            .Select(u => new { u.Symbol, u.Dimension, u.ToBaseFactor })
-            .FirstOrDefaultAsync(cancellationToken);
-        if (limitUnit is null) return null;
-
         var period = PeriodToTimeSpan(query.Period);
         if (period == TimeSpan.Zero) return null;
 
         var periodLiteral = PeriodToPgInterval(period);
-        var limitInBase = query.LimitValue * limitUnit.ToBaseFactor;
 
+        // Pull per-(window, unit_id) slices: leaves canonical conversion + limit comparison to
+        // C# so a device-swap that changed units mid-period folds into a single honest value
+        // per bucket. Same approach the materializer uses (Phase 2).
         var sql = $@"
-            WITH bucketed AS (
-                SELECT
-                    time_bucket(INTERVAL '{periodLiteral}', m.bucket) AS window_start,
-                    (SUM(m.sum_value) / NULLIF(SUM(m.sample_count), 0)) AS avg_raw,
-                    (array_agg(m.unit_id))[1] AS unit_id
-                FROM measurement_1m m
-                WHERE m.emission_source_id = @source_id
-                  AND m.pollutant_id = @pollutant_id
-                  AND m.bucket >= @from
-                  AND m.bucket < @to
-                GROUP BY window_start
-            ),
-            converted AS (
-                SELECT b.avg_raw * u.to_base_factor AS value_base
-                FROM bucketed b
-                JOIN measure_unit u ON u.id = b.unit_id
-                WHERE u.dimension = @limit_dimension
-                  AND u.deleted_at IS NULL
-                  AND b.avg_raw IS NOT NULL
-            )
             SELECT
-                COUNT(*)::bigint AS buckets_with_data,
-                COUNT(*) FILTER (WHERE value_base > @limit_base)::bigint AS exceedance_buckets,
-                MAX(value_base)::numeric(18,6) AS max_value,
-                AVG(value_base)::numeric(18,6) AS avg_value,
-                MAX(value_base / NULLIF(@limit_base, 0))::numeric(18,6) AS max_ratio
-            FROM converted";
+                time_bucket(INTERVAL '{periodLiteral}', m.bucket) AS window_start,
+                m.unit_id,
+                SUM(m.sum_value)::numeric(18,6) AS sum_value,
+                SUM(m.sample_count)::int AS sample_count
+            FROM measurement_1m m
+            WHERE m.emission_source_id = @source_id
+              AND m.pollutant_id = @pollutant_id
+              AND m.bucket >= @from
+              AND m.bucket < @to
+            GROUP BY window_start, m.unit_id
+            ORDER BY window_start, m.unit_id";
 
         await using var command = await CreateCommandAsync(sql, cancellationToken);
         AddParam(command, "source_id", NpgsqlDbType.Uuid, query.EmissionSourceId);
         AddParam(command, "pollutant_id", NpgsqlDbType.Uuid, query.PollutantId);
         AddParam(command, "from", NpgsqlDbType.TimestampTz, EnsureUtc(query.From));
         AddParam(command, "to", NpgsqlDbType.TimestampTz, EnsureUtc(query.To));
-        AddParam(command, "limit_dimension", NpgsqlDbType.Integer, (int)limitUnit.Dimension);
-        AddParam(command, "limit_base", NpgsqlDbType.Numeric, limitInBase);
+
+        var slices = new List<AuditSlice>();
+        await using (var reader = await command.ExecuteReaderAsync(cancellationToken))
+        {
+            while (await reader.ReadAsync(cancellationToken))
+            {
+                slices.Add(new AuditSlice(
+                    WindowStart: DateTime.SpecifyKind(reader.GetDateTime(0), DateTimeKind.Utc),
+                    UnitId: reader.GetGuid(1),
+                    SumValue: reader.IsDBNull(2) ? 0m : reader.GetDecimal(2),
+                    SampleCount: reader.GetInt32(3)));
+            }
+        }
+
+        var ctx = await LoadCanonicalConversionContextAsync(
+            query.PollutantId,
+            slices.Select(s => s.UnitId).Append(query.LimitUnitId),
+            cancellationToken);
+        if (ctx is null) return null;
+        if (!ctx.Units.TryGetValue(query.LimitUnitId, out var limitUnit)) return null;
+
+        // Limit → canonical. Failure (e.g. limit is MassFlow but pollutant canonical is
+        // MassConcentration) means we can't compare apples to apples; surface null to the
+        // caller rather than fabricating a misleading result.
+        if (!UnitConverter.TryToCanonical(
+                query.LimitValue, limitUnit, ctx.CanonicalUnit, ctx.MolarMass,
+                out var limitCanonical, out _))
+        {
+            return null;
+        }
 
         long bucketsWithData = 0;
         long exceedanceBuckets = 0;
-        decimal? maxValue = null, avgValue = null, maxRatio = null;
+        decimal? maxValue = null;
+        decimal sumOfBucketAvgs = 0m;
+        long bucketCountForAvg = 0;
+        decimal? maxRatio = null;
 
-        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-        if (await reader.ReadAsync(cancellationToken))
+        foreach (var bucket in slices.GroupBy(s => s.WindowStart))
         {
-            bucketsWithData = reader.IsDBNull(0) ? 0 : reader.GetInt64(0);
-            exceedanceBuckets = reader.IsDBNull(1) ? 0 : reader.GetInt64(1);
-            maxValue = reader.IsDBNull(2) ? (decimal?)null : reader.GetDecimal(2);
-            avgValue = reader.IsDBNull(3) ? (decimal?)null : reader.GetDecimal(3);
-            maxRatio = reader.IsDBNull(4) ? (decimal?)null : reader.GetDecimal(4);
+            decimal canonicalSumOfSums = 0m;
+            var canonicalSampleCount = 0;
+            foreach (var s in bucket)
+            {
+                if (!ctx.Units.TryGetValue(s.UnitId, out var fromUnit)) continue;
+                if (!UnitConverter.TryToCanonical(
+                        s.SumValue, fromUnit, ctx.CanonicalUnit, ctx.MolarMass,
+                        out var canonicalSum, out _)) continue;
+                canonicalSumOfSums += canonicalSum;
+                canonicalSampleCount += s.SampleCount;
+            }
+            if (canonicalSampleCount == 0) continue;
+
+            var canonicalBucketAvg = canonicalSumOfSums / canonicalSampleCount;
+            bucketsWithData++;
+            sumOfBucketAvgs += canonicalBucketAvg;
+            bucketCountForAvg++;
+
+            if (canonicalBucketAvg > limitCanonical) exceedanceBuckets++;
+            if (maxValue is null || canonicalBucketAvg > maxValue) maxValue = canonicalBucketAvg;
+            if (limitCanonical > 0m)
+            {
+                var ratio = canonicalBucketAvg / limitCanonical;
+                if (maxRatio is null || ratio > maxRatio) maxRatio = ratio;
+            }
         }
+
+        var avgValue = bucketCountForAvg == 0
+            ? (decimal?)null
+            : Math.Round(sumOfBucketAvgs / bucketCountForAvg, 6);
 
         var totalBuckets = (int)Math.Max(0, (query.To - query.From).Ticks / period.Ticks);
         var dataAvailability = totalBuckets == 0
@@ -110,17 +147,23 @@ internal class RawMeasurementQueries(ApplicationDbContext context) : IRawMeasure
             From: EnsureUtc(query.From),
             To: EnsureUtc(query.To),
             Period: query.Period,
-            LimitValueInBase: limitInBase,
-            LimitUnitSymbol: limitUnit.Symbol,
+            // "InBase" historically meant "in the dimension base unit of the limit"; after Phase
+            // 5b the comparison happens in the pollutant's canonical unit instead. For built-in
+            // MassConcentration pollutants the canonical IS the dimension base, so consumer-facing
+            // numbers are unchanged for the common case.
+            LimitValueInBase: limitCanonical,
+            LimitUnitSymbol: ctx.CanonicalUnit.Symbol,
             TotalBuckets: totalBuckets,
             BucketsWithData: bucketsWithData,
             ExceedanceBuckets: exceedanceBuckets,
-            MaxValueInBase: maxValue,
+            MaxValueInBase: maxValue is null ? null : Math.Round(maxValue.Value, 6),
             AvgValueInBase: avgValue,
-            MaxRatio: maxRatio,
+            MaxRatio: maxRatio is null ? null : Math.Round(maxRatio.Value, 6),
             ExceedanceRate: exceedanceRate,
             DataAvailability: dataAvailability);
     }
+
+    private record AuditSlice(DateTime WindowStart, Guid UnitId, decimal SumValue, int SampleCount);
 
     private static TimeSpan PeriodToTimeSpan(AveragingWindow period) => period switch
     {
@@ -149,14 +192,19 @@ internal class RawMeasurementQueries(ApplicationDbContext context) : IRawMeasure
         BucketWindow window, AggregationFunc aggregation, CancellationToken cancellationToken)
     {
         var bucketLiteral = BucketLiteral(window);
-        var aggExpr = CaAggregationExpression(aggregation);
         var tenantClause = BuildTenantClause();
 
+        // Per-(bucket, unit_id) row. C# converts each slice into the pollutant's canonical unit
+        // via UnitConverter then folds slices per bucket — same approach the materializer uses
+        // so the displayed value stays consistent across device-swaps that change units.
         var sql = $@"
             SELECT
                 time_bucket(INTERVAL '{bucketLiteral}', m.bucket) AS bucket_start,
-                ({aggExpr})::numeric(18,6) AS value,
-                SUM(m.sample_count)::int AS total_count,
+                m.unit_id,
+                SUM(m.sum_value)::numeric(18,6) AS sum_value,
+                MIN(m.min_value)::numeric(18,6) AS min_value,
+                MAX(m.max_value)::numeric(18,6) AS max_value,
+                SUM(m.sample_count)::int AS sample_count,
                 SUM(m.valid_count)::int AS valid_count
             FROM measurement_1m m
             JOIN emission_source es ON es.id = m.emission_source_id
@@ -166,8 +214,8 @@ internal class RawMeasurementQueries(ApplicationDbContext context) : IRawMeasure
               AND m.bucket < @to
               AND es.deleted_at IS NULL
               {tenantClause}
-            GROUP BY bucket_start
-            ORDER BY bucket_start";
+            GROUP BY bucket_start, m.unit_id
+            ORDER BY bucket_start, m.unit_id";
 
         await using var command = await CreateCommandAsync(sql, cancellationToken);
         AddParam(command, "pollutant_id", NpgsqlDbType.Uuid, pollutantId);
@@ -176,14 +224,40 @@ internal class RawMeasurementQueries(ApplicationDbContext context) : IRawMeasure
         AddParam(command, "to", NpgsqlDbType.TimestampTz, EnsureUtc(to));
         AddTenantParam(command);
 
-        return await ReadTimeSeriesAsync(command, cancellationToken);
+        var slices = new List<TimeSeriesSlice>();
+        await using (var reader = await command.ExecuteReaderAsync(cancellationToken))
+        {
+            while (await reader.ReadAsync(cancellationToken))
+            {
+                slices.Add(new TimeSeriesSlice(
+                    BucketStart: DateTime.SpecifyKind(reader.GetDateTime(0), DateTimeKind.Utc),
+                    UnitId: reader.GetGuid(1),
+                    SumValue: reader.IsDBNull(2) ? 0m : reader.GetDecimal(2),
+                    MinValue: reader.IsDBNull(3) ? 0m : reader.GetDecimal(3),
+                    MaxValue: reader.IsDBNull(4) ? 0m : reader.GetDecimal(4),
+                    SampleCount: reader.GetInt32(5),
+                    ValidCount: reader.GetInt32(6)));
+            }
+        }
+        if (slices.Count == 0) return [];
+
+        var ctx = await LoadCanonicalConversionContextAsync(
+            pollutantId, slices.Select(s => s.UnitId), cancellationToken);
+        if (ctx is null) return [];
+
+        return slices
+            .GroupBy(s => s.BucketStart)
+            .Select(g => FoldTimeSeriesBucket(g, aggregation, ctx))
+            .Where(p => p is not null)
+            .Select(p => p!)
+            .OrderBy(p => p.BucketStart)
+            .ToList();
     }
 
     private async Task<IReadOnlyList<HeatmapPoint>> GetHeatmapFromCaAsync(
         Guid pollutantId, DateTime from, DateTime to,
         AggregationFunc aggregation, CancellationToken cancellationToken)
     {
-        var aggExpr = CaAggregationExpression(aggregation);
         var tenantClause = BuildTenantClause();
 
         var sql = $@"
@@ -191,9 +265,11 @@ internal class RawMeasurementQueries(ApplicationDbContext context) : IRawMeasure
                 es.id AS emission_source_id,
                 ST_Y(es.location) AS latitude,
                 ST_X(es.location) AS longitude,
-                ({aggExpr})::numeric(18,6) AS value,
-                (array_agg(m.unit_id))[1] AS unit_id,
-                SUM(m.sample_count)::int AS total_count,
+                m.unit_id,
+                SUM(m.sum_value)::numeric(18,6) AS sum_value,
+                MIN(m.min_value)::numeric(18,6) AS min_value,
+                MAX(m.max_value)::numeric(18,6) AS max_value,
+                SUM(m.sample_count)::int AS sample_count,
                 SUM(m.valid_count)::int AS valid_count
             FROM measurement_1m m
             JOIN emission_source es ON es.id = m.emission_source_id
@@ -202,7 +278,8 @@ internal class RawMeasurementQueries(ApplicationDbContext context) : IRawMeasure
               AND m.bucket < @to
               AND es.deleted_at IS NULL
               {tenantClause}
-            GROUP BY es.id, es.location";
+            GROUP BY es.id, es.location, m.unit_id
+            ORDER BY es.id, m.unit_id";
 
         await using var command = await CreateCommandAsync(sql, cancellationToken);
         AddParam(command, "pollutant_id", NpgsqlDbType.Uuid, pollutantId);
@@ -210,7 +287,187 @@ internal class RawMeasurementQueries(ApplicationDbContext context) : IRawMeasure
         AddParam(command, "to", NpgsqlDbType.TimestampTz, EnsureUtc(to));
         AddTenantParam(command);
 
-        return await ReadHeatmapAsync(command, cancellationToken);
+        var slices = new List<HeatmapSlice>();
+        await using (var reader = await command.ExecuteReaderAsync(cancellationToken))
+        {
+            while (await reader.ReadAsync(cancellationToken))
+            {
+                slices.Add(new HeatmapSlice(
+                    EmissionSourceId: reader.GetGuid(0),
+                    Latitude: reader.GetDouble(1),
+                    Longitude: reader.GetDouble(2),
+                    UnitId: reader.GetGuid(3),
+                    SumValue: reader.IsDBNull(4) ? 0m : reader.GetDecimal(4),
+                    MinValue: reader.IsDBNull(5) ? 0m : reader.GetDecimal(5),
+                    MaxValue: reader.IsDBNull(6) ? 0m : reader.GetDecimal(6),
+                    SampleCount: reader.GetInt32(7),
+                    ValidCount: reader.GetInt32(8)));
+            }
+        }
+        if (slices.Count == 0) return [];
+
+        var ctx = await LoadCanonicalConversionContextAsync(
+            pollutantId, slices.Select(s => s.UnitId), cancellationToken);
+        if (ctx is null) return [];
+
+        return slices
+            .GroupBy(s => s.EmissionSourceId)
+            .Select(g => FoldHeatmapSource(g, aggregation, ctx))
+            .Where(p => p is not null)
+            .Select(p => p!)
+            .ToList();
+    }
+
+    // ─── Canonical conversion fold ──────────────────────────────────────────────
+
+    private record TimeSeriesSlice(
+        DateTime BucketStart, Guid UnitId,
+        decimal SumValue, decimal MinValue, decimal MaxValue,
+        int SampleCount, int ValidCount);
+
+    private record HeatmapSlice(
+        Guid EmissionSourceId, double Latitude, double Longitude, Guid UnitId,
+        decimal SumValue, decimal MinValue, decimal MaxValue,
+        int SampleCount, int ValidCount);
+
+    private record ConversionContext(
+        MeasureUnit CanonicalUnit, decimal? MolarMass,
+        IReadOnlyDictionary<Guid, MeasureUnit> Units);
+
+    /// <summary>
+    /// Loads the pollutant's canonical MeasureUnit + MolarMass and every involved unit. Returns
+    /// null when the pollutant or its canonical unit can't be loaded — caller should treat that
+    /// as "no data" rather than throwing, because a missing pollutant config shouldn't crash
+    /// the chart endpoint.
+    /// </summary>
+    private async Task<ConversionContext?> LoadCanonicalConversionContextAsync(
+        Guid pollutantId, IEnumerable<Guid> involvedUnitIds, CancellationToken ct)
+    {
+        var pollutant = await context.Set<Pollutant>().AsNoTracking()
+            .Where(p => p.Id == pollutantId)
+            .Select(p => new { p.CanonicalUnitId, p.MolarMass })
+            .FirstOrDefaultAsync(ct);
+        if (pollutant is null) return null;
+
+        var allUnitIds = involvedUnitIds
+            .Append(pollutant.CanonicalUnitId)
+            .Distinct()
+            .ToArray();
+        var units = await context.Set<MeasureUnit>().AsNoTracking()
+            .Where(u => allUnitIds.Contains(u.Id))
+            .ToDictionaryAsync(u => u.Id, ct);
+        if (!units.TryGetValue(pollutant.CanonicalUnitId, out var canonicalUnit)) return null;
+
+        return new ConversionContext(canonicalUnit, pollutant.MolarMass, units);
+    }
+
+    private static TimeSeriesPoint? FoldTimeSeriesBucket(
+        IEnumerable<TimeSeriesSlice> slices, AggregationFunc aggregation, ConversionContext ctx)
+    {
+        decimal? value = null;
+        var totalCount = 0;
+        var validCount = 0;
+        decimal canonicalSumOfSums = 0m;
+        var canonicalSumSamples = 0;
+        decimal? canonicalMin = null;
+        decimal? canonicalMax = null;
+        decimal canonicalSum = 0m;
+        var anySliceConverted = false;
+
+        foreach (var s in slices)
+        {
+            totalCount += s.SampleCount;
+            validCount += s.ValidCount;
+            if (!ctx.Units.TryGetValue(s.UnitId, out var fromUnit)) continue;
+            if (!UnitConverter.TryToCanonical(s.SumValue, fromUnit, ctx.CanonicalUnit, ctx.MolarMass,
+                    out var canonicalSliceSum, out _)) continue;
+            UnitConverter.TryToCanonical(s.MinValue, fromUnit, ctx.CanonicalUnit, ctx.MolarMass,
+                out var canonicalSliceMin, out _);
+            UnitConverter.TryToCanonical(s.MaxValue, fromUnit, ctx.CanonicalUnit, ctx.MolarMass,
+                out var canonicalSliceMax, out _);
+
+            anySliceConverted = true;
+            canonicalSumOfSums += canonicalSliceSum;
+            canonicalSumSamples += s.SampleCount;
+            canonicalSum += canonicalSliceSum;
+            canonicalMin = canonicalMin is null ? canonicalSliceMin : Math.Min(canonicalMin.Value, canonicalSliceMin);
+            canonicalMax = canonicalMax is null ? canonicalSliceMax : Math.Max(canonicalMax.Value, canonicalSliceMax);
+        }
+
+        if (!anySliceConverted) return null;
+
+        value = aggregation switch
+        {
+            AggregationFunc.Average => canonicalSumSamples > 0
+                ? Math.Round(canonicalSumOfSums / canonicalSumSamples, 6)
+                : 0m,
+            AggregationFunc.Max => canonicalMax ?? 0m,
+            AggregationFunc.Min => canonicalMin ?? 0m,
+            AggregationFunc.Sum => canonicalSum,
+            _ => 0m
+        };
+
+        return new TimeSeriesPoint(
+            BucketStart: slices.First().BucketStart,
+            Value: value.Value,
+            TotalPointsCount: totalCount,
+            ValidPointsCount: validCount);
+    }
+
+    private static HeatmapPoint? FoldHeatmapSource(
+        IEnumerable<HeatmapSlice> slices, AggregationFunc aggregation, ConversionContext ctx)
+    {
+        var first = slices.First();
+        var totalCount = 0;
+        var validCount = 0;
+        decimal canonicalSumOfSums = 0m;
+        var canonicalSumSamples = 0;
+        decimal? canonicalMin = null;
+        decimal? canonicalMax = null;
+        decimal canonicalSum = 0m;
+        var anySliceConverted = false;
+
+        foreach (var s in slices)
+        {
+            totalCount += s.SampleCount;
+            validCount += s.ValidCount;
+            if (!ctx.Units.TryGetValue(s.UnitId, out var fromUnit)) continue;
+            if (!UnitConverter.TryToCanonical(s.SumValue, fromUnit, ctx.CanonicalUnit, ctx.MolarMass,
+                    out var canonicalSliceSum, out _)) continue;
+            UnitConverter.TryToCanonical(s.MinValue, fromUnit, ctx.CanonicalUnit, ctx.MolarMass,
+                out var canonicalSliceMin, out _);
+            UnitConverter.TryToCanonical(s.MaxValue, fromUnit, ctx.CanonicalUnit, ctx.MolarMass,
+                out var canonicalSliceMax, out _);
+
+            anySliceConverted = true;
+            canonicalSumOfSums += canonicalSliceSum;
+            canonicalSumSamples += s.SampleCount;
+            canonicalSum += canonicalSliceSum;
+            canonicalMin = canonicalMin is null ? canonicalSliceMin : Math.Min(canonicalMin.Value, canonicalSliceMin);
+            canonicalMax = canonicalMax is null ? canonicalSliceMax : Math.Max(canonicalMax.Value, canonicalSliceMax);
+        }
+
+        if (!anySliceConverted) return null;
+
+        var value = aggregation switch
+        {
+            AggregationFunc.Average => canonicalSumSamples > 0
+                ? Math.Round(canonicalSumOfSums / canonicalSumSamples, 6)
+                : 0m,
+            AggregationFunc.Max => canonicalMax ?? 0m,
+            AggregationFunc.Min => canonicalMin ?? 0m,
+            AggregationFunc.Sum => canonicalSum,
+            _ => 0m
+        };
+
+        return new HeatmapPoint(
+            EmissionSourceId: first.EmissionSourceId,
+            Latitude: first.Latitude,
+            Longitude: first.Longitude,
+            Value: value,
+            UnitId: ctx.CanonicalUnit.Id,
+            TotalPointsCount: totalCount,
+            ValidPointsCount: validCount);
     }
 
     // ─── Raw fallback path (p95) ────────────────────────────────────────────────
@@ -363,12 +620,4 @@ internal class RawMeasurementQueries(ApplicationDbContext context) : IRawMeasure
         _ => throw new ArgumentOutOfRangeException(nameof(window), window, null)
     };
 
-    private static string CaAggregationExpression(AggregationFunc agg) => agg switch
-    {
-        AggregationFunc.Average => "SUM(m.sum_value) / NULLIF(SUM(m.sample_count), 0)",
-        AggregationFunc.Max => "MAX(m.max_value)",
-        AggregationFunc.Min => "MIN(m.min_value)",
-        AggregationFunc.Sum => "SUM(m.sum_value)",
-        _ => throw new ArgumentOutOfRangeException(nameof(agg), agg, null)
-    };
 }
