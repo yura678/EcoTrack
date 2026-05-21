@@ -49,12 +49,13 @@ public class PermitControllerTests : BaseIntegrationTest, IAsyncLifetime
         _installation = InstallationData.FirstTestInstallation(_site.Id, _iedCategory.Id);
 
         _source1 = EmissionSourcesData.FirstTestEmissionSource(_installation.Id);
-        _pollutant1 = PollutantsData.FirstTestPollutant();
 
         _mg = MeasureUnitsData.MgPerM3();
         _g = MeasureUnitsData.GPerM3();
         _ug = MeasureUnitsData.UgPerM3();
         _kgh = MeasureUnitsData.KgPerHour();
+
+        _pollutant1 = PollutantsData.FirstTestPollutant(_mg.Id);
 
         var draft = PermitsBundlesData.DraftBundle(_installation.Id, _source1.Id, _pollutant1.Id, _mg.Id);
         _draftPermit = draft.Permit;

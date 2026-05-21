@@ -54,7 +54,7 @@ public class MeasurementMaterializationServiceTests : BaseIntegrationTest, IAsyn
     [Fact]
     public async Task ShouldComputeNormalizedValueWhenO2DataPresent()
     {
-        var pollutant = PollutantsData.WithO2Reference(6m);
+        var pollutant = PollutantsData.WithO2Reference(6m, _mg.Id);
         await Context.Set<Pollutant>().AddAsync(pollutant);
         var (permit, limit) = ActivePermitWithLimit(pollutant.Id, 1000m);
         await Context.Set<Permit>().AddAsync(permit);
@@ -85,7 +85,7 @@ public class MeasurementMaterializationServiceTests : BaseIntegrationTest, IAsyn
     [Fact]
     public async Task ShouldLeaveNormalizedNullWhenNoO2DataAvailable()
     {
-        var pollutant = PollutantsData.WithO2Reference(6m);
+        var pollutant = PollutantsData.WithO2Reference(6m, _mg.Id);
         await Context.Set<Pollutant>().AddAsync(pollutant);
         var (permit, limit) = ActivePermitWithLimit(pollutant.Id, 1000m);
         await Context.Set<Permit>().AddAsync(permit);
@@ -108,7 +108,7 @@ public class MeasurementMaterializationServiceTests : BaseIntegrationTest, IAsyn
     [Fact]
     public async Task ShouldLeaveNormalizedNullWhenPollutantHasNoO2Reference()
     {
-        var pollutant = PollutantsData.FirstTestPollutant(); // no DefaultO2Reference
+        var pollutant = PollutantsData.FirstTestPollutant(_mg.Id); // no DefaultO2Reference
         await Context.Set<Pollutant>().AddAsync(pollutant);
         var (permit, limit) = ActivePermitWithLimit(pollutant.Id, 1000m);
         await Context.Set<Permit>().AddAsync(permit);
@@ -132,7 +132,7 @@ public class MeasurementMaterializationServiceTests : BaseIntegrationTest, IAsyn
     [Fact]
     public async Task ShouldApplyFullNormalizationWhenAllProcessParamsPresent()
     {
-        var pollutant = PollutantsData.WithO2Reference(6m);
+        var pollutant = PollutantsData.WithO2Reference(6m, _mg.Id);
         await Context.Set<Pollutant>().AddAsync(pollutant);
         var (permit, limit) = ActivePermitWithLimit(pollutant.Id, 1000m);
         await Context.Set<Permit>().AddAsync(permit);
@@ -166,7 +166,7 @@ public class MeasurementMaterializationServiceTests : BaseIntegrationTest, IAsyn
     [Fact]
     public async Task ShouldSubstituteValueWhenAvailabilityLowAndHistoryExists()
     {
-        var pollutant = PollutantsData.FirstTestPollutant();
+        var pollutant = PollutantsData.FirstTestPollutant(_mg.Id);
         await Context.Set<Pollutant>().AddAsync(pollutant);
         var (permit, limit) = ActivePermitWithLimit(pollutant.Id, 1000m);
         await Context.Set<Permit>().AddAsync(permit);
@@ -197,7 +197,7 @@ public class MeasurementMaterializationServiceTests : BaseIntegrationTest, IAsyn
     [Fact]
     public async Task ShouldMarkSubstitutedWithoutValueChangeWhenNoHistory()
     {
-        var pollutant = PollutantsData.FirstTestPollutant();
+        var pollutant = PollutantsData.FirstTestPollutant(_mg.Id);
         await Context.Set<Pollutant>().AddAsync(pollutant);
         var (permit, limit) = ActivePermitWithLimit(pollutant.Id, 1000m);
         await Context.Set<Permit>().AddAsync(permit);
@@ -235,7 +235,7 @@ public class MeasurementMaterializationServiceTests : BaseIntegrationTest, IAsyn
     [Fact]
     public async Task ShouldLeaveNormalizedNullWhenO2IsSensorFault()
     {
-        var pollutant = PollutantsData.WithO2Reference(6m);
+        var pollutant = PollutantsData.WithO2Reference(6m, _mg.Id);
         await Context.Set<Pollutant>().AddAsync(pollutant);
         var (permit, limit) = ActivePermitWithLimit(pollutant.Id, 1000m);
         await Context.Set<Permit>().AddAsync(permit);
@@ -260,7 +260,7 @@ public class MeasurementMaterializationServiceTests : BaseIntegrationTest, IAsyn
     [Fact]
     public async Task ShouldBackfillFromLimitValidFromBeyondDefaultHorizon()
     {
-        var pollutant = PollutantsData.FirstTestPollutant();
+        var pollutant = PollutantsData.FirstTestPollutant(_mg.Id);
         await Context.Set<Pollutant>().AddAsync(pollutant);
 
         // ValidFrom = 7 days ago — well beyond the old 3-day fallback horizon.
@@ -311,7 +311,7 @@ public class MeasurementMaterializationServiceTests : BaseIntegrationTest, IAsyn
     [Fact]
     public async Task ShouldRefreshMeasurementWhenLateRawDataLandsInExistingWindow()
     {
-        var pollutant = PollutantsData.FirstTestPollutant();
+        var pollutant = PollutantsData.FirstTestPollutant(_mg.Id);
         await Context.Set<Pollutant>().AddAsync(pollutant);
         var (permit, limit) = ActivePermitWithLimit(pollutant.Id, 1000m);
         await Context.Set<Permit>().AddAsync(permit);
@@ -368,7 +368,7 @@ public class MeasurementMaterializationServiceTests : BaseIntegrationTest, IAsyn
         // Materialised rows are aggregates over (source, pollutant, window); the underlying raw
         // rows may belong to multiple devices, so naming a single one on the aggregate would be
         // a lie. The materializer writes null and per-device lineage stays in raw_measurement.
-        var pollutant = PollutantsData.WithO2Reference(6m);
+        var pollutant = PollutantsData.WithO2Reference(6m, _mg.Id);
         await Context.Set<Pollutant>().AddAsync(pollutant);
         var (permit, limit) = ActivePermitWithLimit(pollutant.Id, 1000m);
         await Context.Set<Permit>().AddAsync(permit);
@@ -393,7 +393,7 @@ public class MeasurementMaterializationServiceTests : BaseIntegrationTest, IAsyn
         // any code path that confuses "raw rows" with "valid minutes" would see availability
         // 200/60 ≈ 3.3 (above 1.0) and silently skip substitution — this test pins down the
         // corrected semantic.
-        var pollutant = PollutantsData.SecondTestPollutant();
+        var pollutant = PollutantsData.SecondTestPollutant(_mg.Id);
         await Context.Set<Pollutant>().AddAsync(pollutant);
         var (permit, limit) = ActivePermitWithLimit(pollutant.Id, 1000m);
         await Context.Set<Permit>().AddAsync(permit);

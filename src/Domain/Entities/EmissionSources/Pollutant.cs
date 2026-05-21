@@ -12,6 +12,18 @@ public class Pollutant : BaseEntity, ISoftDeletable
     public PollutantCategory Category { get; private set; }
     public PollutantMedia Media { get; private set; }
     public MeasureUnitDimension DefaultDimension { get; private set; }
+
+    // The single unit every materialized Measurement and CA bucket for this pollutant is stored
+    // in. Picked once at seed time per pollutant (mg/m³ for gases, µg/m³ for trace metals, etc).
+    // Cross-device temporal queries are correct because every historical row converges here.
+    public Guid CanonicalUnitId { get; private set; }
+    public MeasureUnit? CanonicalUnit { get; private set; }
+
+    // Required to convert ppm (volume ratio) into mass concentration via the ideal-gas relation
+    // mg/m³ = ppm × M / 22.414 at EU STP (273.15 K, 1.013 bar, dry). Null is acceptable for
+    // pollutants where ppm-style ingest is not expected (PM, condensed phases).
+    public decimal? MolarMass { get; private set; }
+
     public decimal? DefaultO2Reference { get; private set; }
     public decimal? EprtrThresholdKgYear { get; private set; }
     public DateTime CreatedAt { get; }
@@ -23,8 +35,8 @@ public class Pollutant : BaseEntity, ISoftDeletable
 
     private Pollutant(Guid id, string code, string name, string? casNumber,
         PollutantCategory category, PollutantMedia media,
-        MeasureUnitDimension defaultDimension, decimal? defaultO2Reference,
-        decimal? eprtrThresholdKgYear,
+        MeasureUnitDimension defaultDimension, Guid canonicalUnitId, decimal? molarMass,
+        decimal? defaultO2Reference, decimal? eprtrThresholdKgYear,
         DateTime createdAt, DateTime? updatedAt)
     {
         Id = id;
@@ -34,6 +46,8 @@ public class Pollutant : BaseEntity, ISoftDeletable
         Category = category;
         Media = media;
         DefaultDimension = defaultDimension;
+        CanonicalUnitId = canonicalUnitId;
+        MolarMass = molarMass;
         DefaultO2Reference = defaultO2Reference;
         EprtrThresholdKgYear = eprtrThresholdKgYear;
         CreatedAt = createdAt;
@@ -42,15 +56,17 @@ public class Pollutant : BaseEntity, ISoftDeletable
 
     public static Pollutant New(Guid id, string code, string name,
         PollutantCategory category, PollutantMedia media, MeasureUnitDimension defaultDimension,
-        string? casNumber = null, decimal? defaultO2Reference = null,
-        decimal? eprtrThresholdKgYear = null) =>
+        Guid canonicalUnitId,
+        string? casNumber = null, decimal? molarMass = null,
+        decimal? defaultO2Reference = null, decimal? eprtrThresholdKgYear = null) =>
         new(id, code, name, casNumber, category, media, defaultDimension,
-            defaultO2Reference, eprtrThresholdKgYear, DateTime.UtcNow, null);
+            canonicalUnitId, molarMass, defaultO2Reference, eprtrThresholdKgYear,
+            DateTime.UtcNow, null);
 
     public void UpdateDetails(string code, string name, string? casNumber,
         PollutantCategory category, PollutantMedia media,
-        MeasureUnitDimension defaultDimension, decimal? defaultO2Reference,
-        decimal? eprtrThresholdKgYear)
+        MeasureUnitDimension defaultDimension, Guid canonicalUnitId, decimal? molarMass,
+        decimal? defaultO2Reference, decimal? eprtrThresholdKgYear)
     {
         Code = code;
         Name = name;
@@ -58,6 +74,8 @@ public class Pollutant : BaseEntity, ISoftDeletable
         Category = category;
         Media = media;
         DefaultDimension = defaultDimension;
+        CanonicalUnitId = canonicalUnitId;
+        MolarMass = molarMass;
         DefaultO2Reference = defaultO2Reference;
         EprtrThresholdKgYear = eprtrThresholdKgYear;
 

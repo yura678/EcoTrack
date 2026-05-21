@@ -18,6 +18,8 @@ public class CreatePollutantCommand : IRequest<Either<PollutantException, Pollut
     public required PollutantCategory Category { get; init; }
     public required PollutantMedia Media { get; init; }
     public required MeasureUnitDimension DefaultDimension { get; init; }
+    public required Guid CanonicalUnitId { get; init; }
+    public decimal? MolarMass { get; init; }
     public string? CasNumber { get; init; }
     public decimal? DefaultO2Reference { get; init; }
     public decimal? EprtrThresholdKgYear { get; init; }
@@ -41,6 +43,14 @@ public class CreatePollutantCommand : IRequest<Either<PollutantException, Pollut
 
         validator.RuleFor(x => x.DefaultDimension)
             .IsInEnum();
+
+        validator.RuleFor(x => x.CanonicalUnitId)
+            .NotEmpty();
+
+        validator.RuleFor(x => x.MolarMass!.Value)
+            .GreaterThan(0)
+            .LessThan(500)
+            .When(x => x.MolarMass.HasValue);
 
         validator.RuleFor(x => x.CasNumber!)
             .MaximumLength(20)

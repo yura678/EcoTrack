@@ -40,10 +40,10 @@ public class RawIngestControllerTests : BaseIntegrationTest, IAsyncLifetime
         _site = SitesData.FirstTestSite(_enterprise.Id);
         _installation = InstallationData.FirstTestInstallation(_site.Id, _iedCategory.Id);
         _source = EmissionSourcesData.FirstTestEmissionSource(_installation.Id);
-        _configuredPollutant = PollutantsData.FirstTestPollutant();
-        _unconfiguredPollutant = PollutantsData.SecondTestPollutant();
         _mg = MeasureUnitsData.MgPerM3();
         _g = MeasureUnitsData.GPerM3();
+        _configuredPollutant = PollutantsData.FirstTestPollutant(_mg.Id);
+        _unconfiguredPollutant = PollutantsData.SecondTestPollutant(_mg.Id);
         _device = MonitoringDevicesData.FirstTestDevice(_source.Id, _installation.Id);
         _device.RotateIngestionSecret(Convert.ToBase64String(_ingestionSecretBytes));
         _capability = DevicePollutantCapability.New(

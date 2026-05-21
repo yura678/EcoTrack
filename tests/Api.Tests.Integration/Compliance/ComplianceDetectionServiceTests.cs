@@ -43,8 +43,8 @@ public class ComplianceDetectionServiceTests : BaseIntegrationTest, IAsyncLifeti
         _iedCategory = IedCategoriesData.FirstTestIedCategory();
         _installation = InstallationData.FirstTestInstallation(_site.Id, _iedCategory.Id);
         _source = EmissionSourcesData.FirstTestEmissionSource(_installation.Id);
-        _pollutant = PollutantsData.FirstTestPollutant();
         _mg = MeasureUnitsData.MgPerM3();
+        _pollutant = PollutantsData.FirstTestPollutant(_mg.Id);
         _g = MeasureUnitsData.GPerM3();
         _kgh = MeasureUnitsData.KgPerHour();
         _m3h = MeasureUnitsData.CubicMetersPerHour();
@@ -737,7 +737,7 @@ public class ComplianceDetectionServiceTests : BaseIntegrationTest, IAsyncLifeti
     {
         // Pollutant with O2 reference 6%; AnnualLoad limit 50 mg/m³, raw avg 40 mg/m³.
         // At 10% O2 actual: normalized = 40 × (21-6)/(21-10) = 40 × 15/11 ≈ 54.55 > 50.
-        var pollutant = PollutantsData.WithO2Reference(6m);
+        var pollutant = PollutantsData.WithO2Reference(6m, _mg.Id);
         await Context.Set<Pollutant>().AddAsync(pollutant);
 
         var (permit, limit) = ActivePermitWithLimit(

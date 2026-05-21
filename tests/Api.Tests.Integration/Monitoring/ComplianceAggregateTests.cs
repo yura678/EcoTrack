@@ -38,8 +38,8 @@ public class ComplianceAggregateTests : BaseIntegrationTest, IAsyncLifetime
         _installation = InstallationData.FirstTestInstallation(_site.Id, _iedCategory.Id);
         _sourceA = EmissionSourcesData.FirstTestEmissionSource(_installation.Id);
         _sourceB = EmissionSourcesData.SecondTestAirEmissionSource(_installation.Id);
-        _pollutant = PollutantsData.FirstTestPollutant();
         _mg = MeasureUnitsData.MgPerM3();
+        _pollutant = PollutantsData.FirstTestPollutant(_mg.Id);
         _kgh = MeasureUnitsData.KgPerHour();
         _m3h = MeasureUnitsData.CubicMetersPerHour();
         _deviceA = MonitoringDevicesData.FirstTestDevice(_sourceA.Id, _installation.Id);

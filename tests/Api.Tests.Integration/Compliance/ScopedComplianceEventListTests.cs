@@ -22,6 +22,7 @@ public class ScopedComplianceEventListTests : BaseIntegrationTest, IAsyncLifetim
     private readonly Installation _installationB;
     private readonly EmissionSource _sourceA;
     private readonly EmissionSource _sourceB;
+    private readonly MeasureUnit _mg;
     private readonly Pollutant _pollutant;
     private readonly MonitoringDevice _deviceA;
     private readonly MonitoringDevice _deviceB;
@@ -34,7 +35,8 @@ public class ScopedComplianceEventListTests : BaseIntegrationTest, IAsyncLifetim
         _installationB = InstallationData.SecondTestInstallation(_site.Id, _iedCategory.Id);
         _sourceA = EmissionSourcesData.FirstTestEmissionSource(_installationA.Id);
         _sourceB = EmissionSourcesData.SecondTestAirEmissionSource(_installationB.Id);
-        _pollutant = PollutantsData.FirstTestPollutant();
+        _mg = MeasureUnitsData.MgPerM3();
+        _pollutant = PollutantsData.FirstTestPollutant(_mg.Id);
         _deviceA = MonitoringDevicesData.FirstTestDevice(_sourceA.Id, _installationA.Id);
         _deviceB = MonitoringDevicesData.SecondTestDevice(_sourceB.Id, _installationB.Id);
     }
@@ -139,6 +141,7 @@ public class ScopedComplianceEventListTests : BaseIntegrationTest, IAsyncLifetim
         await Context.Set<IedCategory>().AddAsync(_iedCategory);
         await Context.Set<Installation>().AddRangeAsync(_installationA, _installationB);
         await Context.Set<EmissionSource>().AddRangeAsync(_sourceA, _sourceB);
+        await Context.Set<MeasureUnit>().AddAsync(_mg);
         await Context.Set<Pollutant>().AddAsync(_pollutant);
         await Context.Set<MonitoringDevice>().AddRangeAsync(_deviceA, _deviceB);
         await SaveChangesAsync();

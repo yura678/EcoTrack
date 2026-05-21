@@ -73,6 +73,7 @@ public class UpdatePollutantCommandHandler(
         {
             entity.UpdateDetails(request.Code, request.Name, request.CasNumber,
                 request.Category, request.Media, request.DefaultDimension,
+                request.CanonicalUnitId, request.MolarMass,
                 request.DefaultO2Reference, request.EprtrThresholdKgYear);
             var updatedPollutant = unitOfWork.PollutantRepository.Update(entity);
             await unitOfWork.SaveChangesAsync(cancellationToken);

@@ -45,6 +45,18 @@ public class PollutantConfiguration : IEntityTypeConfiguration<Pollutant>
             .HasConversion<int>()
             .IsRequired();
 
+        builder.Property(x => x.CanonicalUnitId)
+            .IsRequired();
+
+        builder.HasOne(x => x.CanonicalUnit)
+            .WithMany()
+            .HasForeignKey(x => x.CanonicalUnitId)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        builder.Property(x => x.MolarMass)
+            .HasPrecision(10, 4)
+            .IsRequired(false);
+
         builder.Property(x => x.DefaultO2Reference)
             .HasPrecision(5, 2)
             .IsRequired(false);

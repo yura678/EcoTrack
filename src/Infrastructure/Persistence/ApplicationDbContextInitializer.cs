@@ -332,47 +332,74 @@ public class ApplicationDbContextInitializer(
         if (await dbContext.Set<Pollutant>().AnyAsync())
             return;
 
+        // Canonical unit for every built-in air pollutant is mg/m³ (EU IED reference). All
+        // raw_measurement rows for these pollutants get normalized to this unit at ingest so
+        // CA / materializer / analytics never have to reconcile mixed units across devices or time.
+        var mgPerM3 = await dbContext.Set<MeasureUnit>()
+            .FirstAsync(u => u.Symbol == "mg/m³");
+        var canonical = mgPerM3.Id;
+
         var pollutants = new List<Pollutant>
         {
             Pollutant.New(Guid.NewGuid(), "CO", "Чадний газ",
                 PollutantCategory.Gas, PollutantMedia.Air, MeasureUnitDimension.MassConcentration,
-                casNumber: "630-08-0", defaultO2Reference: 6m, eprtrThresholdKgYear: 500_000m),
+                canonicalUnitId: canonical,
+                casNumber: "630-08-0", molarMass: 28.010m,
+                defaultO2Reference: 6m, eprtrThresholdKgYear: 500_000m),
 
             Pollutant.New(Guid.NewGuid(), "CO₂", "Вуглекислий газ",
                 PollutantCategory.Gas, PollutantMedia.Air, MeasureUnitDimension.MassConcentration,
-                casNumber: "124-38-9", eprtrThresholdKgYear: 100_000_000m),
+                canonicalUnitId: canonical,
+                casNumber: "124-38-9", molarMass: 44.010m,
+                eprtrThresholdKgYear: 100_000_000m),
 
             Pollutant.New(Guid.NewGuid(), "NO", "Оксид азоту",
                 PollutantCategory.Gas, PollutantMedia.Air, MeasureUnitDimension.MassConcentration,
-                casNumber: "10102-43-9", defaultO2Reference: 6m),
+                canonicalUnitId: canonical,
+                casNumber: "10102-43-9", molarMass: 30.006m,
+                defaultO2Reference: 6m),
 
             Pollutant.New(Guid.NewGuid(), "NO₂", "Діоксид азоту",
                 PollutantCategory.Gas, PollutantMedia.Air, MeasureUnitDimension.MassConcentration,
-                casNumber: "10102-44-0", defaultO2Reference: 6m, eprtrThresholdKgYear: 100_000m),
+                canonicalUnitId: canonical,
+                casNumber: "10102-44-0", molarMass: 46.006m,
+                defaultO2Reference: 6m, eprtrThresholdKgYear: 100_000m),
 
             Pollutant.New(Guid.NewGuid(), "SO₂", "Діоксид сірки",
                 PollutantCategory.Acid, PollutantMedia.Air, MeasureUnitDimension.MassConcentration,
-                casNumber: "7446-09-5", defaultO2Reference: 6m, eprtrThresholdKgYear: 150_000m),
+                canonicalUnitId: canonical,
+                casNumber: "7446-09-5", molarMass: 64.066m,
+                defaultO2Reference: 6m, eprtrThresholdKgYear: 150_000m),
 
             Pollutant.New(Guid.NewGuid(), "H₂S", "Сірководень",
                 PollutantCategory.Acid, PollutantMedia.Air, MeasureUnitDimension.MassConcentration,
-                casNumber: "7783-06-4"),
+                canonicalUnitId: canonical,
+                casNumber: "7783-06-4", molarMass: 34.080m),
 
+            // Particulate matter — no ppm path, so molarMass intentionally left null.
             Pollutant.New(Guid.NewGuid(), "PM10", "Тверді частинки PM10",
-                PollutantCategory.ParticulateMatter, PollutantMedia.Air, MeasureUnitDimension.MassConcentration,
+                PollutantCategory.ParticulateMatter, PollutantMedia.Air,
+                MeasureUnitDimension.MassConcentration,
+                canonicalUnitId: canonical,
                 defaultO2Reference: 6m, eprtrThresholdKgYear: 50_000m),
 
             Pollutant.New(Guid.NewGuid(), "PM2.5", "Тверді частинки PM2.5",
-                PollutantCategory.ParticulateMatter, PollutantMedia.Air, MeasureUnitDimension.MassConcentration,
+                PollutantCategory.ParticulateMatter, PollutantMedia.Air,
+                MeasureUnitDimension.MassConcentration,
+                canonicalUnitId: canonical,
                 defaultO2Reference: 6m),
 
             Pollutant.New(Guid.NewGuid(), "NH₃", "Аміак",
                 PollutantCategory.Inorganic, PollutantMedia.Both, MeasureUnitDimension.MassConcentration,
-                casNumber: "7664-41-7", eprtrThresholdKgYear: 10_000m),
+                canonicalUnitId: canonical,
+                casNumber: "7664-41-7", molarMass: 17.031m,
+                eprtrThresholdKgYear: 10_000m),
 
             Pollutant.New(Guid.NewGuid(), "CH₄", "Метан",
                 PollutantCategory.Voc, PollutantMedia.Air, MeasureUnitDimension.MassConcentration,
-                casNumber: "74-82-8", eprtrThresholdKgYear: 100_000m)
+                canonicalUnitId: canonical,
+                casNumber: "74-82-8", molarMass: 16.043m,
+                eprtrThresholdKgYear: 100_000m)
         };
 
         await dbContext.Set<Pollutant>().AddRangeAsync(pollutants);

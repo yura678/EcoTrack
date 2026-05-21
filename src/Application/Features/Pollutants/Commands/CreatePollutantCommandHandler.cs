@@ -55,7 +55,11 @@ public class CreatePollutantCommandHandler(
             var newPollutant = await unitOfWork.PollutantRepository.AddAsync(
                 Pollutant.New(Guid.NewGuid(), request.Code, request.Name,
                     request.Category, request.Media, request.DefaultDimension,
-                    request.CasNumber, request.DefaultO2Reference, request.EprtrThresholdKgYear),
+                    canonicalUnitId: request.CanonicalUnitId,
+                    casNumber: request.CasNumber,
+                    molarMass: request.MolarMass,
+                    defaultO2Reference: request.DefaultO2Reference,
+                    eprtrThresholdKgYear: request.EprtrThresholdKgYear),
                 cancellationToken);
             await unitOfWork.SaveChangesAsync(cancellationToken);
 

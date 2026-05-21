@@ -5,26 +5,30 @@ namespace Tests.Data.EmissionSources;
 
 public static class PollutantsData
 {
-    public static Pollutant FirstTestPollutant()
+    public static Pollutant FirstTestPollutant(Guid canonicalUnitId, decimal? molarMass = null)
         => Pollutant.New(
             Guid.NewGuid(),
             code: "NOX",
             name: "Nitrogen oxides",
             category: PollutantCategory.Gas,
             media: PollutantMedia.Air,
-            defaultDimension: MeasureUnitDimension.MassConcentration);
+            defaultDimension: MeasureUnitDimension.MassConcentration,
+            canonicalUnitId: canonicalUnitId,
+            molarMass: molarMass);
 
 
-    public static Pollutant SecondTestPollutant()
+    public static Pollutant SecondTestPollutant(Guid canonicalUnitId, decimal? molarMass = null)
         => Pollutant.New(
             Guid.NewGuid(),
             code: "CO2",
             name: "Сarbon dioxide",
             category: PollutantCategory.Gas,
             media: PollutantMedia.Air,
-            defaultDimension: MeasureUnitDimension.MassConcentration);
+            defaultDimension: MeasureUnitDimension.MassConcentration,
+            canonicalUnitId: canonicalUnitId,
+            molarMass: molarMass);
 
-    public static Pollutant WithO2Reference(decimal o2Ref)
+    public static Pollutant WithO2Reference(decimal o2Ref, Guid canonicalUnitId)
         => Pollutant.New(
             Guid.NewGuid(),
             code: "NOX-O2",
@@ -32,5 +36,6 @@ public static class PollutantsData
             category: PollutantCategory.Gas,
             media: PollutantMedia.Air,
             defaultDimension: MeasureUnitDimension.MassConcentration,
+            canonicalUnitId: canonicalUnitId,
             defaultO2Reference: o2Ref);
 }

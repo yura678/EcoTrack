@@ -33,8 +33,8 @@ public class ComplianceHeatmapTests : BaseIntegrationTest, IAsyncLifetime
         _site = SitesData.FirstTestSite(_enterprise.Id);
         _installation = InstallationData.FirstTestInstallation(_site.Id, _iedCategory.Id);
         _source = EmissionSourcesData.FirstTestEmissionSource(_installation.Id);
-        _pollutant = PollutantsData.FirstTestPollutant();
         _mg = MeasureUnitsData.MgPerM3();
+        _pollutant = PollutantsData.FirstTestPollutant(_mg.Id);
         _device = MonitoringDevicesData.FirstTestDevice(_source.Id, _installation.Id);
 
         var hour = TimeSpan.FromHours(1);

@@ -45,8 +45,8 @@ public class MeasurementControllerTests : BaseIntegrationTest, IAsyncLifetime
         _installation = InstallationData.FirstTestInstallation(_site.Id, _iedCategory.Id);
         _emissionSource = EmissionSourcesData.FirstTestEmissionSource(_installation.Id);
 
-        _pollutant = PollutantsData.FirstTestPollutant();
         _mg = MeasureUnitsData.MgPerM3();
+        _pollutant = PollutantsData.FirstTestPollutant(_mg.Id);
         _g = MeasureUnitsData.GPerM3();
         _ug = MeasureUnitsData.UgPerM3();
         _device = MonitoringDevicesData.FirstTestDevice(_emissionSource.Id, _installation.Id);

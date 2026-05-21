@@ -11,6 +11,8 @@ public record PollutantDto(
     PollutantCategory Category,
     PollutantMedia Media,
     MeasureUnitDimension DefaultDimension,
+    Guid CanonicalUnitId,
+    decimal? MolarMass,
     decimal? DefaultO2Reference,
     decimal? EprtrThresholdKgYear,
     DateTime CreatedAt,
@@ -26,6 +28,8 @@ public record PollutantDto(
             pollutant.Category,
             pollutant.Media,
             pollutant.DefaultDimension,
+            pollutant.CanonicalUnitId,
+            pollutant.MolarMass,
             pollutant.DefaultO2Reference,
             pollutant.EprtrThresholdKgYear,
             pollutant.CreatedAt,
@@ -41,6 +45,8 @@ public record CreatePollutantDto(
     PollutantCategory Category,
     PollutantMedia Media,
     MeasureUnitDimension DefaultDimension,
+    Guid CanonicalUnitId,
+    decimal? MolarMass,
     decimal? DefaultO2Reference,
     decimal? EprtrThresholdKgYear);
 
@@ -51,5 +57,7 @@ public record UpdatePollutantDto(
     PollutantCategory Category,
     PollutantMedia Media,
     MeasureUnitDimension DefaultDimension,
+    Guid CanonicalUnitId,
+    decimal? MolarMass,
     decimal? DefaultO2Reference,
     decimal? EprtrThresholdKgYear);
