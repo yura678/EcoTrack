@@ -237,9 +237,7 @@ public class RawIngestControllerTests : BaseIntegrationTest, IAsyncLifetime
     {
         // ppm → mg/m³ needs MolarMass. _configuredPollutant has none → batch fails and the
         // failure reason names the missing molar mass so the operator knows what to add.
-        var ppm = MeasureUnit.New(Guid.NewGuid(), "ppm", MeasureUnitDimension.Dimensionless, 1m);
-        await Context.Set<MeasureUnit>().AddAsync(ppm);
-        await SaveChangesAsync();
+        var ppm = await EnsurePpmUnitAsync();
 
         var body = new[]
         {
@@ -270,12 +268,11 @@ public class RawIngestControllerTests : BaseIntegrationTest, IAsyncLifetime
     {
         // NO₂-style pollutant: canonical mg/m³, M = 46 g/mol. Capability range 0..500 mg/m³.
         // Device ships 100 ppm → canonical 100 × 46 / 22.414 ≈ 205.23 mg/m³, inside range → Valid.
-        var ppm = MeasureUnit.New(Guid.NewGuid(), "ppm", MeasureUnitDimension.Dimensionless, 1m);
-        var pollutantWithMolar = PollutantsData.SecondTestPollutant(_mg.Id, molarMass: 46m);
+        var ppm = await EnsurePpmUnitAsync();
+        var pollutantWithMolar = MakeMolarPollutant(_mg.Id, 46m);
         var capability = DevicePollutantCapability.New(
             id: Guid.NewGuid(), deviceId: _device.Id, pollutantId: pollutantWithMolar.Id,
             rangeMin: 0m, rangeMax: 500m, rangeUnitId: _mg.Id, accuracyClass: "Class 2");
-        await Context.Set<MeasureUnit>().AddAsync(ppm);
         await Context.Set<Pollutant>().AddAsync(pollutantWithMolar);
         await Context.Set<DevicePollutantCapability>().AddAsync(capability);
         await SaveChangesAsync();
@@ -305,12 +302,11 @@ public class RawIngestControllerTests : BaseIntegrationTest, IAsyncLifetime
     public async Task ShouldForceInvalidWhenPpmReadingExceedsCanonicalRange()
     {
         // 1000 ppm × 46 / 22.414 ≈ 2052 mg/m³ — outside 0..500 → forced Invalid (still persisted).
-        var ppm = MeasureUnit.New(Guid.NewGuid(), "ppm", MeasureUnitDimension.Dimensionless, 1m);
-        var pollutantWithMolar = PollutantsData.SecondTestPollutant(_mg.Id, molarMass: 46m);
+        var ppm = await EnsurePpmUnitAsync();
+        var pollutantWithMolar = MakeMolarPollutant(_mg.Id, 46m);
         var capability = DevicePollutantCapability.New(
             id: Guid.NewGuid(), deviceId: _device.Id, pollutantId: pollutantWithMolar.Id,
             rangeMin: 0m, rangeMax: 500m, rangeUnitId: _mg.Id, accuracyClass: "Class 2");
-        await Context.Set<MeasureUnit>().AddAsync(ppm);
         await Context.Set<Pollutant>().AddAsync(pollutantWithMolar);
         await Context.Set<DevicePollutantCapability>().AddAsync(capability);
         await SaveChangesAsync();
@@ -332,6 +328,41 @@ public class RawIngestControllerTests : BaseIntegrationTest, IAsyncLifetime
             .Where(r => r.DeviceId == _device.Id)
             .SingleAsync();
         row.Quality.Should().Be(Quality.Invalid);
+    }
+
+    /// <summary>
+    /// UnitConverter triggers ppm→mass conversion only when MeasureUnit.Symbol equals "ppm"
+    /// exactly. The seeded ppm unit may already be present (first test run before any
+    /// ResetTenantDataAsync) or already truncated (subsequent runs) — this helper handles both
+    /// without violating the unique-symbol index.
+    /// </summary>
+    private async Task<MeasureUnit> EnsurePpmUnitAsync()
+    {
+        var existing = await Context.Set<MeasureUnit>().FirstOrDefaultAsync(u => u.Symbol == "ppm");
+        if (existing is not null) return existing;
+
+        var ppm = MeasureUnit.New(Guid.NewGuid(), "ppm", MeasureUnitDimension.Dimensionless, 1m);
+        await Context.Set<MeasureUnit>().AddAsync(ppm);
+        await SaveChangesAsync();
+        return ppm;
+    }
+
+    /// <summary>
+    /// Builds a Pollutant with a unique code/name so per-test ad-hoc pollutants don't collide
+    /// with the fixture-level _configuredPollutant / _unconfiguredPollutant on the unique index.
+    /// </summary>
+    private static Pollutant MakeMolarPollutant(Guid canonicalUnitId, decimal molarMass)
+    {
+        var suffix = Guid.NewGuid().ToString("N")[..8];
+        return Pollutant.New(
+            Guid.NewGuid(),
+            code: $"PPM-{suffix}",
+            name: $"PPM test pollutant {suffix}",
+            category: PollutantCategory.Gas,
+            media: PollutantMedia.Air,
+            defaultDimension: MeasureUnitDimension.MassConcentration,
+            canonicalUnitId: canonicalUnitId,
+            molarMass: molarMass);
     }
 
     // ─── HMAC signing helper ─────────────────────────────────────────────────────

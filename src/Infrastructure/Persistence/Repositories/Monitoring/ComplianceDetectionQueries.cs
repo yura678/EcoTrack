@@ -18,7 +18,8 @@ internal class ComplianceDetectionQueries(ApplicationDbContext context) : ICompl
     // ─── Limit & source tuples ───────────────────────────────────────────────────
 
     public async Task<List<LimitTarget>> GetActiveLimitTargetsAsync(
-        IReadOnlyCollection<LimitType> limitTypes, CancellationToken ct)
+        IReadOnlyCollection<LimitType> limitTypes, CancellationToken ct,
+        Guid? enterpriseId = null)
     {
         var now = DateTime.UtcNow;
         var limits = await context.Set<EmissionLimit>()
@@ -26,7 +27,8 @@ internal class ComplianceDetectionQueries(ApplicationDbContext context) : ICompl
                         && l.ValidFrom <= now
                         && (l.ValidTo == null || l.ValidTo >= now)
                         && l.Permit!.PermitStatus == PermitStatus.Active
-                        && l.Permit!.ValidUntil >= now)
+                        && l.Permit!.ValidUntil >= now
+                        && (enterpriseId == null || l.EnterpriseId == enterpriseId.Value))
             .Select(l => new
             {
                 l.Id, l.EmissionSourceId, l.InstallationId, l.PollutantId,
@@ -93,7 +95,8 @@ internal class ComplianceDetectionQueries(ApplicationDbContext context) : ICompl
     }
 
     public async Task<List<MaterializationTuple>> GetActiveMaterializationTuplesAsync(
-        IReadOnlyCollection<LimitType> limitTypes, CancellationToken ct)
+        IReadOnlyCollection<LimitType> limitTypes, CancellationToken ct,
+        Guid? enterpriseId = null)
     {
         var now = DateTime.UtcNow;
         var limits = await context.Set<EmissionLimit>()
@@ -101,7 +104,8 @@ internal class ComplianceDetectionQueries(ApplicationDbContext context) : ICompl
                         && l.ValidFrom <= now
                         && (l.ValidTo == null || l.ValidTo >= now)
                         && l.Permit!.PermitStatus == PermitStatus.Active
-                        && l.Permit!.ValidUntil >= now)
+                        && l.Permit!.ValidUntil >= now
+                        && (enterpriseId == null || l.EnterpriseId == enterpriseId.Value))
             .Select(l => new { l.EmissionSourceId, l.InstallationId, l.PollutantId, l.Period, l.ValidFrom })
             .ToListAsync(ct);
 
@@ -450,21 +454,24 @@ internal class ComplianceDetectionQueries(ApplicationDbContext context) : ICompl
 
     // ─── Devices & calibration ──────────────────────────────────────────────────
 
-    public async Task<IReadOnlyList<OperationalDevice>> GetOperationalDevicesAsync(CancellationToken ct)
+    public async Task<IReadOnlyList<OperationalDevice>> GetOperationalDevicesAsync(
+        CancellationToken ct, Guid? enterpriseId = null)
     {
         var rows = await context.Set<MonitoringDevice>()
-            .Where(d => d.Status == DeviceStatus.Operational && d.EmissionSourceId != null)
+            .Where(d => d.Status == DeviceStatus.Operational && d.EmissionSourceId != null
+                        && (enterpriseId == null || d.EnterpriseId == enterpriseId.Value))
             .Select(d => new OperationalDevice(d.Id, d.EmissionSourceId!.Value, d.InstalledAt))
             .ToListAsync(ct);
         return rows;
     }
 
     public async Task<IReadOnlyList<DeviceCalibrationSnapshot>> GetDevicesWithLatestCalibrationAsync(
-        CancellationToken ct)
+        CancellationToken ct, Guid? enterpriseId = null)
     {
         // Subquery in Select is translated to LATERAL JOIN by Npgsql provider — one SQL trip.
         var rows = await context.Set<MonitoringDevice>()
-            .Where(d => d.Status == DeviceStatus.Operational && d.EmissionSourceId != null)
+            .Where(d => d.Status == DeviceStatus.Operational && d.EmissionSourceId != null
+                        && (enterpriseId == null || d.EnterpriseId == enterpriseId.Value))
             .Select(d => new
             {
                 d.Id,
@@ -743,27 +750,38 @@ internal class ComplianceDetectionQueries(ApplicationDbContext context) : ICompl
     }
 
     public async Task<IReadOnlyList<OutOfRangeWindow>> GetOutOfRangeWindowsAsync(
-        DateTime from, DateTime to, decimal threshold, int minSampleCount, CancellationToken ct)
+        DateTime from, DateTime to, decimal threshold, int minSampleCount, CancellationToken ct,
+        Guid? enterpriseId = null)
     {
         // Quality.Invalid is 3 — see Domain.Entities.Monitoring.Quality enum.
-        var sql = @"
+        // Per-tenant scope: JOIN to emission_source only when enterpriseId is provided so the
+        // unscoped legacy hot path keeps its hypertable-friendly single-table scan.
+        var tenantJoin = enterpriseId.HasValue
+            ? "JOIN emission_source es ON es.id = rm.emission_source_id AND es.enterprise_id = @enterprise_id"
+            : "";
+        var sql = $@"
             SELECT
-                emission_source_id,
-                device_id,
-                pollutant_id,
+                rm.emission_source_id,
+                rm.device_id,
+                rm.pollutant_id,
                 COUNT(*)::bigint AS total,
-                COUNT(*) FILTER (WHERE quality = 3)::bigint AS invalid_count
-            FROM raw_measurement
-            WHERE time >= @from AND time < @to
-            GROUP BY emission_source_id, device_id, pollutant_id
+                COUNT(*) FILTER (WHERE rm.quality = 3)::bigint AS invalid_count
+            FROM raw_measurement rm
+            {tenantJoin}
+            WHERE rm.time >= @from AND rm.time < @to
+            GROUP BY rm.emission_source_id, rm.device_id, rm.pollutant_id
             HAVING COUNT(*) >= @min_samples
-               AND (COUNT(*) FILTER (WHERE quality = 3))::numeric / COUNT(*) > @threshold";
+               AND (COUNT(*) FILTER (WHERE rm.quality = 3))::numeric / COUNT(*) > @threshold";
 
         await using var command = await CreateCommandAsync(sql, ct);
         AddParam(command, "from", NpgsqlDbType.TimestampTz, EnsureUtc(from));
         AddParam(command, "to", NpgsqlDbType.TimestampTz, EnsureUtc(to));
         AddParam(command, "min_samples", NpgsqlDbType.Bigint, (long)minSampleCount);
         AddParam(command, "threshold", NpgsqlDbType.Numeric, threshold);
+        if (enterpriseId.HasValue)
+        {
+            AddParam(command, "enterprise_id", NpgsqlDbType.Uuid, enterpriseId.Value);
+        }
 
         var list = new List<OutOfRangeWindow>();
         await using var reader = await command.ExecuteReaderAsync(ct);

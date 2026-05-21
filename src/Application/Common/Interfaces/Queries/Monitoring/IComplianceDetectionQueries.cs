@@ -100,8 +100,12 @@ public record OutOfRangeWindow(
 public interface IComplianceDetectionQueries
 {
     // ── Limit & source tuples ───────────────────────────────────────────────
+    /// <param name="enterpriseId">When non-null, scope the result to a single tenant. Null
+    /// preserves the legacy "all enterprises" semantic for hosted-service callers that fan
+    /// out internally; per-enterprise Hangfire jobs pass an explicit id.</param>
     Task<List<LimitTarget>> GetActiveLimitTargetsAsync(
-        IReadOnlyCollection<LimitType> limitTypes, CancellationToken ct);
+        IReadOnlyCollection<LimitType> limitTypes, CancellationToken ct,
+        Guid? enterpriseId = null);
 
     /// <summary>
     /// Loads currently-active limits by Id (validity + permit state checked) — used by the
@@ -110,8 +114,11 @@ public interface IComplianceDetectionQueries
     Task<Dictionary<Guid, LimitTarget>> GetActiveLimitsByIdsAsync(
         IReadOnlyCollection<Guid> limitIds, CancellationToken ct);
 
+    /// <param name="enterpriseId">When non-null, scope the result to a single tenant. Same
+    /// semantic as <see cref="GetActiveLimitTargetsAsync"/>.</param>
     Task<List<MaterializationTuple>> GetActiveMaterializationTuplesAsync(
-        IReadOnlyCollection<LimitType> limitTypes, CancellationToken ct);
+        IReadOnlyCollection<LimitType> limitTypes, CancellationToken ct,
+        Guid? enterpriseId = null);
 
     // ── Reference lookups ───────────────────────────────────────────────────
     Task<Dictionary<Guid, UnitInfo>> GetUnitsAsync(
@@ -187,10 +194,13 @@ public interface IComplianceDetectionQueries
         CancellationToken ct);
 
     // ── Devices & calibration ───────────────────────────────────────────────
-    Task<IReadOnlyList<OperationalDevice>> GetOperationalDevicesAsync(CancellationToken ct);
+    /// <param name="enterpriseId">When non-null, scope to a single tenant.</param>
+    Task<IReadOnlyList<OperationalDevice>> GetOperationalDevicesAsync(
+        CancellationToken ct, Guid? enterpriseId = null);
 
+    /// <param name="enterpriseId">When non-null, scope to a single tenant.</param>
     Task<IReadOnlyList<DeviceCalibrationSnapshot>> GetDevicesWithLatestCalibrationAsync(
-        CancellationToken ct);
+        CancellationToken ct, Guid? enterpriseId = null);
 
     /// <summary>
     /// Latest raw_measurement time per device, restricted to rows newer than <paramref name="since"/>.
@@ -273,10 +283,12 @@ public interface IComplianceDetectionQueries
     /// Quality=Invalid rows over the window exceeds <paramref name="threshold"/> AND whose total
     /// row count is at least <paramref name="minSampleCount"/>.
     /// </summary>
+    /// <param name="enterpriseId">When non-null, scope to a single tenant via emission_source.</param>
     Task<IReadOnlyList<OutOfRangeWindow>> GetOutOfRangeWindowsAsync(
         DateTime from,
         DateTime to,
         decimal threshold,
         int minSampleCount,
-        CancellationToken ct);
+        CancellationToken ct,
+        Guid? enterpriseId = null);
 }

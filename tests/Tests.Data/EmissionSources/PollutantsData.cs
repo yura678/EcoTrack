@@ -8,7 +8,7 @@ public static class PollutantsData
     public static Pollutant FirstTestPollutant(Guid canonicalUnitId, decimal? molarMass = null)
         => Pollutant.New(
             Guid.NewGuid(),
-            code: "NOX",
+            code: "NOX-test",
             name: "Nitrogen oxides",
             category: PollutantCategory.Gas,
             media: PollutantMedia.Air,
@@ -20,7 +20,7 @@ public static class PollutantsData
     public static Pollutant SecondTestPollutant(Guid canonicalUnitId, decimal? molarMass = null)
         => Pollutant.New(
             Guid.NewGuid(),
-            code: "CO2",
+            code: "CO2-test",
             name: "Сarbon dioxide",
             category: PollutantCategory.Gas,
             media: PollutantMedia.Air,
@@ -31,7 +31,7 @@ public static class PollutantsData
     public static Pollutant WithO2Reference(decimal o2Ref, Guid canonicalUnitId)
         => Pollutant.New(
             Guid.NewGuid(),
-            code: "NOX-O2",
+            code: "NOX-O2-test",
             name: "Test NOX with O2 reference",
             category: PollutantCategory.Gas,
             media: PollutantMedia.Air,
