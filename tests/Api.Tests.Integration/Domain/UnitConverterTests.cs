@@ -136,4 +136,67 @@ public class UnitConverterTests
         var act = () => UnitConverter.ToCanonical(100m, Ppm(), pollutant, ug);
         act.Should().Throw<ArgumentException>().WithMessage("*canonicalUnit.Id*");
     }
+
+    // ─── Try-pattern: hot-path callers must never throw ─────────────────────────
+
+    [Fact]
+    public void TryToCanonicalShouldReturnTrueAndValueOnLinearConversion()
+    {
+        var ok = UnitConverter.TryToCanonical(
+            2.5m, GPerM3(), MgPerM3(), molarMass: null,
+            out var result, out var error);
+
+        ok.Should().BeTrue();
+        result.Should().Be(2500m);
+        error.Should().BeNull();
+    }
+
+    [Fact]
+    public void TryToCanonicalShouldReturnTrueAndValueOnPpmConversion()
+    {
+        var ok = UnitConverter.TryToCanonical(
+            100m, Ppm(), MgPerM3(), molarMass: 28.01m,
+            out var result, out var error);
+
+        ok.Should().BeTrue();
+        result.Should().BeApproximately(124.9665m, 0.001m);
+        error.Should().BeNull();
+    }
+
+    [Fact]
+    public void TryToCanonicalShouldReturnFalseAndErrorWhenMolarMassMissing()
+    {
+        var ok = UnitConverter.TryToCanonical(
+            100m, Ppm(), MgPerM3(), molarMass: null,
+            out var result, out var error);
+
+        ok.Should().BeFalse();
+        result.Should().Be(0m);
+        error.Should().NotBeNull().And.Contain("molar mass");
+    }
+
+    [Fact]
+    public void TryToCanonicalShouldReturnFalseAndErrorOnIncompatibleDimensions()
+    {
+        var ok = UnitConverter.TryToCanonical(
+            1m, CubicMetersPerHour(), MgPerM3(), molarMass: 28m,
+            out var result, out var error);
+
+        ok.Should().BeFalse();
+        result.Should().Be(0m);
+        error.Should().NotBeNull().And.Contain("No conversion path");
+    }
+
+    [Fact]
+    public void TryToCanonicalShouldShortCircuitIdentity()
+    {
+        var mg = MgPerM3();
+        var ok = UnitConverter.TryToCanonical(
+            42m, mg, mg, molarMass: null,
+            out var result, out var error);
+
+        ok.Should().BeTrue();
+        result.Should().Be(42m);
+        error.Should().BeNull();
+    }
 }

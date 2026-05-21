@@ -197,6 +197,143 @@ public class RawIngestControllerTests : BaseIntegrationTest, IAsyncLifetime
         row.Quality.Should().Be(Quality.Invalid);
     }
 
+    [Fact]
+    public async Task ShouldReject422WhenUnitDimensionIncompatibleWithCanonical()
+    {
+        // Pollutant canonical = mg/m³ (MassConcentration). Device ships kg/h (MassFlow) —
+        // UnitConverter has no conversion path. The whole batch must fail with the offending
+        // row called out so the operator can fix the device or the capability.
+        var kgh = MeasureUnitsData.KgPerHour();
+        await Context.Set<MeasureUnit>().AddAsync(kgh);
+        await SaveChangesAsync();
+
+        var body = new[]
+        {
+            new RawMeasurementIngestDto(
+                Time: DateTime.UtcNow.AddMinutes(-1),
+                EmissionSourceId: _source.Id,
+                PollutantId: _configuredPollutant.Id,
+                UnitId: kgh.Id,
+                RawValue: 5m,
+                Quality: Quality.Valid)
+        };
+
+        var response = await SignAndSendAsync(body);
+        response.StatusCode.Should().Be(HttpStatusCode.UnprocessableEntity);
+        var responseBody = await response.Content.ReadAsStringAsync();
+        responseBody.Should().Contain("\"rowIndex\":0");
+        responseBody.Should().Contain(kgh.Symbol);
+        responseBody.Should().Contain(_mg.Symbol);
+        responseBody.Should().Contain("No conversion path");
+
+        var rawCount = await Context.Set<RawMeasurement>()
+            .Where(r => r.DeviceId == _device.Id)
+            .CountAsync();
+        rawCount.Should().Be(0, "no row may be persisted when the batch is rejected");
+    }
+
+    [Fact]
+    public async Task ShouldReject422WhenPpmSentForPollutantWithoutMolarMass()
+    {
+        // ppm → mg/m³ needs MolarMass. _configuredPollutant has none → batch fails and the
+        // failure reason names the missing molar mass so the operator knows what to add.
+        var ppm = MeasureUnit.New(Guid.NewGuid(), "ppm", MeasureUnitDimension.Dimensionless, 1m);
+        await Context.Set<MeasureUnit>().AddAsync(ppm);
+        await SaveChangesAsync();
+
+        var body = new[]
+        {
+            new RawMeasurementIngestDto(
+                Time: DateTime.UtcNow.AddMinutes(-1),
+                EmissionSourceId: _source.Id,
+                PollutantId: _configuredPollutant.Id,
+                UnitId: ppm.Id,
+                RawValue: 50m,
+                Quality: Quality.Valid)
+        };
+
+        var response = await SignAndSendAsync(body);
+        response.StatusCode.Should().Be(HttpStatusCode.UnprocessableEntity);
+        var responseBody = await response.Content.ReadAsStringAsync();
+        responseBody.Should().Contain("\"rowIndex\":0");
+        responseBody.Should().Contain("ppm");
+        responseBody.Should().Contain("molar mass");
+
+        var rawCount = await Context.Set<RawMeasurement>()
+            .Where(r => r.DeviceId == _device.Id)
+            .CountAsync();
+        rawCount.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task ShouldAcceptPpmReadingWhenPollutantHasMolarMass()
+    {
+        // NO₂-style pollutant: canonical mg/m³, M = 46 g/mol. Capability range 0..500 mg/m³.
+        // Device ships 100 ppm → canonical 100 × 46 / 22.414 ≈ 205.23 mg/m³, inside range → Valid.
+        var ppm = MeasureUnit.New(Guid.NewGuid(), "ppm", MeasureUnitDimension.Dimensionless, 1m);
+        var pollutantWithMolar = PollutantsData.SecondTestPollutant(_mg.Id, molarMass: 46m);
+        var capability = DevicePollutantCapability.New(
+            id: Guid.NewGuid(), deviceId: _device.Id, pollutantId: pollutantWithMolar.Id,
+            rangeMin: 0m, rangeMax: 500m, rangeUnitId: _mg.Id, accuracyClass: "Class 2");
+        await Context.Set<MeasureUnit>().AddAsync(ppm);
+        await Context.Set<Pollutant>().AddAsync(pollutantWithMolar);
+        await Context.Set<DevicePollutantCapability>().AddAsync(capability);
+        await SaveChangesAsync();
+
+        var body = new[]
+        {
+            new RawMeasurementIngestDto(
+                Time: DateTime.UtcNow.AddMinutes(-1),
+                EmissionSourceId: _source.Id,
+                PollutantId: pollutantWithMolar.Id,
+                UnitId: ppm.Id,
+                RawValue: 100m,
+                Quality: Quality.Valid)
+        };
+
+        var response = await SignAndSendAsync(body);
+        response.StatusCode.Should().Be(HttpStatusCode.Accepted);
+        var row = await Context.Set<RawMeasurement>()
+            .Where(r => r.DeviceId == _device.Id)
+            .SingleAsync();
+        row.Quality.Should().Be(Quality.Valid, "100 ppm ≈ 205 mg/m³ is inside the 0..500 range");
+        row.RawValue.Should().Be(100m, "the raw value is persisted as the device sent it");
+        row.UnitId.Should().Be(ppm.Id);
+    }
+
+    [Fact]
+    public async Task ShouldForceInvalidWhenPpmReadingExceedsCanonicalRange()
+    {
+        // 1000 ppm × 46 / 22.414 ≈ 2052 mg/m³ — outside 0..500 → forced Invalid (still persisted).
+        var ppm = MeasureUnit.New(Guid.NewGuid(), "ppm", MeasureUnitDimension.Dimensionless, 1m);
+        var pollutantWithMolar = PollutantsData.SecondTestPollutant(_mg.Id, molarMass: 46m);
+        var capability = DevicePollutantCapability.New(
+            id: Guid.NewGuid(), deviceId: _device.Id, pollutantId: pollutantWithMolar.Id,
+            rangeMin: 0m, rangeMax: 500m, rangeUnitId: _mg.Id, accuracyClass: "Class 2");
+        await Context.Set<MeasureUnit>().AddAsync(ppm);
+        await Context.Set<Pollutant>().AddAsync(pollutantWithMolar);
+        await Context.Set<DevicePollutantCapability>().AddAsync(capability);
+        await SaveChangesAsync();
+
+        var body = new[]
+        {
+            new RawMeasurementIngestDto(
+                Time: DateTime.UtcNow.AddMinutes(-1),
+                EmissionSourceId: _source.Id,
+                PollutantId: pollutantWithMolar.Id,
+                UnitId: ppm.Id,
+                RawValue: 1000m,
+                Quality: Quality.Valid)
+        };
+
+        var response = await SignAndSendAsync(body);
+        response.StatusCode.Should().Be(HttpStatusCode.Accepted);
+        var row = await Context.Set<RawMeasurement>()
+            .Where(r => r.DeviceId == _device.Id)
+            .SingleAsync();
+        row.Quality.Should().Be(Quality.Invalid);
+    }
+
     // ─── HMAC signing helper ─────────────────────────────────────────────────────
 
     private async Task<HttpResponseMessage> SignAndSendAsync<TBody>(TBody body)

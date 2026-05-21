@@ -174,18 +174,18 @@ public class MeasurementMaterializationService(
                                 entry.UnitId, tuple.SourceId, tuple.PollutantId, windowStart);
                             continue;
                         }
-                        try
+                        if (UnitConverter.TryToCanonical(
+                                entry.Avg.Value, fromUnit, canonicalUnit, canonical.MolarMass,
+                                out var canonicalSliceAvg, out var conversionError))
                         {
-                            var canonicalSliceAvg = UnitConverter.ToCanonical(
-                                entry.Avg.Value, fromUnit, canonicalUnit, canonical.MolarMass);
                             weightedSum += canonicalSliceAvg * entry.SampleCount;
                             totalSampleCount += entry.SampleCount;
                         }
-                        catch (UnitConversionException ex)
+                        else
                         {
-                            logger.LogWarning(ex,
-                                "Cannot convert {Symbol} to canonical {CanonicalSymbol} for pollutant {Pollutant}; slice dropped.",
-                                fromUnit.Symbol, canonicalUnit.Symbol, tuple.PollutantId);
+                            logger.LogWarning(
+                                "Cannot convert {Symbol} to canonical {CanonicalSymbol} for pollutant {Pollutant}: {Reason}; slice dropped.",
+                                fromUnit.Symbol, canonicalUnit.Symbol, tuple.PollutantId, conversionError);
                         }
                     }
 

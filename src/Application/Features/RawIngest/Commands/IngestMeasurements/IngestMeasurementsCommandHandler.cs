@@ -1,7 +1,9 @@
 using Application.Common.Interfaces.Ingestion;
+using Application.Common.Interfaces.Queries.Emissions;
 using Application.Common.Interfaces.Queries.Monitoring;
 using Application.Features.RawIngest.Exceptions;
 using Domain.Entities.Monitoring;
+using Domain.Services;
 using LanguageExt;
 using MediatR;
 
@@ -10,6 +12,7 @@ namespace Application.Features.RawIngest.Commands.IngestMeasurements;
 public class IngestMeasurementsCommandHandler(
     IRawMeasurementWriter writer,
     IDevicePollutantCapabilityQueries capabilityQueries,
+    IPollutantQueries pollutantQueries,
     IMeasureUnitQueries unitQueries)
     : IRequestHandler<IngestMeasurementsCommand,
         Either<RawIngestException, IngestMeasurementsResult>>
@@ -35,26 +38,40 @@ public class IngestMeasurementsCommandHandler(
                 return new UnconfiguredDevicePollutantsException(request.DeviceId, missing);
             }
 
-            // Range check: load capability ranges + the units involved so we can compare in
-            // base units. Out-of-range values get their Quality forced to Invalid so downstream
-            // detection ignores them. Quality already non-Valid (Calibration/Maintenance/etc.)
-            // is left alone — those carry a more specific reason than "out of range".
+            // Canonical-unit gate: load each pollutant's CanonicalUnitId + MolarMass plus every
+            // MeasureUnit involved (batch units, canonical units, capability range units) so the
+            // per-row convertibility check is pure in-memory and produces a single batch-wide
+            // pass/fail decision.
+            var pollutants = (await pollutantQueries.GetByIdsAsync(requestedPollutants, cancellationToken))
+                .ToDictionary(p => p.Id);
             var capabilityRanges = await capabilityQueries.GetCapabilityRangesForDeviceAsync(
                 request.DeviceId, requestedPollutants, cancellationToken);
             var unitIds = request.Batch.Select(b => b.UnitId)
                 .Concat(capabilityRanges.Values.Select(c => c.RangeUnitId))
+                .Concat(pollutants.Values.Select(p => p.CanonicalUnitId))
                 .Distinct()
                 .ToList();
             var units = (await unitQueries.GetByIdsAsync(unitIds, cancellationToken))
                 .ToDictionary(u => u.Id);
 
-            var entities = request.Batch.Select(b =>
+            var failures = new List<UnconvertibleUnitFailure>();
+            var qualities = new Quality[request.Batch.Count];
+            for (var i = 0; i < request.Batch.Count; i++)
             {
-                var effectiveQuality = DecideQuality(b, capabilityRanges, units);
-                return RawMeasurement.New(
-                    b.Time.ToUniversalTime(), b.EmissionSourceId, b.PollutantId, request.DeviceId,
-                    b.UnitId, b.RawValue, effectiveQuality);
-            });
+                qualities[i] = EvaluateRow(
+                    rowIndex: i,
+                    input: request.Batch[i],
+                    pollutants, capabilityRanges, units, failures);
+            }
+
+            if (failures.Count > 0)
+            {
+                return new UnconvertibleUnitsException(request.DeviceId, failures);
+            }
+
+            var entities = request.Batch.Select((b, i) => RawMeasurement.New(
+                b.Time.ToUniversalTime(), b.EmissionSourceId, b.PollutantId, request.DeviceId,
+                b.UnitId, b.RawValue, qualities[i]));
             var inserted = await writer.WriteBatchAsync(entities, cancellationToken);
             return new IngestMeasurementsResult(inserted);
         }
@@ -64,21 +81,63 @@ public class IngestMeasurementsCommandHandler(
         }
     }
 
-    private static Quality DecideQuality(
+    /// <summary>
+    /// Returns the effective Quality for one row and accumulates any conversion failures into
+    /// <paramref name="failures"/>. Quality already non-Valid (Calibration/Maintenance/etc.) is
+    /// left alone — those carry a more specific reason than "out of range". A row that fails to
+    /// convert is recorded as a failure; its Quality value is incidental because the whole batch
+    /// will be rejected upstream.
+    /// </summary>
+    private static Quality EvaluateRow(
+        int rowIndex,
         IngestMeasurementInput input,
+        IReadOnlyDictionary<Guid, Domain.Entities.EmissionSources.Pollutant> pollutants,
         IReadOnlyDictionary<Guid, DeviceCapabilityRange> capabilityRanges,
-        IReadOnlyDictionary<Guid, MeasureUnit> units)
+        IReadOnlyDictionary<Guid, MeasureUnit> units,
+        List<UnconvertibleUnitFailure> failures)
     {
+        if (!pollutants.TryGetValue(input.PollutantId, out var pollutant)) return input.Quality;
+        if (!units.TryGetValue(pollutant.CanonicalUnitId, out var canonicalUnit)) return input.Quality;
+        if (!units.TryGetValue(input.UnitId, out var measurementUnit)) return input.Quality;
+
+        // TryToCanonical instead of throwing — a misconfigured device can ship a 1000-row batch
+        // where every entry fails; each thrown exception captures a stack trace and would melt
+        // a CPU core for nothing.
+        if (!UnitConverter.TryToCanonical(
+                input.RawValue, measurementUnit, canonicalUnit, pollutant.MolarMass,
+                out var valueCanonical, out var readingError))
+        {
+            failures.Add(new UnconvertibleUnitFailure(
+                rowIndex, pollutant.Id,
+                measurementUnit.Id, measurementUnit.Symbol,
+                canonicalUnit.Id, canonicalUnit.Symbol,
+                readingError!));
+            return input.Quality;
+        }
+
         if (input.Quality != Quality.Valid) return input.Quality;
         if (!capabilityRanges.TryGetValue(input.PollutantId, out var range)) return input.Quality;
-        if (!units.TryGetValue(input.UnitId, out var measurementUnit)) return input.Quality;
         if (!units.TryGetValue(range.RangeUnitId, out var rangeUnit)) return input.Quality;
-        if (measurementUnit.Dimension != rangeUnit.Dimension) return input.Quality;
 
-        var valueBase = input.RawValue * measurementUnit.ToBaseFactor;
-        var minBase = range.RangeMin * rangeUnit.ToBaseFactor;
-        var maxBase = range.RangeMax * rangeUnit.ToBaseFactor;
-        var outOfRange = valueBase < minBase || valueBase > maxBase;
+        if (!UnitConverter.TryToCanonical(
+                range.RangeMin, rangeUnit, canonicalUnit, pollutant.MolarMass,
+                out var minCanonical, out var minError)
+            || !UnitConverter.TryToCanonical(
+                range.RangeMax, rangeUnit, canonicalUnit, pollutant.MolarMass,
+                out var maxCanonical, out _))
+        {
+            // Operator-declared capability range can't be reconciled with the pollutant's
+            // canonical — report under the offending row so the UI can flag both the device
+            // and the misconfigured capability.
+            failures.Add(new UnconvertibleUnitFailure(
+                rowIndex, pollutant.Id,
+                rangeUnit.Id, rangeUnit.Symbol,
+                canonicalUnit.Id, canonicalUnit.Symbol,
+                $"Capability range unit cannot be converted to canonical: {minError}"));
+            return input.Quality;
+        }
+
+        var outOfRange = valueCanonical < minCanonical || valueCanonical > maxCanonical;
         return outOfRange ? Quality.Invalid : input.Quality;
     }
 }
