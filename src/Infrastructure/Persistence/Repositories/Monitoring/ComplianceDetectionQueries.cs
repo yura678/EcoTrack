@@ -2,6 +2,7 @@ using Application.Common.Interfaces.Queries.Monitoring;
 using Domain.Entities.EmissionSources;
 using Domain.Entities.Enterprises;
 using Domain.Entities.Monitoring;
+using Domain.Services;
 using Microsoft.EntityFrameworkCore;
 using Npgsql;
 using NpgsqlTypes;
@@ -710,15 +711,16 @@ internal class ComplianceDetectionQueries(ApplicationDbContext context) : ICompl
             IReadOnlyCollection<Guid> sourceIds, IReadOnlyCollection<Guid> pollutantIds,
             DateTime from, DateTime to, CancellationToken ct)
     {
-        // Reads from measurement_1m (1-min CA) for ~60× faster annual scans vs raw_measurement.
-        // valid_sum / valid_count gives a true valid-only average.
+        // Per-(source, pollutant, unit_id) valid-only slice. C# folds slices into the pollutant's
+        // canonical unit so AnnualLoad detection compares apples to apples across device-swaps
+        // that changed the reporting unit mid-period (Phase 5c).
         var sql = @"
             SELECT
                 m.emission_source_id,
                 m.pollutant_id,
-                (SUM(m.valid_sum) / NULLIF(SUM(m.valid_count), 0))::numeric(18,6) AS avg_rate,
-                COALESCE(SUM(m.valid_count), 0)::bigint AS samples,
-                (array_agg(m.unit_id))[1] AS unit_id
+                m.unit_id,
+                SUM(m.valid_sum)::numeric(18,6) AS valid_sum,
+                COALESCE(SUM(m.valid_count), 0)::bigint AS valid_count
             FROM measurement_1m m
             JOIN emission_source es ON es.id = m.emission_source_id
             WHERE m.emission_source_id = ANY(@source_ids)
@@ -726,7 +728,7 @@ internal class ComplianceDetectionQueries(ApplicationDbContext context) : ICompl
               AND m.bucket >= @from
               AND m.bucket < @to
               AND es.deleted_at IS NULL
-            GROUP BY m.emission_source_id, m.pollutant_id
+            GROUP BY m.emission_source_id, m.pollutant_id, m.unit_id
             HAVING SUM(m.valid_count) > 0";
 
         await using var command = await CreateCommandAsync(sql, ct);
@@ -735,19 +737,62 @@ internal class ComplianceDetectionQueries(ApplicationDbContext context) : ICompl
         AddParam(command, "from", NpgsqlDbType.TimestampTz, EnsureUtc(from));
         AddParam(command, "to", NpgsqlDbType.TimestampTz, EnsureUtc(to));
 
-        var dict = new Dictionary<(Guid, Guid), RollingAverage>();
-        await using var reader = await command.ExecuteReaderAsync(ct);
-        while (await reader.ReadAsync(ct))
+        var slices = new List<RollingSlice>();
+        await using (var reader = await command.ExecuteReaderAsync(ct))
         {
-            var sourceId = reader.GetGuid(0);
-            var pollutantId = reader.GetGuid(1);
-            var avg = reader.GetDecimal(2);
-            var samples = reader.GetInt64(3);
-            var unitId = reader.GetGuid(4);
-            dict[(sourceId, pollutantId)] = new RollingAverage(avg, samples, unitId);
+            while (await reader.ReadAsync(ct))
+            {
+                slices.Add(new RollingSlice(
+                    SourceId: reader.GetGuid(0),
+                    PollutantId: reader.GetGuid(1),
+                    UnitId: reader.GetGuid(2),
+                    ValidSum: reader.IsDBNull(3) ? 0m : reader.GetDecimal(3),
+                    ValidCount: reader.GetInt64(4)));
+            }
+        }
+        if (slices.Count == 0) return [];
+
+        var distinctPollutantIds = slices.Select(s => s.PollutantId).Distinct().ToArray();
+        var canonicals = await GetPollutantCanonicalsAsync(distinctPollutantIds, ct);
+        var distinctUnitIds = slices.Select(s => s.UnitId)
+            .Concat(canonicals.Values.Select(c => c.CanonicalUnitId))
+            .Distinct()
+            .ToArray();
+        var unitInfos = await GetUnitsAsync(distinctUnitIds, ct);
+        // Rehydrate UnitInfo into MeasureUnit shadows so UnitConverter (which keys identity off
+        // MeasureUnit.Id) can short-circuit when from-unit equals canonical.
+        var unitEntities = unitInfos.ToDictionary(
+            kvp => kvp.Key,
+            kvp => MeasureUnit.New(kvp.Key, kvp.Value.Symbol, kvp.Value.Dimension, kvp.Value.ToBaseFactor));
+
+        var dict = new Dictionary<(Guid, Guid), RollingAverage>();
+        foreach (var byKey in slices.GroupBy(s => (s.SourceId, s.PollutantId)))
+        {
+            if (!canonicals.TryGetValue(byKey.Key.PollutantId, out var canonical)) continue;
+            if (!unitEntities.TryGetValue(canonical.CanonicalUnitId, out var canonicalUnit)) continue;
+
+            decimal canonicalValidSumTotal = 0m;
+            long validCountTotal = 0;
+            var anyConverted = false;
+            foreach (var s in byKey)
+            {
+                if (!unitEntities.TryGetValue(s.UnitId, out var fromUnit)) continue;
+                if (!UnitConverter.TryToCanonical(
+                        s.ValidSum, fromUnit, canonicalUnit, canonical.MolarMass,
+                        out var canonicalValidSum, out _)) continue;
+                canonicalValidSumTotal += canonicalValidSum;
+                validCountTotal += s.ValidCount;
+                anyConverted = true;
+            }
+            if (!anyConverted || validCountTotal == 0) continue;
+
+            var avgRate = Math.Round(canonicalValidSumTotal / validCountTotal, 6);
+            dict[byKey.Key] = new RollingAverage(avgRate, validCountTotal, canonical.CanonicalUnitId);
         }
         return dict;
     }
+
+    private record RollingSlice(Guid SourceId, Guid PollutantId, Guid UnitId, decimal ValidSum, long ValidCount);
 
     public async Task<IReadOnlyList<OutOfRangeWindow>> GetOutOfRangeWindowsAsync(
         DateTime from, DateTime to, decimal threshold, int minSampleCount, CancellationToken ct,
