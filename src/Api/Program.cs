@@ -93,6 +93,7 @@ app.UseAuthentication();
 app.UseAuthorization();
 
 app.UseHangfireDashboardWithAuth();
+app.ConfigureDetectionRecurringJobs();
 
 app.MapControllers();
 app.MapHub<ComplianceEventsHub>("/hubs/compliance");
