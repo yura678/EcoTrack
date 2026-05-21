@@ -3,6 +3,7 @@ using Hangfire;
 using Hangfire.PostgreSql;
 using Infrastructure.Compliance.Hangfire;
 using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Hosting;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 
@@ -43,9 +44,10 @@ public static class HangfireServiceCollectionExtensions
 
     public static IApplicationBuilder UseHangfireDashboardWithAuth(this IApplicationBuilder app)
     {
+        var environment = app.ApplicationServices.GetRequiredService<IWebHostEnvironment>();
         app.UseHangfireDashboard("/hangfire", new DashboardOptions
         {
-            Authorization = [new SuperAdminDashboardAuthorizationFilter()]
+            Authorization = [new SuperAdminDashboardAuthorizationFilter(environment)]
         });
         return app;
     }
