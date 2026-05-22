@@ -77,6 +77,38 @@ internal class RoleManagerService : IRoleManagerService
         return (result, result.Succeeded ? role.Id : null);
     }
 
+    public async Task SeedAllDynamicPermissionsAsync(Guid roleId)
+    {
+        var role = await _roleManger.Roles
+            .Include(x => x.Claims)
+            .SingleOrDefaultAsync(x => x.Id == roleId);
+
+        if (role == null)
+            return;
+
+        var allActions = await GetPermissionActionsAsync();
+        var existingKeys = role.Claims
+            .Where(c => c.ClaimType == ConstantPolicies.DynamicPermission)
+            .Select(c => c.ClaimValue)
+            .ToHashSet();
+
+        foreach (var action in allActions)
+        {
+            if (existingKeys.Contains(action.Key))
+                continue;
+
+            role.Claims.Add(new RoleClaim
+            {
+                ClaimType = ConstantPolicies.DynamicPermission,
+                ClaimValue = action.Key,
+                CreatedClaim = DateTime.UtcNow,
+                RoleId = role.Id
+            });
+        }
+
+        await _db.SaveChangesAsync();
+    }
+
     public async Task<bool> DeleteRoleAsync(Guid roleId)
     {
         var role = await _roleManger.Roles.Include(r => r.Claims)

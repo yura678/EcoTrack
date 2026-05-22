@@ -19,15 +19,18 @@ public class JwtService : IJwtService
 {
     private readonly IdentitySettings _siteSetting;
     private readonly AppUserManager _userManager;
+    private readonly AppRoleManager _roleManager;
     private IUserClaimsPrincipalFactory<User> _claimsPrincipal;
 
     private readonly IUnitOfWork _unitOfWork;
 
     public JwtService(IOptions<IdentitySettings> siteSetting, AppUserManager userManager,
+        AppRoleManager roleManager,
         IUserClaimsPrincipalFactory<User> claimsPrincipal, IUnitOfWork unitOfWork)
     {
         _siteSetting = siteSetting.Value;
         _userManager = userManager;
+        _roleManager = roleManager;
         _claimsPrincipal = claimsPrincipal;
         _unitOfWork = unitOfWork;
     }
@@ -65,13 +68,21 @@ public class JwtService : IJwtService
         }
         else if (resolvedEnterpriseId.HasValue)
         {
-            var membership = await _unitOfWork.UserEnterpriseMembershipRepository
+            var membershipOption = await _unitOfWork.UserEnterpriseMembershipRepository
                 .GetActiveByUserAndEnterpriseWithRoleAsync(user.Id, resolvedEnterpriseId.Value, cancellationToken);
-            membership.IfSome(m =>
+            var membershipEntity = membershipOption.Match(Some: x => x, None: () => null!);
+            if (membershipEntity?.Role is not null)
             {
-                if (!string.IsNullOrEmpty(m.Role?.Name))
-                    claims.Add(new Claim(ClaimTypes.Role, m.Role.Name));
-            });
+                if (!string.IsNullOrEmpty(membershipEntity.Role.Name))
+                    claims.Add(new Claim(ClaimTypes.Role, membershipEntity.Role.Name));
+
+                // Membership-scoped role claims (DynamicPermission etc.) — the standard
+                // UserClaimsPrincipalFactory pulls these via IUserRoleStore.GetRolesAsync,
+                // but this codebase stores role assignments in UserEnterpriseMembership
+                // instead of the AspNetUserRoles table, so we project them here.
+                var roleClaims = await _roleManager.GetClaimsAsync(membershipEntity.Role);
+                claims.AddRange(roleClaims);
+            }
         }
 
         if (resolvedEnterpriseId.HasValue)

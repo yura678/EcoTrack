@@ -108,6 +108,8 @@ internal class RegisterEnterpriseAdminCommandHandler(
             return new UserRoleAssignmentException(Guid.Empty, "admin");
         }
 
+        await roleManager.SeedAllDynamicPermissionsAsync(createdRoleId.Value);
+
         await unitOfWork.UserEnterpriseMembershipRepository.AddAsync(
             UserEnterpriseMembership.New(Guid.NewGuid(), user.Id, enterpriseId, createdRoleId.Value),
             cancellationToken);
