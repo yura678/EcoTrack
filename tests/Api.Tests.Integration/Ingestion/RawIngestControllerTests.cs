@@ -233,6 +233,38 @@ public class RawIngestControllerTests : BaseIntegrationTest, IAsyncLifetime
     }
 
     [Fact]
+    public async Task ShouldReject422WhenDeviceShipsUnknownUnitId()
+    {
+        // Device sends a unit ID that doesn't exist in the MeasureUnit table — pre-fix the row
+        // was silently written to raw_measurement with a dangling unit_id (no FK at the
+        // hypertable level), making it un-convertible downstream forever. Now the whole batch
+        // is rejected with a clear failure entry naming the row index.
+        var bogusUnitId = Guid.NewGuid();
+        var body = new[]
+        {
+            new RawMeasurementIngestDto(
+                Time: DateTime.UtcNow.AddMinutes(-1),
+                EmissionSourceId: _source.Id,
+                PollutantId: _configuredPollutant.Id,
+                UnitId: bogusUnitId,
+                RawValue: 100m,
+                Quality: Quality.Valid)
+        };
+
+        var response = await SignAndSendAsync(body);
+        response.StatusCode.Should().Be(HttpStatusCode.UnprocessableEntity);
+        var responseBody = await response.Content.ReadAsStringAsync();
+        responseBody.Should().Contain("\"rowIndex\":0");
+        responseBody.Should().Contain(bogusUnitId.ToString());
+        responseBody.Should().Contain("not registered");
+
+        var rawCount = await Context.Set<RawMeasurement>()
+            .Where(r => r.DeviceId == _device.Id)
+            .CountAsync();
+        rawCount.Should().Be(0, "no row may be persisted when the batch is rejected");
+    }
+
+    [Fact]
     public async Task ShouldReject422WhenPpmSentForPollutantWithoutMolarMass()
     {
         // ppm → mg/m³ needs MolarMass. _configuredPollutant has none → batch fails and the

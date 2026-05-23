@@ -96,9 +96,40 @@ public class IngestMeasurementsCommandHandler(
         IReadOnlyDictionary<Guid, MeasureUnit> units,
         List<UnconvertibleUnitFailure> failures)
     {
-        if (!pollutants.TryGetValue(input.PollutantId, out var pollutant)) return input.Quality;
-        if (!units.TryGetValue(pollutant.CanonicalUnitId, out var canonicalUnit)) return input.Quality;
-        if (!units.TryGetValue(input.UnitId, out var measurementUnit)) return input.Quality;
+        // Defensive lookups. Pollutant/CanonicalUnit lookups are DB-prevented by FK Restrict on
+        // DevicePollutantCapability and Pollutant.CanonicalUnit, so missing here would mean a
+        // racy schema state. The measurement-unit case is real: the device can ship any GUID.
+        // Either way, surface as a failure so the batch returns 422 with diagnostics instead of
+        // writing un-convertible data to raw_measurement.
+        if (!pollutants.TryGetValue(input.PollutantId, out var pollutant))
+        {
+            failures.Add(new UnconvertibleUnitFailure(
+                rowIndex, input.PollutantId,
+                input.UnitId, "(unknown)", Guid.Empty, "(unknown)",
+                $"Pollutant {input.PollutantId} not found — capability references a pollutant " +
+                "that no longer exists."));
+            return input.Quality;
+        }
+        if (!units.TryGetValue(pollutant.CanonicalUnitId, out var canonicalUnit))
+        {
+            failures.Add(new UnconvertibleUnitFailure(
+                rowIndex, pollutant.Id,
+                input.UnitId, "(unknown)",
+                pollutant.CanonicalUnitId, "(unknown)",
+                $"Pollutant {pollutant.Id}'s canonical unit {pollutant.CanonicalUnitId} is not " +
+                "registered in the MeasureUnit table."));
+            return input.Quality;
+        }
+        if (!units.TryGetValue(input.UnitId, out var measurementUnit))
+        {
+            failures.Add(new UnconvertibleUnitFailure(
+                rowIndex, pollutant.Id,
+                input.UnitId, "(unknown)",
+                canonicalUnit.Id, canonicalUnit.Symbol,
+                $"Unit {input.UnitId} shipped by the device is not registered in the " +
+                "MeasureUnit table; register it or fix the device configuration."));
+            return input.Quality;
+        }
 
         // TryToCanonical instead of throwing — a misconfigured device can ship a 1000-row batch
         // where every entry fails; each thrown exception captures a stack trace and would melt
