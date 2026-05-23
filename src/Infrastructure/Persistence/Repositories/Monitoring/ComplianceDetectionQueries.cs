@@ -458,6 +458,19 @@ internal class ComplianceDetectionQueries(ApplicationDbContext context) : ICompl
             r => new PollutantCanonical(r.CanonicalUnitId, r.MolarMass));
     }
 
+    public async Task RefreshMeasurement1mCaAsync(DateTime from, DateTime to, CancellationToken ct)
+    {
+        // Uses the shared DbContext connection so Npgsql password/SSL config is inherited from
+        // the data source. Timescale's "no explicit transaction" rule still holds — EF doesn't
+        // open one for ExecuteNonQuery, and the materializer's own SaveChanges runs only after
+        // the per-period loop completes.
+        await using var command = await CreateCommandAsync(
+            "CALL refresh_continuous_aggregate('measurement_1m', @from, @to);", ct);
+        AddParam(command, "from", NpgsqlDbType.TimestampTz, EnsureUtc(from));
+        AddParam(command, "to", NpgsqlDbType.TimestampTz, EnsureUtc(to));
+        await command.ExecuteNonQueryAsync(ct);
+    }
+
     // ─── Devices & calibration ──────────────────────────────────────────────────
 
     public async Task<IReadOnlyList<OperationalDevice>> GetOperationalDevicesAsync(

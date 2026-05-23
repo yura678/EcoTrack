@@ -421,6 +421,61 @@ public class MeasurementMaterializationServiceTests : BaseIntegrationTest, IAsyn
     }
 
     [Fact]
+    public async Task ShouldPickUpLateRawArrivingOlderThanCaPolicyWindow()
+    {
+        // Production CA policy refreshes only the last 2h of measurement_1m every 5 min. If raw
+        // data arrives late (e.g. CEMS buffered for 4h after a network outage), the policy will
+        // never refresh the bucket it lands in. Without the materializer's own refresh for the
+        // older portion of its rescan span, the late row would propagate to raw_measurement but
+        // never reach Measurement → silent data loss for compliance.
+        //
+        // This test exercises ONLY the production CA policy (refresh covering the last 2h) and
+        // does NOT call the test's NULL,NULL fixture refresh, so the materializer's targeted
+        // refresh is what actually pulls the 4h-old raw into the aggregate.
+        var pollutant = PollutantsData.FirstTestPollutant(_mg.Id);
+        await Context.Set<Pollutant>().AddAsync(pollutant);
+        var (permit, limit) = ActivePermitWithLimit(pollutant.Id, 1000m);
+        await Context.Set<Permit>().AddAsync(permit);
+        await Context.Set<EmissionLimit>().AddAsync(limit);
+
+        // Pre-existing Measurement at -1h anchors the tuple's history → tupleStart reaches
+        // back 6h (default LateArrivingRescanWindows × Hour1), including the late window.
+        var oneHourAgoEnd = _windowEnd.AddHours(-1);
+        await Context.Set<Measurement>().AddAsync(Measurement.New(
+            id: Guid.NewGuid(),
+            windowStart: oneHourAgoEnd.AddHours(-1), windowEnd: oneHourAgoEnd,
+            window: AveragingWindow.Hour1, aggregation: Aggregation.Average,
+            emissionSourceId: _source.Id, pollutantId: pollutant.Id,
+            deviceId: _device.Id, unitId: _mg.Id,
+            value: 10m, validPointsCount: 60, expectedPointsCount: 60));
+
+        // Late raw lands in the -4h window with full 60-minute coverage at value 99.
+        var lateWindowStart = _windowEnd.AddHours(-4);
+        var lateWindowEnd = lateWindowStart.AddHours(1);
+        await Context.Set<RawMeasurement>().AddRangeAsync(
+            Enumerable.Range(0, 60).Select(i => RawMeasurement.New(
+                lateWindowStart.AddMinutes(i).AddSeconds(30),
+                _source.Id, pollutant.Id, _device.Id, _mg.Id, 99m)));
+        await SaveChangesAsync();
+
+        // Mimic the standing policy: refresh only the last 2h. The -4h bucket is OUTSIDE this
+        // window and will not be aggregated by this call.
+        var policyFrom = DateTime.UtcNow.AddHours(-2);
+        await Context.Database.ExecuteSqlRawAsync(
+            $"CALL refresh_continuous_aggregate('measurement_1m', '{policyFrom:O}'::timestamptz, NULL);");
+
+        await RunMaterializationAsync();
+
+        var lateMeasurement = await Context.Set<Measurement>().AsNoTracking()
+            .FirstOrDefaultAsync(m => m.WindowEnd == lateWindowEnd && m.PollutantId == pollutant.Id);
+        lateMeasurement.Should().NotBeNull(
+            "materializer must refresh the older portion of its rescan span so late-arriving " +
+            "raw data older than the CA policy's start_offset still produces a Measurement");
+        lateMeasurement!.Value.Should().BeApproximately(99m, 0.0001m);
+        lateMeasurement.ValidPointsCount.Should().Be(60);
+    }
+
+    [Fact]
     public async Task ShouldLeaveDeviceIdNullForMaterializedAggregates()
     {
         // Materialised rows are aggregates over (source, pollutant, window); the underlying raw

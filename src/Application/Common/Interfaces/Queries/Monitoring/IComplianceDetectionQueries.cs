@@ -181,6 +181,15 @@ public interface IComplianceDetectionQueries
         IReadOnlyCollection<Guid> pollutantIds, CancellationToken ct);
 
     /// <summary>
+    /// Forces a refresh of the <c>measurement_1m</c> continuous aggregate over the given range.
+    /// The standing <c>add_continuous_aggregate_policy</c> covers the last 2 hours; the
+    /// materializer's late-arriving rescan span can reach further back (e.g. 6h for Hour1 with
+    /// the default config), so without this call any raw data arriving >2h late never makes it
+    /// into the aggregate. Must run outside an explicit user transaction (Timescale restriction).
+    /// </summary>
+    Task RefreshMeasurement1mCaAsync(DateTime from, DateTime to, CancellationToken ct);
+
+    /// <summary>
     /// IED substitution lookup: max value among the last N valid Measurement records for
     /// (source, pollutant, period, Average) strictly before <paramref name="beforeWindowStart"/>.
     /// Returns null if no qualifying history exists.

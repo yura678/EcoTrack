@@ -28,6 +28,10 @@ public class MeasurementMaterializationService(
     ILogger<MeasurementMaterializationService> logger)
 {
     private static readonly LimitType[] RateBasedLimits = [LimitType.Concentration, LimitType.MassFlow];
+    // Mirror of the start_offset in AddMeasurement1mContinuousAggregate migration; kept here so
+    // the materializer can decide which portion of its rescan span the standing CA policy already
+    // covers. If the migration's start_offset changes, this must change in lockstep.
+    private static readonly TimeSpan CaPolicyWindow = TimeSpan.FromHours(2);
     private readonly ComplianceDetectionSettings _settings = options.Value;
 
     /// <summary>
@@ -109,6 +113,18 @@ public class MeasurementMaterializationService(
 
             var earliest = perTupleStart.Values.DefaultIfEmpty(lastClosedEnd).Min();
             if (earliest >= lastClosedEnd) continue;
+
+            // The standing CA policy refreshes the last 2h of measurement_1m every 5 min. Our
+            // rescan span can reach further back (e.g. 6h for Hour1 with default rescan=6 — and
+            // 6 days for Hour24). For the portion older than the policy's window, late-arriving
+            // raw_measurement rows would never propagate into the CA and we'd silently miss them.
+            // Force-refresh that older slice before reading; the recent 2h is left to the policy
+            // so we don't double-refresh on every tick.
+            var policyStart = now - CaPolicyWindow;
+            if (earliest < policyStart)
+            {
+                await queries.RefreshMeasurement1mCaAsync(earliest, policyStart, cancellationToken);
+            }
 
             var buckets = await queries.GetReBucketedBulkAsync(
                 groupSources, groupPollutants, period, earliest, lastClosedEnd, cancellationToken);
