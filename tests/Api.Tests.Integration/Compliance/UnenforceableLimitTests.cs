@@ -207,6 +207,54 @@ public class UnenforceableLimitTests : BaseIntegrationTest, IAsyncLifetime
     }
 
     [Fact]
+    public async Task ShouldAutoCloseUnenforceableLimitWhenFlowDataStartsArriving()
+    {
+        // Tick 1: kg/h limit + mg/m³ measurement + no flow → no comparison path → UnenforceableLimit.
+        // Operator starts shipping volumetric flow (via _m3h process parameter).
+        // Tick 2: derivation succeeds (Path 3) → LimitExceedance fires AND UnenforceableLimit
+        // auto-closes via the new "successfully evaluated" signal. Pre-fix the auto-close only
+        // checked UnitConverter; the contradictory state (both events open on same limit) would
+        // persist until manual close.
+        var pollutant = PollutantsData.FirstTestPollutant(_mg.Id);
+        await Context.Set<Pollutant>().AddAsync(pollutant);
+        var m3h = MeasureUnitsData.CubicMetersPerHour();
+        await Context.Set<MeasureUnit>().AddAsync(m3h);
+
+        var (permit, limit) = ActivePermitWithLimit(
+            value: 5m, unitId: _kgh.Id, pollutantId: pollutant.Id,
+            limitType: LimitType.MassFlow);
+        await Context.Set<Permit>().AddAsync(permit);
+        await Context.Set<EmissionLimit>().AddAsync(limit);
+
+        await Context.Set<Measurement>().AddAsync(HourlyMeasurement(
+            value: 100m, unitId: _mg.Id, pollutantId: pollutant.Id));
+        await SaveChangesAsync();
+
+        await RunDetectionAsync();
+        var firstPass = await GetEventsAsync(ComplianceEventType.UnenforceableLimit, limit.Id);
+        firstPass.Should().HaveCount(1);
+        firstPass[0].Status.Should().Be(ComplianceEventStatus.Open);
+
+        // Operator starts recording volumetric flow. 100 mg/m³ × 60000 m³/h = 6 kg/h > 5 → exceedance.
+        await Context.Set<RawProcessParameter>().AddAsync(RawProcessParameter.New(
+            _lastClosedHourStart.AddMinutes(30),
+            _source.Id, _device.Id, ParameterType.VolumetricFlow, 60000m, m3h.Id));
+        await SaveChangesAsync();
+
+        await RunDetectionAsync();
+
+        var exceedances = await GetEventsAsync(ComplianceEventType.LimitExceedance, limit.Id);
+        exceedances.Should().HaveCount(1, "derivation now works → exceedance fires");
+
+        var afterFlow = await GetEventsAsync(ComplianceEventType.UnenforceableLimit, limit.Id);
+        afterFlow.Should().HaveCount(1, "the open event is auto-closed, not duplicated");
+        afterFlow[0].Status.Should().Be(ComplianceEventStatus.Closed,
+            "derivation path now evaluates the limit → auto-close fires via the evaluation signal");
+        afterFlow[0].ResolutionReason.Should().Be(ResolutionReason.OperatorAction);
+        afterFlow[0].ResolutionNote.Should().Contain("successfully evaluated");
+    }
+
+    [Fact]
     public async Task ShouldAutoCloseUnenforceableLimitAfterOperatorAddsMolarMass()
     {
         // Initial tick: pollutant has no molar mass → event opens.
@@ -242,7 +290,9 @@ public class UnenforceableLimitTests : BaseIntegrationTest, IAsyncLifetime
         afterFix[0].Status.Should().Be(ComplianceEventStatus.Closed);
         afterFix[0].ClosedAt.Should().NotBeNull();
         afterFix[0].ResolutionReason.Should().Be(ResolutionReason.OperatorAction);
-        afterFix[0].ResolutionNote.Should().Contain("reconciles");
+        // Measurement exists → detector evaluates successfully via Path 2 (ppm→mg/m³ via MolarMass)
+        // → auto-close prefers the "evaluated" signal over the data-less "reconciles" check.
+        afterFix[0].ResolutionNote.Should().Contain("successfully evaluated");
     }
 
     // ─── Helpers ─────────────────────────────────────────────────────────────────

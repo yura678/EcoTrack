@@ -58,14 +58,15 @@ public class ComplianceDetectionService(
         var start = DateTime.UtcNow;
         var newEvents = new List<ComplianceEvent>();
 
-        newEvents.AddRange(await DetectLimitExceedancesAsync(cancellationToken, enterpriseId));
+        var (exceedances, evaluatedLimitIds) = await DetectLimitExceedancesAsync(cancellationToken, enterpriseId);
+        newEvents.AddRange(exceedances);
         newEvents.AddRange(await DetectDeviceOfflineAsync(cancellationToken, enterpriseId));
         newEvents.AddRange(await DetectDataAvailabilityLossAsync(cancellationToken, enterpriseId));
         newEvents.AddRange(await DetectMissingMeasurementAsync(cancellationToken, enterpriseId));
         newEvents.AddRange(await DetectOutOfRangeReadingsAsync(cancellationToken, enterpriseId));
 
         await PersistAsync(newEvents, cancellationToken);
-        var closed = await CloseResolvedUnenforceableLimitsAsync(enterpriseId, cancellationToken);
+        var closed = await CloseResolvedUnenforceableLimitsAsync(enterpriseId, evaluatedLimitIds, cancellationToken);
 
         logger.LogInformation(
             "Compliance detection: {New} new, {Closed} auto-closed in {Ms}ms (enterprise: {Enterprise})",
@@ -76,9 +77,9 @@ public class ComplianceDetectionService(
     private async Task RunAnnualLoadInternalAsync(Guid? enterpriseId, CancellationToken cancellationToken)
     {
         var start = DateTime.UtcNow;
-        var newEvents = await DetectAnnualLoadExceedancesAsync(cancellationToken, enterpriseId);
+        var (newEvents, evaluatedLimitIds) = await DetectAnnualLoadExceedancesAsync(cancellationToken, enterpriseId);
         await PersistAsync(newEvents, cancellationToken);
-        var closed = await CloseResolvedUnenforceableLimitsAsync(enterpriseId, cancellationToken);
+        var closed = await CloseResolvedUnenforceableLimitsAsync(enterpriseId, evaluatedLimitIds, cancellationToken);
         logger.LogInformation(
             "AnnualLoad detection: {New} new, {Closed} auto-closed in {Ms}ms (enterprise: {Enterprise})",
             newEvents.Count, closed, (DateTime.UtcNow - start).TotalMilliseconds,
@@ -113,13 +114,21 @@ public class ComplianceDetectionService(
     }
 
     /// <summary>
-    /// Re-checks every open UnenforceableLimit and closes it if the limit can now be reconciled
-    /// with the pollutant canonical (operator fixed the limit unit, added MolarMass, or removed
-    /// the limit). Without this, an UnenforceableLimit would stay open forever even after the
-    /// configuration that caused it was fixed.
+    /// Re-checks every open UnenforceableLimit and closes it when the limit became enforceable
+    /// again. Three signals trigger close (in order of preference):
+    /// <list type="number">
+    ///   <item>The detector successfully evaluated the limit this tick — any of the comparison
+    ///         paths (linear, ppm-canonical, derivation) or an existing open exceedance proved
+    ///         the limit is being enforced again.</item>
+    ///   <item>The limit is no longer active (removed or its permit expired) — there's nothing
+    ///         left to enforce, so the stale event has no purpose.</item>
+    ///   <item>The limit unit reconciles with the pollutant canonical via <see cref="UnitConverter"/>
+    ///         even without any data this tick — closes proactively after the operator fixed
+    ///         the unit/MolarMass before any reading proves it.</item>
+    /// </list>
     /// </summary>
     private async Task<int> CloseResolvedUnenforceableLimitsAsync(
-        Guid? enterpriseId, CancellationToken ct)
+        Guid? enterpriseId, IReadOnlySet<Guid> evaluatedLimitIds, CancellationToken ct)
     {
         var open = await complianceEventQueries.GetOpenByTypeAsync(
             ComplianceEventType.UnenforceableLimit, ct);
@@ -159,10 +168,14 @@ public class ComplianceDetectionService(
             if (!ev.LimitId.HasValue) continue;
 
             string? closeNote = null;
-            if (!currentLimits.TryGetValue(ev.LimitId.Value, out var limit))
+            if (evaluatedLimitIds.Contains(ev.LimitId.Value))
             {
-                // Limit removed or expired — by definition no longer enforceable; nothing left
-                // for us to alert on.
+                // Detector compared this limit successfully this tick (any path), so whatever
+                // previously made it unenforceable has been resolved.
+                closeNote = "Limit was successfully evaluated this tick; auto-closed by detector.";
+            }
+            else if (!currentLimits.TryGetValue(ev.LimitId.Value, out var limit))
+            {
                 closeNote = "Limit is no longer active (removed or expired); auto-closed by detector.";
             }
             else if (canonicals.TryGetValue(limit.PollutantId, out var canonical)
@@ -191,11 +204,11 @@ public class ComplianceDetectionService(
 
     // ─── LimitExceedance ─────────────────────────────────────────────────────────
 
-    private async Task<List<ComplianceEvent>> DetectLimitExceedancesAsync(
-        CancellationToken ct, Guid? enterpriseId = null)
+    private async Task<(List<ComplianceEvent> Events, HashSet<Guid> EvaluatedLimitIds)>
+        DetectLimitExceedancesAsync(CancellationToken ct, Guid? enterpriseId = null)
     {
         var targets = await queries.GetActiveLimitTargetsAsync(RateBasedLimits, ct, enterpriseId);
-        if (targets.Count == 0) return [];
+        if (targets.Count == 0) return ([], []);
 
         var existing = await complianceEventQueries.GetOpenByTypeAsync(
             ComplianceEventType.LimitExceedance, ct);
@@ -210,6 +223,11 @@ public class ComplianceDetectionService(
             .ToHashSet();
 
         var newEvents = new List<ComplianceEvent>();
+        // Limits the detector compared against measurement data this tick (via any of paths 1–3,
+        // exceedance fired or not, or via the existingKeys short-circuit that proves a prior
+        // successful evaluation). Feeds the UnenforceableLimit auto-close so the contradictory
+        // "UnenforceableLimit open + LimitExceedance fires on the same limit" state resolves.
+        var evaluatedLimitIds = new HashSet<Guid>();
         var rescanWindows = Math.Max(0, _settings.LateArrivingRescanWindows);
 
         foreach (var byPeriod in targets.GroupBy(t => t.Period))
@@ -275,13 +293,19 @@ public class ComplianceDetectionService(
 
                 var aggregateLimitIds = ProcessInstallationAggregates(
                     byPeriod.ToList(), byKey, units, unitEntities, canonicals,
-                    flowByKey, existingKeys, existingUnenforceableLimitIds,
+                    flowByKey, existingKeys, existingUnenforceableLimitIds, evaluatedLimitIds,
                     windowStart, windowEnd, newEvents);
 
                 foreach (var t in byPeriod)
                 {
                     if (aggregateLimitIds.Contains(t.LimitId)) continue; // handled above
-                    if (existingKeys.Contains((t.LimitId, t.EmissionSourceId))) continue;
+                    if (existingKeys.Contains((t.LimitId, t.EmissionSourceId)))
+                    {
+                        // Existing open LimitExceedance proves the limit was evaluable at some
+                        // point — close any stale UnenforceableLimit alongside it.
+                        evaluatedLimitIds.Add(t.LimitId);
+                        continue;
+                    }
                     if (!byKey.TryGetValue((t.EmissionSourceId, t.PollutantId), out var m)) continue;
                     // Allow Valid and Substituted — both are IED-acceptable regulatory values.
                     // Invalid/Missing/Calibration/Maintenance are skipped.
@@ -301,6 +325,7 @@ public class ComplianceDetectionService(
                     // overwhelmingly common case in production.
                     if (measurementUnit.Dimension == limitUnit.Dimension)
                     {
+                        evaluatedLimitIds.Add(t.LimitId);
                         var measuredBase = effectiveValue * measurementUnit.ToBaseFactor;
                         var limitBase = t.Value * limitUnit.ToBaseFactor;
                         if (measuredBase <= limitBase) continue;
@@ -331,6 +356,7 @@ public class ComplianceDetectionService(
                         if (UnitConverter.TryToCanonical(t.Value, limitUnitEntity, canonicalUnitEntity,
                                 canonical.MolarMass, out var limitCanonical, out _))
                         {
+                            evaluatedLimitIds.Add(t.LimitId);
                             if (effectiveValue <= limitCanonical) continue;
                             var ratio = Math.Round(effectiveValue / limitCanonical, 4);
                             var valueLabel = m.NormalizedValue.HasValue
@@ -350,6 +376,7 @@ public class ComplianceDetectionService(
                     var derived = TryDeriveMassFlow(t, m.Value, limitUnit, measurementUnit, flowByKey, units);
                     if (derived is not null)
                     {
+                        evaluatedLimitIds.Add(t.LimitId);
                         if (derived.MassFlowKgPerH <= derived.LimitKgPerH) continue;
                         var derivedRatio = Math.Round(derived.MassFlowKgPerH / derived.LimitKgPerH, 4);
                         newEvents.Add(ComplianceEvent.ForLimitExceedance(
@@ -373,7 +400,7 @@ public class ComplianceDetectionService(
                 }
             }
         }
-        return newEvents;
+        return (newEvents, evaluatedLimitIds);
     }
 
     private static Dictionary<Guid, MeasureUnit> BuildUnitEntities(IReadOnlyDictionary<Guid, UnitInfo> units) =>
@@ -410,6 +437,7 @@ public class ComplianceDetectionService(
         IReadOnlyDictionary<Guid, FlowReading> flowByKey,
         HashSet<(Guid LimitId, Guid EmissionSourceId)> existingKeys,
         HashSet<Guid> existingUnenforceableLimitIds,
+        HashSet<Guid> evaluatedLimitIds,
         DateTime fallbackWindowStart,
         DateTime windowEnd,
         List<ComplianceEvent> sink)
@@ -481,6 +509,10 @@ public class ComplianceDetectionService(
                 continue;
             }
 
+            // At least one source contributed → aggregate was evaluable; clear any stale
+            // UnenforceableLimit via the auto-close signal.
+            evaluatedLimitIds.Add(primary.LimitId);
+
             var limitBase = primary.Value * limitUnit.ToBaseFactor;
             if (sumBase <= limitBase) continue;
 
@@ -541,11 +573,11 @@ public class ComplianceDetectionService(
 
     // ─── AnnualLoad ──────────────────────────────────────────────────────────────
 
-    private async Task<List<ComplianceEvent>> DetectAnnualLoadExceedancesAsync(
-        CancellationToken ct, Guid? enterpriseId = null)
+    private async Task<(List<ComplianceEvent> Events, HashSet<Guid> EvaluatedLimitIds)>
+        DetectAnnualLoadExceedancesAsync(CancellationToken ct, Guid? enterpriseId = null)
     {
         var targets = await queries.GetActiveLimitTargetsAsync([LimitType.AnnualLoad], ct, enterpriseId);
-        if (targets.Count == 0) return [];
+        if (targets.Count == 0) return ([], []);
 
         var existing = await complianceEventQueries.GetOpenByTypeAsync(
             ComplianceEventType.LimitExceedance, ct);
@@ -560,6 +592,7 @@ public class ComplianceDetectionService(
             .ToHashSet();
 
         var newEvents = new List<ComplianceEvent>();
+        var evaluatedLimitIds = new HashSet<Guid>();
         var now = DateTime.UtcNow;
 
         foreach (var byPeriod in targets.GroupBy(t => t.Period))
@@ -623,13 +656,17 @@ public class ComplianceDetectionService(
             // the installation and compare once.
             var aggregateLimitIds = ProcessAnnualLoadAggregates(
                 byPeriod.ToList(), rolling, units, unitEntities, canonicals,
-                flowByKey, existingKeys, existingUnenforceableLimitIds,
+                flowByKey, existingKeys, existingUnenforceableLimitIds, evaluatedLimitIds,
                 pollutantO2Refs, o2Avgs, from, now, window, newEvents);
 
             foreach (var t in byPeriod)
             {
                 if (aggregateLimitIds.Contains(t.LimitId)) continue;
-                if (existingKeys.Contains((t.LimitId, t.EmissionSourceId))) continue;
+                if (existingKeys.Contains((t.LimitId, t.EmissionSourceId)))
+                {
+                    evaluatedLimitIds.Add(t.LimitId);
+                    continue;
+                }
                 if (!units.TryGetValue(t.UnitId, out var limitUnit)) continue;
                 if (!canonicals.TryGetValue(t.PollutantId, out var canonical)) continue;
                 if (!unitEntities.TryGetValue(t.UnitId, out var limitUnitEntity)
@@ -678,6 +715,7 @@ public class ComplianceDetectionService(
                 // Path 1 — same dimension on both sides (most common production case).
                 if (measurementUnit.Dimension == limitUnit.Dimension)
                 {
+                    evaluatedLimitIds.Add(t.LimitId);
                     var measuredBase = effectiveRate * measurementUnit.ToBaseFactor;
                     var limitBase = t.Value * limitUnit.ToBaseFactor;
                     if (measuredBase <= limitBase) continue;
@@ -699,6 +737,7 @@ public class ComplianceDetectionService(
                     && UnitConverter.TryToCanonical(t.Value, limitUnitEntity, canonicalUnitEntity,
                         canonical.MolarMass, out var limitCanonical, out _))
                 {
+                    evaluatedLimitIds.Add(t.LimitId);
                     if (effectiveRate <= limitCanonical) continue;
                     var ratio = Math.Round(effectiveRate / limitCanonical, 4);
                     var label = normalizationApplied
@@ -718,6 +757,7 @@ public class ComplianceDetectionService(
                 var derived = TryDeriveMassFlow(t, r.AvgRate, limitUnit, measurementUnit, flowByKey, units);
                 if (derived is not null)
                 {
+                    evaluatedLimitIds.Add(t.LimitId);
                     if (derived.MassFlowKgPerH <= derived.LimitKgPerH) continue;
                     var derivedRatio = Math.Round(derived.MassFlowKgPerH / derived.LimitKgPerH, 4);
                     newEvents.Add(ComplianceEvent.ForLimitExceedance(
@@ -739,7 +779,7 @@ public class ComplianceDetectionService(
                 }
             }
         }
-        return newEvents;
+        return (newEvents, evaluatedLimitIds);
     }
 
     /// <summary>
@@ -770,6 +810,7 @@ public class ComplianceDetectionService(
         IReadOnlyDictionary<Guid, FlowReading> flowByKey,
         HashSet<(Guid LimitId, Guid EmissionSourceId)> existingKeys,
         HashSet<Guid> existingUnenforceableLimitIds,
+        HashSet<Guid> evaluatedLimitIds,
         IReadOnlyDictionary<Guid, decimal?> pollutantO2Refs,
         IReadOnlyDictionary<Guid, decimal> o2Avgs,
         DateTime from, DateTime to, TimeSpan window,
@@ -849,6 +890,8 @@ public class ComplianceDetectionService(
                 }
                 continue;
             }
+
+            evaluatedLimitIds.Add(primary.LimitId);
 
             var limitBase = primary.Value * limitUnit.ToBaseFactor;
             if (sumBase <= limitBase) continue;
