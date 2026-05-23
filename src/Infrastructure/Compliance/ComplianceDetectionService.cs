@@ -130,17 +130,11 @@ public class ComplianceDetectionService(
     private async Task<int> CloseResolvedUnenforceableLimitsAsync(
         Guid? enterpriseId, IReadOnlySet<Guid> evaluatedLimitIds, CancellationToken ct)
     {
+        // Scoped at the query layer (per-tenant Hangfire jobs no longer race over each other's
+        // open events). Legacy unscoped callers pass null and still get all tenants.
         var open = await complianceEventQueries.GetOpenByTypeAsync(
-            ComplianceEventType.UnenforceableLimit, ct);
+            ComplianceEventType.UnenforceableLimit, ct, enterpriseId);
         if (open.Count == 0) return 0;
-
-        // Per-tenant Hangfire jobs each run this method; scope in-memory so two tenants' jobs
-        // don't race to close each other's events.
-        if (enterpriseId.HasValue)
-        {
-            open = open.Where(e => e.EnterpriseId == enterpriseId.Value).ToList();
-            if (open.Count == 0) return 0;
-        }
 
         var limitIds = open.Where(e => e.LimitId.HasValue)
             .Select(e => e.LimitId!.Value)
@@ -218,13 +212,13 @@ public class ComplianceDetectionService(
         if (targets.Count == 0) return ([], []);
 
         var existing = await complianceEventQueries.GetOpenByTypeAsync(
-            ComplianceEventType.LimitExceedance, ct);
+            ComplianceEventType.LimitExceedance, ct, enterpriseId);
         var existingKeys = existing
             .Where(e => e.LimitId.HasValue)
             .Select(e => (e.LimitId!.Value, e.EmissionSourceId))
             .ToHashSet();
         var existingUnenforceableLimitIds = (await complianceEventQueries.GetOpenByTypeAsync(
-                ComplianceEventType.UnenforceableLimit, ct))
+                ComplianceEventType.UnenforceableLimit, ct, enterpriseId))
             .Where(e => e.LimitId.HasValue)
             .Select(e => e.LimitId!.Value)
             .ToHashSet();
@@ -589,13 +583,13 @@ public class ComplianceDetectionService(
         if (targets.Count == 0) return ([], []);
 
         var existing = await complianceEventQueries.GetOpenByTypeAsync(
-            ComplianceEventType.LimitExceedance, ct);
+            ComplianceEventType.LimitExceedance, ct, enterpriseId);
         var existingKeys = existing
             .Where(e => e.LimitId.HasValue)
             .Select(e => (e.LimitId!.Value, e.EmissionSourceId))
             .ToHashSet();
         var existingUnenforceableLimitIds = (await complianceEventQueries.GetOpenByTypeAsync(
-                ComplianceEventType.UnenforceableLimit, ct))
+                ComplianceEventType.UnenforceableLimit, ct, enterpriseId))
             .Where(e => e.LimitId.HasValue)
             .Select(e => e.LimitId!.Value)
             .ToHashSet();
@@ -941,7 +935,7 @@ public class ComplianceDetectionService(
         if (devices.Count == 0) return [];
 
         var existing = await complianceEventQueries.GetOpenByTypeAsync(
-            ComplianceEventType.DeviceOffline, ct);
+            ComplianceEventType.DeviceOffline, ct, enterpriseId);
         var existingDeviceIds = existing
             .Where(e => e.DeviceId.HasValue)
             .Select(e => e.DeviceId!.Value)
@@ -979,7 +973,7 @@ public class ComplianceDetectionService(
 
         var snapshots = await queries.GetDevicesWithLatestCalibrationAsync(ct, enterpriseId);
         var existing = await complianceEventQueries.GetOpenByTypeAsync(
-            ComplianceEventType.CalibrationFailure, ct);
+            ComplianceEventType.CalibrationFailure, ct, enterpriseId);
         var existingDeviceIds = existing
             .Where(e => e.DeviceId.HasValue)
             .Select(e => e.DeviceId!.Value)
@@ -1025,7 +1019,7 @@ public class ComplianceDetectionService(
         if (targets.Count == 0) return [];
 
         var existing = await complianceEventQueries.GetOpenByTypeAsync(
-            ComplianceEventType.DataAvailabilityLoss, ct);
+            ComplianceEventType.DataAvailabilityLoss, ct, enterpriseId);
         var existingSourceIds = existing.Select(e => e.EmissionSourceId).ToHashSet();
 
         var newEvents = new List<ComplianceEvent>();
@@ -1078,7 +1072,7 @@ public class ComplianceDetectionService(
         if (distinctPairs.Count == 0) return [];
 
         var existing = await complianceEventQueries.GetOpenByTypeAsync(
-            ComplianceEventType.MissingMeasurement, ct);
+            ComplianceEventType.MissingMeasurement, ct, enterpriseId);
         var existingSourceIds = existing.Select(e => e.EmissionSourceId).ToHashSet();
 
         var sourceIds = distinctPairs.Select(p => p.EmissionSourceId).Distinct().ToArray();
@@ -1114,7 +1108,7 @@ public class ComplianceDetectionService(
         if (windows.Count == 0) return [];
 
         var existing = await complianceEventQueries.GetOpenByTypeAsync(
-            ComplianceEventType.OutOfRangeReading, ct);
+            ComplianceEventType.OutOfRangeReading, ct, enterpriseId);
         // Dedup at (source, device) — ComplianceEvent currently has no PollutantId column so
         // multiple pollutants drifting on the same device collapse into a single event.
         // Pollutant is recorded in Notes for triage.

@@ -37,11 +37,15 @@ internal class ComplianceEventRepository(ApplicationDbContext context) :
     }
 
     public async Task<IReadOnlyList<ComplianceEvent>> GetOpenByTypeAsync(ComplianceEventType eventType,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken, Guid? enterpriseId = null)
     {
-        return await TableNoTracking
-            .Where(x => x.EventType == eventType && x.Status == ComplianceEventStatus.Open)
-            .ToListAsync(cancellationToken);
+        var query = TableNoTracking
+            .Where(x => x.EventType == eventType && x.Status == ComplianceEventStatus.Open);
+        if (enterpriseId.HasValue)
+        {
+            query = query.Where(x => x.EnterpriseId == enterpriseId.Value);
+        }
+        return await query.ToListAsync(cancellationToken);
     }
 
     public async Task<PageResult<ComplianceEvent>> GetPagedAsync(

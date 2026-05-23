@@ -9,8 +9,11 @@ public interface IComplianceEventQueries
     Task<IReadOnlyList<ComplianceEvent>> GetByMeasurementIdAsync(Guid measurementId,
         CancellationToken cancellationToken);
 
+    /// <param name="enterpriseId">When non-null, scope the result to a single tenant. The per-tenant
+    /// Hangfire detection fan-out passes its own enterprise so it doesn't fetch every other
+    /// tenant's open events on each 5-min tick.</param>
     Task<IReadOnlyList<ComplianceEvent>> GetOpenByTypeAsync(ComplianceEventType eventType,
-        CancellationToken cancellationToken);
+        CancellationToken cancellationToken, Guid? enterpriseId = null);
 
     Task<Option<ComplianceEvent>> GetByIdAsync(Guid id, CancellationToken cancellationToken);
 
