@@ -675,14 +675,21 @@ public class ComplianceDetectionServiceTests : BaseIntegrationTest, IAsyncLifeti
     [Fact]
     public async Task ShouldDetectAnnualLoadExceedanceWhenAverageRateAboveLimit()
     {
+        // Pollutant whose canonical is kg/h — the rolling-rate query needs raw and canonical to
+        // share a dimension to fold slices, otherwise UnitConverter rejects the conversion and
+        // the rolling dict ends up empty. (Phase 5c canonical-strict invariant.)
+        var massFlowPollutant = PollutantsData.SecondTestPollutant(_kgh.Id);
+        await Context.Set<Pollutant>().AddAsync(massFlowPollutant);
+
         var (permit, limit) = ActivePermitWithLimit(
             value: 50m, unitId: _kgh.Id,
             limitType: LimitType.AnnualLoad,
-            period: AveragingWindow.Month1);
+            period: AveragingWindow.Month1,
+            pollutantIdOverride: massFlowPollutant.Id);
         await Context.Set<Permit>().AddAsync(permit);
         await Context.Set<EmissionLimit>().AddAsync(limit);
 
-        await SeedRollingRawAsync(ratePerHour: 80m);
+        await SeedRollingRawAsync(ratePerHour: 80m, pollutantIdOverride: massFlowPollutant.Id);
         await SaveChangesAsync();
 
         await RunDetectionAsync();
@@ -778,14 +785,22 @@ public class ComplianceDetectionServiceTests : BaseIntegrationTest, IAsyncLifeti
     [Fact]
     public async Task ShouldNotDetectAnnualLoadExceedanceWhenRateWithinLimit()
     {
+        // Same canonical/raw alignment as the exceedance-positive sibling: without it the rolling
+        // query rejects kg/h slices against an mg/m³-canonical pollutant and returns empty —
+        // making BeEmpty() pass for the wrong reason (no comparison happened) instead of "rate
+        // within limit". Phase 5c canonical-strict invariant.
+        var massFlowPollutant = PollutantsData.SecondTestPollutant(_kgh.Id);
+        await Context.Set<Pollutant>().AddAsync(massFlowPollutant);
+
         var (permit, limit) = ActivePermitWithLimit(
             value: 50m, unitId: _kgh.Id,
             limitType: LimitType.AnnualLoad,
-            period: AveragingWindow.Month1);
+            period: AveragingWindow.Month1,
+            pollutantIdOverride: massFlowPollutant.Id);
         await Context.Set<Permit>().AddAsync(permit);
         await Context.Set<EmissionLimit>().AddAsync(limit);
 
-        await SeedRollingRawAsync(ratePerHour: 30m);
+        await SeedRollingRawAsync(ratePerHour: 30m, pollutantIdOverride: massFlowPollutant.Id);
         await SaveChangesAsync();
 
         await RunDetectionAsync();
@@ -1062,13 +1077,13 @@ public class ComplianceDetectionServiceTests : BaseIntegrationTest, IAsyncLifeti
             rawValue: 10m));
     }
 
-    private async Task SeedRollingRawAsync(decimal ratePerHour)
+    private async Task SeedRollingRawAsync(decimal ratePerHour, Guid? pollutantIdOverride = null)
     {
         var now = DateTime.UtcNow;
         var rows = Enumerable.Range(0, 10).Select(i => RawMeasurement.New(
             time: now.AddMinutes(-i),
             emissionSourceId: _source.Id,
-            pollutantId: _pollutant.Id,
+            pollutantId: pollutantIdOverride ?? _pollutant.Id,
             deviceId: _device.Id,
             unitId: _kgh.Id,
             rawValue: ratePerHour));

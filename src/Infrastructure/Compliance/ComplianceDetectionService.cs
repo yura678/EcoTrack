@@ -5,6 +5,7 @@ using Application.Common.Settings;
 using Application.Features.ComplianceEvents.Notifications;
 using Domain.Entities.Enterprises;
 using Domain.Entities.Monitoring;
+using Domain.Services;
 using MediatR;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -64,10 +65,11 @@ public class ComplianceDetectionService(
         newEvents.AddRange(await DetectOutOfRangeReadingsAsync(cancellationToken, enterpriseId));
 
         await PersistAsync(newEvents, cancellationToken);
+        var closed = await CloseResolvedUnenforceableLimitsAsync(enterpriseId, cancellationToken);
 
         logger.LogInformation(
-            "Compliance detection: {New} new events in {Ms}ms (enterprise: {Enterprise})",
-            newEvents.Count, (DateTime.UtcNow - start).TotalMilliseconds,
+            "Compliance detection: {New} new, {Closed} auto-closed in {Ms}ms (enterprise: {Enterprise})",
+            newEvents.Count, closed, (DateTime.UtcNow - start).TotalMilliseconds,
             enterpriseId?.ToString() ?? "all");
     }
 
@@ -76,9 +78,10 @@ public class ComplianceDetectionService(
         var start = DateTime.UtcNow;
         var newEvents = await DetectAnnualLoadExceedancesAsync(cancellationToken, enterpriseId);
         await PersistAsync(newEvents, cancellationToken);
+        var closed = await CloseResolvedUnenforceableLimitsAsync(enterpriseId, cancellationToken);
         logger.LogInformation(
-            "AnnualLoad detection: {New} new events in {Ms}ms (enterprise: {Enterprise})",
-            newEvents.Count, (DateTime.UtcNow - start).TotalMilliseconds,
+            "AnnualLoad detection: {New} new, {Closed} auto-closed in {Ms}ms (enterprise: {Enterprise})",
+            newEvents.Count, closed, (DateTime.UtcNow - start).TotalMilliseconds,
             enterpriseId?.ToString() ?? "all");
     }
 
@@ -109,6 +112,83 @@ public class ComplianceDetectionService(
         }
     }
 
+    /// <summary>
+    /// Re-checks every open UnenforceableLimit and closes it if the limit can now be reconciled
+    /// with the pollutant canonical (operator fixed the limit unit, added MolarMass, or removed
+    /// the limit). Without this, an UnenforceableLimit would stay open forever even after the
+    /// configuration that caused it was fixed.
+    /// </summary>
+    private async Task<int> CloseResolvedUnenforceableLimitsAsync(
+        Guid? enterpriseId, CancellationToken ct)
+    {
+        var open = await complianceEventQueries.GetOpenByTypeAsync(
+            ComplianceEventType.UnenforceableLimit, ct);
+        if (open.Count == 0) return 0;
+
+        // Per-tenant Hangfire jobs each run this method; scope in-memory so two tenants' jobs
+        // don't race to close each other's events.
+        if (enterpriseId.HasValue)
+        {
+            open = open.Where(e => e.EnterpriseId == enterpriseId.Value).ToList();
+            if (open.Count == 0) return 0;
+        }
+
+        var limitIds = open.Where(e => e.LimitId.HasValue)
+            .Select(e => e.LimitId!.Value)
+            .Distinct()
+            .ToArray();
+        var currentLimits = await queries.GetActiveLimitsByIdsAsync(limitIds, ct);
+
+        Dictionary<Guid, PollutantCanonical> canonicals = [];
+        Dictionary<Guid, MeasureUnit> unitEntities = [];
+        if (currentLimits.Count > 0)
+        {
+            var pollutantIds = currentLimits.Values.Select(l => l.PollutantId).Distinct().ToArray();
+            canonicals = await queries.GetPollutantCanonicalsAsync(pollutantIds, ct);
+            var unitIds = currentLimits.Values.Select(l => l.UnitId)
+                .Concat(canonicals.Values.Select(c => c.CanonicalUnitId))
+                .Distinct()
+                .ToArray();
+            var units = await queries.GetUnitsAsync(unitIds, ct);
+            unitEntities = BuildUnitEntities(units);
+        }
+
+        var closedCount = 0;
+        foreach (var ev in open)
+        {
+            if (!ev.LimitId.HasValue) continue;
+
+            string? closeNote = null;
+            if (!currentLimits.TryGetValue(ev.LimitId.Value, out var limit))
+            {
+                // Limit removed or expired — by definition no longer enforceable; nothing left
+                // for us to alert on.
+                closeNote = "Limit is no longer active (removed or expired); auto-closed by detector.";
+            }
+            else if (canonicals.TryGetValue(limit.PollutantId, out var canonical)
+                     && unitEntities.TryGetValue(limit.UnitId, out var limitUnit)
+                     && unitEntities.TryGetValue(canonical.CanonicalUnitId, out var canonicalUnit)
+                     && UnitConverter.TryToCanonical(limit.Value, limitUnit, canonicalUnit,
+                         canonical.MolarMass, out _, out _))
+            {
+                closeNote = $"Limit unit {limitUnit.Symbol} now reconciles with pollutant canonical " +
+                            $"{canonicalUnit.Symbol}; auto-closed by detector.";
+            }
+
+            if (closeNote is null) continue;
+
+            ev.Close(ResolutionReason.OperatorAction, closeNote, resolvedByUserId: null);
+            complianceEventRepository.Update(ev);
+            closedCount++;
+        }
+
+        if (closedCount > 0)
+        {
+            await unitOfWork.SaveChangesAsync(ct);
+        }
+        return closedCount;
+    }
+
     // ─── LimitExceedance ─────────────────────────────────────────────────────────
 
     private async Task<List<ComplianceEvent>> DetectLimitExceedancesAsync(
@@ -122,6 +202,11 @@ public class ComplianceDetectionService(
         var existingKeys = existing
             .Where(e => e.LimitId.HasValue)
             .Select(e => (e.LimitId!.Value, e.EmissionSourceId))
+            .ToHashSet();
+        var existingUnenforceableLimitIds = (await complianceEventQueries.GetOpenByTypeAsync(
+                ComplianceEventType.UnenforceableLimit, ct))
+            .Where(e => e.LimitId.HasValue)
+            .Select(e => e.LimitId!.Value)
             .ToHashSet();
 
         var newEvents = new List<ComplianceEvent>();
@@ -147,11 +232,14 @@ public class ComplianceDetectionService(
                 sourceIds, pollutantIds, byPeriod.Key, earliestWindowEnd, lastWindowEnd, ct);
             if (allMeasurements.Count == 0) continue;
 
+            var canonicals = await queries.GetPollutantCanonicalsAsync(pollutantIds, ct);
             var unitIds = byPeriod.Select(t => t.UnitId)
                 .Concat(allMeasurements.Select(m => m.UnitId))
+                .Concat(canonicals.Values.Select(c => c.CanonicalUnitId))
                 .Distinct()
                 .ToArray();
             var units = await queries.GetUnitsAsync(unitIds, ct);
+            var unitEntities = BuildUnitEntities(units);
 
             var needsFlow = byPeriod.Any(t =>
                 units.TryGetValue(t.UnitId, out var u)
@@ -178,11 +266,17 @@ public class ComplianceDetectionService(
                 {
                     var extra = await queries.GetUnitsAsync(
                         flowByKey.Values.Select(v => v.UnitId).Distinct().ToArray(), ct);
-                    foreach (var (uid, info) in extra) units.TryAdd(uid, info);
+                    foreach (var (uid, info) in extra)
+                    {
+                        units.TryAdd(uid, info);
+                        unitEntities.TryAdd(uid, MeasureUnit.New(uid, info.Symbol, info.Dimension, info.ToBaseFactor));
+                    }
                 }
 
                 var aggregateLimitIds = ProcessInstallationAggregates(
-                    byPeriod.ToList(), byKey, units, flowByKey, existingKeys, windowEnd, newEvents);
+                    byPeriod.ToList(), byKey, units, unitEntities, canonicals,
+                    flowByKey, existingKeys, existingUnenforceableLimitIds,
+                    windowStart, windowEnd, newEvents);
 
                 foreach (var t in byPeriod)
                 {
@@ -194,20 +288,69 @@ public class ComplianceDetectionService(
                     if (m.Quality != Quality.Valid && m.Quality != Quality.Substituted) continue;
                     if (!units.TryGetValue(t.UnitId, out var limitUnit)
                         || !units.TryGetValue(m.UnitId, out var measurementUnit)) continue;
+                    if (!canonicals.TryGetValue(t.PollutantId, out var canonical)) continue;
+                    if (!unitEntities.TryGetValue(t.UnitId, out var limitUnitEntity)
+                        || !unitEntities.TryGetValue(canonical.CanonicalUnitId, out var canonicalUnitEntity)) continue;
 
-                    if (limitUnit.Dimension != measurementUnit.Dimension)
+                    // Prefer NormalizedValue when set — concentration limits are "@ O₂ reference"
+                    // and the materializer computes that value at write time.
+                    var effectiveValue = m.NormalizedValue ?? m.Value;
+
+                    // Path 1 — same dimension on both sides. Linear ToBaseFactor compare, works
+                    // even if measurement isn't in canonical (legacy/test data). This is the
+                    // overwhelmingly common case in production.
+                    if (measurementUnit.Dimension == limitUnit.Dimension)
                     {
-                        var derived = TryDeriveMassFlow(t, m.Value, limitUnit, measurementUnit, flowByKey, units);
-                        if (derived is null)
+                        var measuredBase = effectiveValue * measurementUnit.ToBaseFactor;
+                        var limitBase = t.Value * limitUnit.ToBaseFactor;
+                        if (measuredBase <= limitBase) continue;
+                        var ratio = Math.Round(measuredBase / limitBase, 4);
+                        var valueLabel = m.NormalizedValue.HasValue
+                            ? $"{effectiveValue:0.###} {measurementUnit.Symbol} (normalized)"
+                            : $"{m.Value:0.###} {measurementUnit.Symbol}";
+                        newEvents.Add(ComplianceEvent.ForLimitExceedance(
+                            Guid.NewGuid(), t.EmissionSourceId,
+                            measurementId: m.Id, t.LimitId, ratio, m.WindowStart, m.WindowEnd,
+                            notes: $"{valueLabel} > {t.Value:0.###} {limitUnit.Symbol} (ratio {ratio:0.##})"));
+                        existingKeys.Add((t.LimitId, t.EmissionSourceId));
+                        continue;
+                    }
+
+                    // Path 2 — cross-dimension via UnitConverter (ppm → MassConcentration via
+                    // molar mass). Requires measurement to share canonical's dimension; defensively
+                    // convert into canonical first when the measurement is in a non-canonical unit
+                    // of the same dimension (pre-Phase-2 history / test fixtures).
+                    if (measurementUnit.Dimension == canonicalUnitEntity.Dimension)
+                    {
+                        if (m.UnitId != canonical.CanonicalUnitId
+                            && UnitConverter.TryToCanonical(effectiveValue, unitEntities[m.UnitId],
+                                canonicalUnitEntity, canonical.MolarMass, out var convertedMeas, out _))
                         {
-                            logger.LogWarning(
-                                "Limit {LimitId} ({LimitDim}) and measurement {MeasurementId} ({MeasDim}) " +
-                                "use incompatible dimensions and no derivation path applies; skipping.",
-                                t.LimitId, limitUnit.Dimension, m.Id, measurementUnit.Dimension);
+                            effectiveValue = convertedMeas;
+                        }
+                        if (UnitConverter.TryToCanonical(t.Value, limitUnitEntity, canonicalUnitEntity,
+                                canonical.MolarMass, out var limitCanonical, out _))
+                        {
+                            if (effectiveValue <= limitCanonical) continue;
+                            var ratio = Math.Round(effectiveValue / limitCanonical, 4);
+                            var valueLabel = m.NormalizedValue.HasValue
+                                ? $"{effectiveValue:0.###} {canonicalUnitEntity.Symbol} (normalized)"
+                                : $"{effectiveValue:0.###} {canonicalUnitEntity.Symbol}";
+                            newEvents.Add(ComplianceEvent.ForLimitExceedance(
+                                Guid.NewGuid(), t.EmissionSourceId,
+                                measurementId: m.Id, t.LimitId, ratio, m.WindowStart, m.WindowEnd,
+                                notes: $"{valueLabel} > limit {t.Value:0.###} {limitUnit.Symbol} " +
+                                       $"(= {limitCanonical:0.###} {canonicalUnitEntity.Symbol}, ratio {ratio:0.##})"));
+                            existingKeys.Add((t.LimitId, t.EmissionSourceId));
                             continue;
                         }
-                        if (derived.MassFlowKgPerH <= derived.LimitKgPerH) continue;
+                    }
 
+                    // Path 3 — concentration × volumetric flow → mass flow.
+                    var derived = TryDeriveMassFlow(t, m.Value, limitUnit, measurementUnit, flowByKey, units);
+                    if (derived is not null)
+                    {
+                        if (derived.MassFlowKgPerH <= derived.LimitKgPerH) continue;
                         var derivedRatio = Math.Round(derived.MassFlowKgPerH / derived.LimitKgPerH, 4);
                         newEvents.Add(ComplianceEvent.ForLimitExceedance(
                             Guid.NewGuid(), t.EmissionSourceId,
@@ -220,26 +363,33 @@ public class ComplianceDetectionService(
                         continue;
                     }
 
-                    // For Concentration limits, regulator expresses limits at reference conditions
-                    // (e.g. "200 mg/m³ NOx @ 6% O₂"). Prefer NormalizedValue when available.
-                    var effectiveValue = m.NormalizedValue ?? m.Value;
-                    var measuredBase = effectiveValue * measurementUnit.ToBaseFactor;
-                    var limitBase = t.Value * limitUnit.ToBaseFactor;
-                    if (measuredBase <= limitBase) continue;
-
-                    var ratio = Math.Round(measuredBase / limitBase, 4);
-                    var valueLabel = m.NormalizedValue.HasValue
-                        ? $"{effectiveValue:0.###} {measurementUnit.Symbol} (normalized)"
-                        : $"{m.Value:0.###} {measurementUnit.Symbol}";
-                    newEvents.Add(ComplianceEvent.ForLimitExceedance(
-                        Guid.NewGuid(), t.EmissionSourceId,
-                        measurementId: m.Id, t.LimitId, ratio, m.WindowStart, m.WindowEnd,
-                        notes: $"{valueLabel} > {t.Value:0.###} {limitUnit.Symbol} (ratio {ratio:0.##})"));
-                    existingKeys.Add((t.LimitId, t.EmissionSourceId));
+                    // Path 4 — nothing applies; surface to operator instead of silently skipping.
+                    if (existingUnenforceableLimitIds.Add(t.LimitId))
+                    {
+                        newEvents.Add(ComplianceEvent.ForUnenforceableLimit(
+                            Guid.NewGuid(), t.EmissionSourceId, t.LimitId, windowStart, windowEnd,
+                            notes: BuildUnenforceableNote(t, limitUnit, canonicalUnitEntity, canonical)));
+                    }
                 }
             }
         }
         return newEvents;
+    }
+
+    private static Dictionary<Guid, MeasureUnit> BuildUnitEntities(IReadOnlyDictionary<Guid, UnitInfo> units) =>
+        units.ToDictionary(
+            kvp => kvp.Key,
+            kvp => MeasureUnit.New(kvp.Key, kvp.Value.Symbol, kvp.Value.Dimension, kvp.Value.ToBaseFactor));
+
+    private static string BuildUnenforceableNote(
+        LimitTarget t, UnitInfo limitUnit, MeasureUnit canonicalUnit, PollutantCanonical canonical)
+    {
+        var molarTag = canonical.MolarMass.HasValue
+            ? $"M={canonical.MolarMass:0.###} g/mol"
+            : "no molar mass";
+        return $"Limit {t.Value:0.###} {limitUnit.Symbol} ({limitUnit.Dimension}) cannot be reconciled " +
+               $"with pollutant canonical {canonicalUnit.Symbol} ({canonicalUnit.Dimension}, {molarTag}); " +
+               $"no volumetric flow available for derivation. Detection skipped.";
     }
 
     /// <summary>
@@ -255,8 +405,12 @@ public class ComplianceDetectionService(
         IReadOnlyList<LimitTarget> targetsInPeriod,
         IReadOnlyDictionary<(Guid, Guid), MeasurementSnapshot> measurementByKey,
         IReadOnlyDictionary<Guid, UnitInfo> units,
+        IReadOnlyDictionary<Guid, MeasureUnit> unitEntities,
+        IReadOnlyDictionary<Guid, PollutantCanonical> canonicals,
         IReadOnlyDictionary<Guid, FlowReading> flowByKey,
         HashSet<(Guid LimitId, Guid EmissionSourceId)> existingKeys,
+        HashSet<Guid> existingUnenforceableLimitIds,
+        DateTime fallbackWindowStart,
         DateTime windowEnd,
         List<ComplianceEvent> sink)
     {
@@ -297,10 +451,6 @@ public class ComplianceDetectionService(
                 var derived = TryDeriveMassFlow(t, m.Value, limitUnit, measurementUnit, flowByKey, units);
                 if (derived is null)
                 {
-                    logger.LogWarning(
-                        "Installation-aggregate limit {LimitId}: source {SourceId} uses {MeasDim} " +
-                        "with no derivation path to {LimitDim}; excluded from sum.",
-                        primary.LimitId, t.EmissionSourceId, measurementUnit.Dimension, limitUnit.Dimension);
                     excludedCount++;
                     continue;
                 }
@@ -313,7 +463,23 @@ public class ComplianceDetectionService(
                 windowStart = m.WindowStart;
             }
 
-            if (contributingSources.Count == 0) continue;
+            if (contributingSources.Count == 0)
+            {
+                // Entire aggregate is unenforceable this tick — no source could be reconciled with
+                // the limit's unit. Emit one UnenforceableLimit per LimitId so operator sees the
+                // silent gap; auto-close will resolve it once any source becomes derivable again
+                // (e.g. operator starts shipping volumetric flow on the affected sources).
+                if (existingUnenforceableLimitIds.Add(primary.LimitId)
+                    && canonicals.TryGetValue(primary.PollutantId, out var canonical)
+                    && unitEntities.TryGetValue(canonical.CanonicalUnitId, out var canonicalUnit))
+                {
+                    sink.Add(ComplianceEvent.ForUnenforceableLimit(
+                        Guid.NewGuid(), primary.EmissionSourceId, primary.LimitId,
+                        windowStart ?? fallbackWindowStart, windowEnd,
+                        notes: $"Installation aggregate: {BuildUnenforceableNote(primary, limitUnit, canonicalUnit, canonical)}"));
+                }
+                continue;
+            }
 
             var limitBase = primary.Value * limitUnit.ToBaseFactor;
             if (sumBase <= limitBase) continue;
@@ -387,6 +553,11 @@ public class ComplianceDetectionService(
             .Where(e => e.LimitId.HasValue)
             .Select(e => (e.LimitId!.Value, e.EmissionSourceId))
             .ToHashSet();
+        var existingUnenforceableLimitIds = (await complianceEventQueries.GetOpenByTypeAsync(
+                ComplianceEventType.UnenforceableLimit, ct))
+            .Where(e => e.LimitId.HasValue)
+            .Select(e => e.LimitId!.Value)
+            .ToHashSet();
 
         var newEvents = new List<ComplianceEvent>();
         var now = DateTime.UtcNow;
@@ -408,11 +579,14 @@ public class ComplianceDetectionService(
             var rolling = await queries.GetRollingAverageRateAsync(sourceIds, pollutantIds, from, now, ct);
             if (rolling.Count == 0) continue;
 
+            var canonicals = await queries.GetPollutantCanonicalsAsync(pollutantIds, ct);
             var unitIds = byPeriod.Select(t => t.UnitId)
                 .Concat(rolling.Values.Select(r => r.UnitId))
+                .Concat(canonicals.Values.Select(c => c.CanonicalUnitId))
                 .Distinct()
                 .ToArray();
             var units = await queries.GetUnitsAsync(unitIds, ct);
+            var unitEntities = BuildUnitEntities(units);
 
             var needsFlow = byPeriod.Any(t =>
                 units.TryGetValue(t.UnitId, out var u)
@@ -424,7 +598,11 @@ public class ComplianceDetectionService(
             {
                 var extra = await queries.GetUnitsAsync(
                     flowByKey.Values.Select(v => v.UnitId).Distinct().ToArray(), ct);
-                foreach (var (uid, info) in extra) units.TryAdd(uid, info);
+                foreach (var (uid, info) in extra)
+                {
+                    units.TryAdd(uid, info);
+                    unitEntities.TryAdd(uid, MeasureUnit.New(uid, info.Symbol, info.Dimension, info.ToBaseFactor));
+                }
             }
 
             // For Concentration AnnualLoad limits, regulator references "@O₂_ref" basis.
@@ -441,7 +619,8 @@ public class ComplianceDetectionService(
             // Installation-level AnnualLoad: sum rolling-average rates across all sources of
             // the installation and compare once.
             var aggregateLimitIds = ProcessAnnualLoadAggregates(
-                byPeriod.ToList(), rolling, units, flowByKey, existingKeys,
+                byPeriod.ToList(), rolling, units, unitEntities, canonicals,
+                flowByKey, existingKeys, existingUnenforceableLimitIds,
                 pollutantO2Refs, o2Avgs, from, now, window, newEvents);
 
             foreach (var t in byPeriod)
@@ -451,34 +630,15 @@ public class ComplianceDetectionService(
                 if (!rolling.TryGetValue((t.EmissionSourceId, t.PollutantId), out var r)) continue;
                 if (!units.TryGetValue(t.UnitId, out var limitUnit)
                     || !units.TryGetValue(r.UnitId, out var measurementUnit)) continue;
+                if (!canonicals.TryGetValue(t.PollutantId, out var canonical)) continue;
+                if (!unitEntities.TryGetValue(t.UnitId, out var limitUnitEntity)
+                    || !unitEntities.TryGetValue(canonical.CanonicalUnitId, out var canonicalUnitEntity)) continue;
 
-                if (limitUnit.Dimension != measurementUnit.Dimension)
-                {
-                    var derived = TryDeriveMassFlow(t, r.AvgRate, limitUnit, measurementUnit, flowByKey, units);
-                    if (derived is null)
-                    {
-                        logger.LogWarning(
-                            "AnnualLoad limit {LimitId} ({LimitDim}) and measurement unit {MeasUnit} ({MeasDim}) " +
-                            "use incompatible dimensions and no derivation path applies; skipping.",
-                            t.LimitId, limitUnit.Dimension, r.UnitId, measurementUnit.Dimension);
-                        continue;
-                    }
-                    if (derived.MassFlowKgPerH <= derived.LimitKgPerH) continue;
-
-                    var derivedRatio = Math.Round(derived.MassFlowKgPerH / derived.LimitKgPerH, 4);
-                    newEvents.Add(ComplianceEvent.ForLimitExceedance(
-                        Guid.NewGuid(), t.EmissionSourceId,
-                        measurementId: null, t.LimitId, derivedRatio, from, now,
-                        notes: $"AnnualLoad derived: {derived.MassFlowKgPerH:0.###} kg/h " +
-                               $"({r.AvgRate:0.###} {measurementUnit.Symbol} × {derived.FlowDescription}) " +
-                               $"over last {window.TotalDays:0}d > {t.Value:0.###} {limitUnit.Symbol} " +
-                               $"(ratio {derivedRatio:0.##})"));
-                    continue;
-                }
-
+                // O₂ normalization for Concentration AnnualLoad limits — applied on whichever
+                // unit r.AvgRate ends up being interpreted in.
                 var normalizationApplied = false;
                 var effectiveRate = r.AvgRate;
-                if (limitUnit.Dimension == MeasureUnitDimension.MassConcentration)
+                if (measurementUnit.Dimension == MeasureUnitDimension.MassConcentration)
                 {
                     var normalized = TryComputeAnnualO2Normalization(
                         r.AvgRate, pollutantO2Refs.GetValueOrDefault(t.PollutantId),
@@ -490,19 +650,68 @@ public class ComplianceDetectionService(
                     }
                 }
 
-                var measuredBase = effectiveRate * measurementUnit.ToBaseFactor;
-                var limitBase = t.Value * limitUnit.ToBaseFactor;
-                if (measuredBase <= limitBase) continue;
+                // Path 1 — same dimension on both sides (most common production case).
+                if (measurementUnit.Dimension == limitUnit.Dimension)
+                {
+                    var measuredBase = effectiveRate * measurementUnit.ToBaseFactor;
+                    var limitBase = t.Value * limitUnit.ToBaseFactor;
+                    if (measuredBase <= limitBase) continue;
+                    var ratio = Math.Round(measuredBase / limitBase, 4);
+                    var label = normalizationApplied
+                        ? $"avg {effectiveRate:0.###} {measurementUnit.Symbol} (normalized)"
+                        : $"avg {r.AvgRate:0.###} {measurementUnit.Symbol}";
+                    newEvents.Add(ComplianceEvent.ForLimitExceedance(
+                        Guid.NewGuid(), t.EmissionSourceId,
+                        measurementId: null, t.LimitId, ratio, from, now,
+                        notes: $"AnnualLoad: {label} over last {window.TotalDays:0}d > " +
+                               $"limit {t.Value:0.###} {limitUnit.Symbol} (ratio {ratio:0.##}, {r.Samples} samples)"));
+                    continue;
+                }
 
-                var ratio = Math.Round(measuredBase / limitBase, 4);
-                var label = normalizationApplied
-                    ? $"avg {effectiveRate:0.###} {measurementUnit.Symbol} (normalized)"
-                    : $"avg {r.AvgRate:0.###} {measurementUnit.Symbol}";
-                newEvents.Add(ComplianceEvent.ForLimitExceedance(
-                    Guid.NewGuid(), t.EmissionSourceId,
-                    measurementId: null, t.LimitId, ratio, from, now,
-                    notes: $"AnnualLoad: {label} over last {window.TotalDays:0}d > " +
-                           $"limit {t.Value:0.###} {limitUnit.Symbol} (ratio {ratio:0.##}, {r.Samples} samples)"));
+                // Path 2 — cross-dimension via UnitConverter (e.g. ppm AnnualLoad limit vs
+                // canonical mg/m³ rolling average, when pollutant has molar mass).
+                if (measurementUnit.Dimension == canonicalUnitEntity.Dimension
+                    && UnitConverter.TryToCanonical(t.Value, limitUnitEntity, canonicalUnitEntity,
+                        canonical.MolarMass, out var limitCanonical, out _))
+                {
+                    if (effectiveRate <= limitCanonical) continue;
+                    var ratio = Math.Round(effectiveRate / limitCanonical, 4);
+                    var label = normalizationApplied
+                        ? $"avg {effectiveRate:0.###} {canonicalUnitEntity.Symbol} (normalized)"
+                        : $"avg {effectiveRate:0.###} {canonicalUnitEntity.Symbol}";
+                    newEvents.Add(ComplianceEvent.ForLimitExceedance(
+                        Guid.NewGuid(), t.EmissionSourceId,
+                        measurementId: null, t.LimitId, ratio, from, now,
+                        notes: $"AnnualLoad: {label} over last {window.TotalDays:0}d > " +
+                               $"limit {t.Value:0.###} {limitUnit.Symbol} " +
+                               $"(= {limitCanonical:0.###} {canonicalUnitEntity.Symbol}, " +
+                               $"ratio {ratio:0.##}, {r.Samples} samples)"));
+                    continue;
+                }
+
+                // Path 3 — MassConcentration × volumetric flow → MassFlow.
+                var derived = TryDeriveMassFlow(t, r.AvgRate, limitUnit, measurementUnit, flowByKey, units);
+                if (derived is not null)
+                {
+                    if (derived.MassFlowKgPerH <= derived.LimitKgPerH) continue;
+                    var derivedRatio = Math.Round(derived.MassFlowKgPerH / derived.LimitKgPerH, 4);
+                    newEvents.Add(ComplianceEvent.ForLimitExceedance(
+                        Guid.NewGuid(), t.EmissionSourceId,
+                        measurementId: null, t.LimitId, derivedRatio, from, now,
+                        notes: $"AnnualLoad derived: {derived.MassFlowKgPerH:0.###} kg/h " +
+                               $"({r.AvgRate:0.###} {measurementUnit.Symbol} × {derived.FlowDescription}) " +
+                               $"over last {window.TotalDays:0}d > {t.Value:0.###} {limitUnit.Symbol} " +
+                               $"(ratio {derivedRatio:0.##})"));
+                    continue;
+                }
+
+                // Path 4 — unenforceable.
+                if (existingUnenforceableLimitIds.Add(t.LimitId))
+                {
+                    newEvents.Add(ComplianceEvent.ForUnenforceableLimit(
+                        Guid.NewGuid(), t.EmissionSourceId, t.LimitId, from, now,
+                        notes: $"AnnualLoad: {BuildUnenforceableNote(t, limitUnit, canonicalUnitEntity, canonical)}"));
+                }
             }
         }
         return newEvents;
@@ -531,8 +740,11 @@ public class ComplianceDetectionService(
         IReadOnlyList<LimitTarget> targetsInPeriod,
         IReadOnlyDictionary<(Guid, Guid), RollingAverage> rollingByKey,
         IReadOnlyDictionary<Guid, UnitInfo> units,
+        IReadOnlyDictionary<Guid, MeasureUnit> unitEntities,
+        IReadOnlyDictionary<Guid, PollutantCanonical> canonicals,
         IReadOnlyDictionary<Guid, FlowReading> flowByKey,
         HashSet<(Guid LimitId, Guid EmissionSourceId)> existingKeys,
+        HashSet<Guid> existingUnenforceableLimitIds,
         IReadOnlyDictionary<Guid, decimal?> pollutantO2Refs,
         IReadOnlyDictionary<Guid, decimal> o2Avgs,
         DateTime from, DateTime to, TimeSpan window,
@@ -589,10 +801,6 @@ public class ComplianceDetectionService(
                 var derived = TryDeriveMassFlow(t, r.AvgRate, limitUnit, measurementUnit, flowByKey, units);
                 if (derived is null)
                 {
-                    logger.LogWarning(
-                        "AnnualLoad aggregate {LimitId}: source {SourceId} uses {MeasDim} with no " +
-                        "derivation path to {LimitDim}; excluded from sum.",
-                        primary.LimitId, t.EmissionSourceId, measurementUnit.Dimension, limitUnit.Dimension);
                     excludedCount++;
                     continue;
                 }
@@ -603,7 +811,19 @@ public class ComplianceDetectionService(
                 derivedCount++;
             }
 
-            if (contributingSources.Count == 0) continue;
+            if (contributingSources.Count == 0)
+            {
+                if (existingUnenforceableLimitIds.Add(primary.LimitId)
+                    && canonicals.TryGetValue(primary.PollutantId, out var canonical)
+                    && unitEntities.TryGetValue(canonical.CanonicalUnitId, out var canonicalUnit))
+                {
+                    sink.Add(ComplianceEvent.ForUnenforceableLimit(
+                        Guid.NewGuid(), primary.EmissionSourceId, primary.LimitId, from, to,
+                        notes: $"AnnualLoad installation aggregate: " +
+                               $"{BuildUnenforceableNote(primary, limitUnit, canonicalUnit, canonical)}"));
+                }
+                continue;
+            }
 
             var limitBase = primary.Value * limitUnit.ToBaseFactor;
             if (sumBase <= limitBase) continue;

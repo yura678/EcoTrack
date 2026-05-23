@@ -59,7 +59,11 @@ public enum ComplianceEventType
     DeviceOffline = 2,
     CalibrationFailure = 3,
     MissingMeasurement = 4,
-    OutOfRangeReading = 5
+    OutOfRangeReading = 5,
+    // Raised when the detector can't reconcile a limit's unit with the pollutant's canonical
+    // unit (e.g. ppm limit on a pollutant without molar mass, or a kg/h limit on a source that
+    // doesn't record volumetric flow). The limit silently wouldn't be enforced otherwise.
+    UnenforceableLimit = 6
 }
 
 public enum ComplianceEventStatus

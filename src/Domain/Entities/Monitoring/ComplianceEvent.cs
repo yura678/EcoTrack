@@ -101,6 +101,19 @@ public class ComplianceEvent : BaseEntity, ITenantOwned
             windowStart, windowEnd, ratio,
             ComplianceEventStatus.Open, DateTime.UtcNow, closedAt: null, notes, updatedAt: null);
 
+    /// <summary>
+    /// Detector tried to compare the source's measurements against this limit but couldn't
+    /// reconcile units. No <see cref="MeasurementId"/> (no single measurement is "the cause") and
+    /// no <see cref="Ratio"/> (nothing was compared). The pollutant should appear in
+    /// <paramref name="notes"/> so operators can act without joining tables.
+    /// </summary>
+    public static ComplianceEvent ForUnenforceableLimit(Guid id, Guid emissionSourceId,
+        Guid limitId, DateTime windowStart, DateTime windowEnd, string? notes = null) =>
+        new(id, ComplianceEventType.UnenforceableLimit, emissionSourceId,
+            measurementId: null, limitId, deviceId: null,
+            windowStart, windowEnd, ratio: null,
+            ComplianceEventStatus.Open, DateTime.UtcNow, closedAt: null, notes, updatedAt: null);
+
     public void ChangeStatus(ComplianceEventStatus status)
     {
         if (status == ComplianceEventStatus.Closed)
