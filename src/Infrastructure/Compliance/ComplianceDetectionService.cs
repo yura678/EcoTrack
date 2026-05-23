@@ -577,7 +577,10 @@ public class ComplianceDetectionService(
             var pollutantIds = byPeriod.Select(t => t.PollutantId).Distinct().ToArray();
 
             var rolling = await queries.GetRollingAverageRateAsync(sourceIds, pollutantIds, from, now, ct);
-            if (rolling.Count == 0) continue;
+            // Raw counts let us distinguish "no data" (legitimate quiet) from "data exists but
+            // rolling-query couldn't fold it" (silent unenforced limit — should surface as event).
+            var rawCounts = await queries.GetRawMeasurementCountsAsync(sourceIds, pollutantIds, from, now, ct);
+            if (rolling.Count == 0 && rawCounts.Count == 0) continue;
 
             var canonicals = await queries.GetPollutantCanonicalsAsync(pollutantIds, ct);
             var unitIds = byPeriod.Select(t => t.UnitId)
@@ -627,12 +630,34 @@ public class ComplianceDetectionService(
             {
                 if (aggregateLimitIds.Contains(t.LimitId)) continue;
                 if (existingKeys.Contains((t.LimitId, t.EmissionSourceId))) continue;
-                if (!rolling.TryGetValue((t.EmissionSourceId, t.PollutantId), out var r)) continue;
-                if (!units.TryGetValue(t.UnitId, out var limitUnit)
-                    || !units.TryGetValue(r.UnitId, out var measurementUnit)) continue;
+                if (!units.TryGetValue(t.UnitId, out var limitUnit)) continue;
                 if (!canonicals.TryGetValue(t.PollutantId, out var canonical)) continue;
                 if (!unitEntities.TryGetValue(t.UnitId, out var limitUnitEntity)
                     || !unitEntities.TryGetValue(canonical.CanonicalUnitId, out var canonicalUnitEntity)) continue;
+
+                if (!rolling.TryGetValue((t.EmissionSourceId, t.PollutantId), out var r))
+                {
+                    // Rolling-query returned nothing for this tuple. Two cases:
+                    //   a) no raw data at all in the window → legitimate quiet, skip silently.
+                    //   b) raw data exists but every slice failed UnitConverter against the
+                    //      pollutant's canonical → silent unenforced limit. Surface as event.
+                    var rawCount = rawCounts.GetValueOrDefault((t.EmissionSourceId, t.PollutantId), 0);
+                    if (rawCount > 0 && existingUnenforceableLimitIds.Add(t.LimitId))
+                    {
+                        newEvents.Add(ComplianceEvent.ForUnenforceableLimit(
+                            Guid.NewGuid(), t.EmissionSourceId, t.LimitId, from, now,
+                            notes: $"AnnualLoad: {rawCount} raw measurement(s) in window but none could " +
+                                   $"be folded into pollutant canonical {canonicalUnitEntity.Symbol} " +
+                                   $"({canonicalUnitEntity.Dimension}" +
+                                   (canonical.MolarMass.HasValue
+                                       ? $", M={canonical.MolarMass:0.###} g/mol"
+                                       : ", no molar mass") +
+                                   $"). Limit {t.Value:0.###} {limitUnit.Symbol} cannot be enforced."));
+                    }
+                    continue;
+                }
+
+                if (!units.TryGetValue(r.UnitId, out var measurementUnit)) continue;
 
                 // O₂ normalization for Concentration AnnualLoad limits — applied on whichever
                 // unit r.AvgRate ends up being interpreted in.

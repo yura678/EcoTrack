@@ -167,6 +167,46 @@ public class UnenforceableLimitTests : BaseIntegrationTest, IAsyncLifetime
     }
 
     [Fact]
+    public async Task ShouldEmitUnenforceableLimitForAnnualLoadWhenRawCantFoldToCanonical()
+    {
+        // Pollutant canonical mg/m³ (MassConcentration), no MolarMass. Raw shipped in kg/h
+        // (MassFlow) — rolling-rate query UnitConverter rejects the cross-dim conversion and
+        // returns an empty dict. Pre-fix: detector silently skipped, AnnualLoad limit unenforced
+        // without any operator-visible signal. Post-fix: distinguish "no data" from "data
+        // unconvertible" via raw counts and surface as UnenforceableLimit.
+        var pollutant = PollutantsData.FirstTestPollutant(_mg.Id, molarMass: null);
+        await Context.Set<Pollutant>().AddAsync(pollutant);
+
+        var (permit, limit) = ActivePermitWithLimit(
+            value: 50m, unitId: _kgh.Id, pollutantId: pollutant.Id,
+            limitType: LimitType.AnnualLoad,
+            period: AveragingWindow.Month1);
+        await Context.Set<Permit>().AddAsync(permit);
+        await Context.Set<EmissionLimit>().AddAsync(limit);
+
+        var now = DateTime.UtcNow;
+        await Context.Set<RawMeasurement>().AddRangeAsync(
+            Enumerable.Range(0, 5).Select(i => RawMeasurement.New(
+                time: now.AddMinutes(-i - 1),
+                emissionSourceId: _source.Id,
+                pollutantId: pollutant.Id,
+                deviceId: _device.Id,
+                unitId: _kgh.Id,
+                rawValue: 80m)));
+        await SaveChangesAsync();
+
+        await RunAnnualLoadAsync();
+
+        var exceedances = await GetEventsAsync(ComplianceEventType.LimitExceedance, limit.Id);
+        exceedances.Should().BeEmpty("rolling-query couldn't fold — no exceedance possible");
+
+        var unenforceable = await GetEventsAsync(ComplianceEventType.UnenforceableLimit, limit.Id);
+        unenforceable.Should().HaveCount(1);
+        unenforceable[0].Notes.Should().Contain("AnnualLoad");
+        unenforceable[0].Notes.Should().Contain("none could be folded");
+    }
+
+    [Fact]
     public async Task ShouldAutoCloseUnenforceableLimitAfterOperatorAddsMolarMass()
     {
         // Initial tick: pollutant has no molar mass → event opens.
@@ -276,6 +316,16 @@ public class UnenforceableLimitTests : BaseIntegrationTest, IAsyncLifetime
         using var scope = _factory.Services.CreateScope();
         var service = scope.ServiceProvider.GetRequiredService<ComplianceDetectionService>();
         await service.RunAsync(CancellationToken.None);
+    }
+
+    private async Task RunAnnualLoadAsync()
+    {
+        await Context.Database.ExecuteSqlRawAsync(
+            "CALL refresh_continuous_aggregate('measurement_1m', NULL, NULL);");
+
+        using var scope = _factory.Services.CreateScope();
+        var service = scope.ServiceProvider.GetRequiredService<ComplianceDetectionService>();
+        await service.RunAnnualLoadAsync(CancellationToken.None);
     }
 
     public async Task InitializeAsync()
