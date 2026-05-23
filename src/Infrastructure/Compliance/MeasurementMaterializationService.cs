@@ -231,7 +231,7 @@ public class MeasurementMaterializationService(
                         existingMeasurement.RecomputeAggregate(
                             canonicalAvg, normalizedValue, validCount, expected, canonical.CanonicalUnitId);
                         await ApplyIedSubstitutionIfNeededAsync(
-                            existingMeasurement, tuple, validCount, expected, windowStart, cancellationToken);
+                            existingMeasurement, tuple, validCount, expected, windowStart, o2Ref, cancellationToken);
                         updatedCount++;
                     }
                     else
@@ -253,7 +253,7 @@ public class MeasurementMaterializationService(
                             normalizedValue: normalizedValue);
 
                         await ApplyIedSubstitutionIfNeededAsync(
-                            measurement, tuple, validCount, expected, windowStart, cancellationToken);
+                            measurement, tuple, validCount, expected, windowStart, o2Ref, cancellationToken);
 
                         newMeasurements.Add(measurement);
                         insertedThisTick++;
@@ -283,19 +283,27 @@ public class MeasurementMaterializationService(
     /// for compliance. The customary CEMS substitute is MAX of recent valid windows × 1.05.
     /// If no history is available, the value is left as-is but quality is marked Substituted
     /// so downstream consumers know it is unreliable.
+    /// <para>
+    /// For pollutants with a <c>DefaultO2Reference</c> the substitute is taken in @-ref-O₂
+    /// basis (MAX over <c>NormalizedValue ?? Value</c>) and stored in
+    /// <see cref="Measurement.NormalizedValue"/>, so the detector — which uses
+    /// <c>NormalizedValue ?? Value</c> — compares against the limit on a matching basis.
+    /// </para>
     /// </summary>
     private async Task ApplyIedSubstitutionIfNeededAsync(
         Measurement measurement, MaterializationTuple tuple,
         int validCount, int expectedCount, DateTime windowStart,
+        decimal? pollutantO2Reference,
         CancellationToken ct)
     {
         if (expectedCount <= 0) return;
         var availability = (decimal)validCount / expectedCount;
         if (availability >= _settings.DataAvailabilityThreshold) return;
 
+        var useNormalized = pollutantO2Reference.HasValue;
         var maxRecent = await queries.GetMaxValueOverRecentValidWindowsAsync(
             tuple.SourceId, tuple.PollutantId, tuple.Period,
-            windowStart, _settings.SubstitutionLookbackWindows, ct);
+            windowStart, _settings.SubstitutionLookbackWindows, ct, useNormalized);
 
         if (maxRecent is null)
         {
@@ -306,10 +314,12 @@ public class MeasurementMaterializationService(
         }
 
         var substitute = Math.Round(maxRecent.Value * _settings.SubstitutionMultiplier, 6);
+        var basisLabel = useNormalized ? " (normalized basis)" : "";
         measurement.MarkSubstituted(SubstitutionSource.Auto,
             $"IED substitution: availability {availability:P0} < {_settings.DataAvailabilityThreshold:P0}; " +
-            $"substitute = max({maxRecent.Value:0.###}) × {_settings.SubstitutionMultiplier} = {substitute:0.###}",
-            substitute);
+            $"substitute{basisLabel} = max({maxRecent.Value:0.###}) × {_settings.SubstitutionMultiplier} = {substitute:0.###}",
+            substitute,
+            isNormalizedBasis: useNormalized);
     }
 
     /// <summary>

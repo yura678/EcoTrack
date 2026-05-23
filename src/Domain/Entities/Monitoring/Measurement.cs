@@ -138,13 +138,33 @@ public class Measurement : BaseEntity, ITenantOwned
 
     /// <summary>
     /// IED Annex V Part 4 substitution: replaces the measured Value with a conservative
-    /// substitute (typically MAX of recent valid windows × 1.05). Normalisation is dropped
-    /// because the substitute is already a worst-case proxy.
+    /// substitute (typically MAX of recent valid windows × 1.05).
+    /// <para>
+    /// When <paramref name="isNormalizedBasis"/> is <c>true</c> (the pollutant has a
+    /// <c>DefaultO2Reference</c>), the substitute is in @-ref-O₂ basis and is stored in
+    /// <see cref="NormalizedValue"/> so the detector — which preferentially reads
+    /// <see cref="NormalizedValue"/> — compares it against the limit on a matching basis.
+    /// <see cref="Value"/> is left at the original low-availability average so per-sensor
+    /// dashboards still show what was actually measured.
+    /// </para>
+    /// <para>
+    /// Otherwise (no O₂ correction) the substitute is in raw canonical basis and is stored
+    /// in <see cref="Value"/>; <see cref="NormalizedValue"/> is cleared because no
+    /// normalisation applies.
+    /// </para>
     /// </summary>
-    public void MarkSubstituted(SubstitutionSource by, string reason, decimal substituteValue)
+    public void MarkSubstituted(SubstitutionSource by, string reason, decimal substituteValue,
+        bool isNormalizedBasis = false)
     {
-        Value = substituteValue;
-        NormalizedValue = null;
+        if (isNormalizedBasis)
+        {
+            NormalizedValue = substituteValue;
+        }
+        else
+        {
+            Value = substituteValue;
+            NormalizedValue = null;
+        }
         Quality = Quality.Substituted;
         SubstitutedBy = by;
         SubstitutionReason = reason;

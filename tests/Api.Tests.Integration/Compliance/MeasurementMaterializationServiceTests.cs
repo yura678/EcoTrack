@@ -195,6 +195,64 @@ public class MeasurementMaterializationServiceTests : BaseIntegrationTest, IAsyn
     }
 
     [Fact]
+    public async Task ShouldSubstituteInNormalizedBasisForO2ReferencedPollutant()
+    {
+        // Pollutant has DefaultO2Reference=6%. Historical valid windows have NormalizedValue
+        // populated (the realistic case after the materializer runs once). Substitute must be
+        // MAX over NormalizedValue × 1.05 and land in NormalizedValue — otherwise the detector
+        // would compare raw substitute vs limit @ ref O₂ and systematically miss exceedances
+        // because actual O₂ > ref O₂ typically inflates the normalized number.
+        var pollutant = PollutantsData.WithO2Reference(6m, _mg.Id);
+        await Context.Set<Pollutant>().AddAsync(pollutant);
+        var (permit, limit) = ActivePermitWithLimit(pollutant.Id, 1000m);
+        await Context.Set<Permit>().AddAsync(permit);
+        await Context.Set<EmissionLimit>().AddAsync(limit);
+
+        // Three historical hours: raw Value 50/60/70 mg/m³, normalized 90/110/130 mg/m³.
+        // MAX over normalized = 130, substitute = 130 × 1.05 = 136.5.
+        await Context.Set<Measurement>().AddRangeAsync(
+            HistoricalNormalizedMeasurement(pollutant.Id, value: 50m, normalized: 90m, hoursAgo: 5),
+            HistoricalNormalizedMeasurement(pollutant.Id, value: 60m, normalized: 110m, hoursAgo: 4),
+            HistoricalNormalizedMeasurement(pollutant.Id, value: 70m, normalized: 130m, hoursAgo: 3));
+
+        // Current hour: one raw point + O₂ → 1/60 availability triggers substitution.
+        await Context.Set<RawMeasurement>().AddAsync(RawMeasurement.New(
+            _midWindow, _source.Id, pollutant.Id, _device.Id, _mg.Id, 30m));
+        await Context.Set<RawProcessParameter>().AddAsync(RawProcessParameter.New(
+            _midWindow, _source.Id, _device.Id, ParameterType.O2Content, 10m, _percent.Id));
+        await SaveChangesAsync();
+        await RefreshCasAsync();
+
+        await RunMaterializationAsync();
+
+        var measurement = await Context.Set<Measurement>().AsNoTracking()
+            .FirstOrDefaultAsync(m => m.WindowEnd == _windowEnd && m.PollutantId == pollutant.Id);
+        measurement.Should().NotBeNull();
+        measurement!.Quality.Should().Be(Quality.Substituted);
+        measurement.NormalizedValue.Should().NotBeNull();
+        measurement.NormalizedValue!.Value.Should().BeApproximately(136.5m, 0.0001m,
+            "substitute lives in NormalizedValue so detector's NormalizedValue ?? Value picks it up");
+        measurement.SubstitutionReason.Should().Contain("normalized basis");
+        measurement.SubstitutionReason.Should().Contain("max(130");
+    }
+
+    private Measurement HistoricalNormalizedMeasurement(
+        Guid pollutantId, decimal value, decimal normalized, int hoursAgo)
+    {
+        var end = _windowEnd.AddHours(-hoursAgo);
+        var start = end.AddHours(-1);
+        return Measurement.New(
+            id: Guid.NewGuid(),
+            windowStart: start, windowEnd: end,
+            window: AveragingWindow.Hour1, aggregation: Aggregation.Average,
+            emissionSourceId: _source.Id, pollutantId: pollutantId,
+            deviceId: _device.Id, unitId: _mg.Id,
+            value: value,
+            validPointsCount: 60, expectedPointsCount: 60,
+            normalizedValue: normalized);
+    }
+
+    [Fact]
     public async Task ShouldMarkSubstitutedWithoutValueChangeWhenNoHistory()
     {
         var pollutant = PollutantsData.FirstTestPollutant(_mg.Id);

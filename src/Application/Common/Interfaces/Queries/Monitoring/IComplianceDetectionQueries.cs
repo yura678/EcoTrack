@@ -184,6 +184,11 @@ public interface IComplianceDetectionQueries
     /// IED substitution lookup: max value among the last N valid Measurement records for
     /// (source, pollutant, period, Average) strictly before <paramref name="beforeWindowStart"/>.
     /// Returns null if no qualifying history exists.
+    /// <para>
+    /// When <paramref name="useNormalized"/> is <c>true</c> the MAX is taken over
+    /// <c>COALESCE(NormalizedValue, Value)</c> — required for O₂-corrected pollutants so the
+    /// substitute lives in the same @-ref-O₂ basis as the limit it will be compared against.
+    /// </para>
     /// </summary>
     Task<decimal?> GetMaxValueOverRecentValidWindowsAsync(
         Guid sourceId,
@@ -191,7 +196,8 @@ public interface IComplianceDetectionQueries
         AveragingWindow period,
         DateTime beforeWindowStart,
         int lookbackCount,
-        CancellationToken ct);
+        CancellationToken ct,
+        bool useNormalized = false);
 
     // ── Devices & calibration ───────────────────────────────────────────────
     /// <param name="enterpriseId">When non-null, scope to a single tenant.</param>

@@ -307,9 +307,14 @@ internal class ComplianceDetectionQueries(ApplicationDbContext context) : ICompl
         AveragingWindow period,
         DateTime beforeWindowStart,
         int lookbackCount,
-        CancellationToken ct)
+        CancellationToken ct,
+        bool useNormalized = false)
     {
         if (lookbackCount <= 0) return null;
+        // For O₂-corrected pollutants the substitute must be in @-ref-O₂ basis so it matches
+        // limit comparisons. MAX over raw Value mixes records taken at different O₂ levels
+        // (apples-to-oranges); MAX over NormalizedValue stays on a single reference basis.
+        // Falls back to Value when NormalizedValue isn't populated for a historical row.
         var recent = await context.Set<Measurement>()
             .Where(m => m.EmissionSourceId == sourceId
                         && m.PollutantId == pollutantId
@@ -319,7 +324,7 @@ internal class ComplianceDetectionQueries(ApplicationDbContext context) : ICompl
                         && m.WindowStart < beforeWindowStart)
             .OrderByDescending(m => m.WindowEnd)
             .Take(lookbackCount)
-            .Select(m => m.Value)
+            .Select(m => useNormalized ? (m.NormalizedValue ?? m.Value) : m.Value)
             .ToListAsync(ct);
         return recent.Count == 0 ? null : recent.Max();
     }
