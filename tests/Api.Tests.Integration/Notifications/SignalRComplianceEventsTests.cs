@@ -66,6 +66,31 @@ public class SignalRComplianceEventsTests : BaseIntegrationTest, IAsyncLifetime
     }
 
     [Fact]
+    public async Task ShouldPushClosedEventToConnectedBrowserOfSameEnterprise()
+    {
+        // Symmetric to the opened-event push: closes (manual or detector auto-close) must reach
+        // browsers reactively too — otherwise dashboards show stale Open state until reload.
+        var received = new TaskCompletionSource<ComplianceEventDto>();
+        await using var connection = await BuildConnectionAsync(roleOverride: null);
+        connection.On<ComplianceEventDto>(
+            ComplianceEventsHub.EventClosedMethod,
+            dto => received.TrySetResult(dto));
+        await connection.StartAsync();
+
+        var ev = await SeedComplianceEventAsync();
+        ev.Close(ResolutionReason.OperatorAction, "auto-close smoke test", resolvedByUserId: null);
+        // SeedComplianceEventAsync's SaveChangesAsync calls ChangeTracker.Clear(); the returned
+        // entity is detached. Re-attach as Modified so the Close() mutation reaches the DB.
+        Context.Set<ComplianceEvent>().Update(ev);
+        await SaveChangesAsync();
+        await PublishClosedAsync(ev.Id);
+
+        var pushed = await received.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        pushed.Id.Should().Be(ev.Id);
+        pushed.Status.Should().Be(ComplianceEventStatus.Closed);
+    }
+
+    [Fact]
     public async Task ShouldNotPushToUserWithoutCompliancePermission()
     {
         // Non-superAdmin role with no DynamicPermission claims → CanAccess returns false in
@@ -124,6 +149,13 @@ public class SignalRComplianceEventsTests : BaseIntegrationTest, IAsyncLifetime
         using var scope = _factory.Services.CreateScope();
         var publisher = scope.ServiceProvider.GetRequiredService<IPublisher>();
         await publisher.Publish(new ComplianceEventOpenedNotification(eventId), CancellationToken.None);
+    }
+
+    private async Task PublishClosedAsync(Guid eventId)
+    {
+        using var scope = _factory.Services.CreateScope();
+        var publisher = scope.ServiceProvider.GetRequiredService<IPublisher>();
+        await publisher.Publish(new ComplianceEventClosedNotification(eventId), CancellationToken.None);
     }
 
     public async Task InitializeAsync()

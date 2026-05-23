@@ -14,6 +14,7 @@ namespace Api.Hubs;
 public class ComplianceEventsHub(IDynamicPermissionService permissions) : Hub
 {
     public const string EventOpenedMethod = "ComplianceEventOpened";
+    public const string EventClosedMethod = "ComplianceEventClosed";
 
     public override async Task OnConnectedAsync()
     {

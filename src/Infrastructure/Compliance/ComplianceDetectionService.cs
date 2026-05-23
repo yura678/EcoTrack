@@ -162,7 +162,7 @@ public class ComplianceDetectionService(
             unitEntities = BuildUnitEntities(units);
         }
 
-        var closedCount = 0;
+        var closedIds = new List<Guid>();
         foreach (var ev in open)
         {
             if (!ev.LimitId.HasValue) continue;
@@ -192,14 +192,21 @@ public class ComplianceDetectionService(
 
             ev.Close(ResolutionReason.OperatorAction, closeNote, resolvedByUserId: null);
             complianceEventRepository.Update(ev);
-            closedCount++;
+            closedIds.Add(ev.Id);
         }
 
-        if (closedCount > 0)
+        if (closedIds.Count > 0)
         {
             await unitOfWork.SaveChangesAsync(ct);
+            // Notify subscribers (SignalR pushes the new Closed state into open browser tabs)
+            // AFTER save so handlers always see the persisted resolution metadata. Same ordering
+            // discipline as PersistAsync for opened events.
+            foreach (var id in closedIds)
+            {
+                await publisher.Publish(new ComplianceEventClosedNotification(id), ct);
+            }
         }
-        return closedCount;
+        return closedIds.Count;
     }
 
     // ─── LimitExceedance ─────────────────────────────────────────────────────────
