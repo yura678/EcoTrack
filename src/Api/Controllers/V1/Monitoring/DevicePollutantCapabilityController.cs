@@ -58,6 +58,7 @@ public class DevicePollutantCapabilityController(
             RangeMax = request.RangeMax,
             RangeUnitId = request.RangeUnitId,
             AccuracyClass = request.AccuracyClass,
+            ExpectedIntervalMinutes = request.ExpectedIntervalMinutes,
         };
 
         var result = await sender.Send(command, cancellationToken);
@@ -80,6 +81,7 @@ public class DevicePollutantCapabilityController(
             RangeMax = request.RangeMax,
             RangeUnitId = request.RangeUnitId,
             AccuracyClass = request.AccuracyClass,
+            ExpectedIntervalMinutes = request.ExpectedIntervalMinutes,
         };
 
         var result = await sender.Send(command, cancellationToken);

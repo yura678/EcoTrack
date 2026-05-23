@@ -181,6 +181,17 @@ public interface IComplianceDetectionQueries
         IReadOnlyCollection<Guid> pollutantIds, CancellationToken ct);
 
     /// <summary>
+    /// MIN <c>ExpectedIntervalMinutes</c> across every device capability attached to each
+    /// (source, pollutant) tuple. Default 1 (per-minute CEMS) when no capability is registered.
+    /// MIN — the strictest cadence wins — because if any device on the source should report
+    /// every minute, that's the denominator DataAvailability has to live up to.
+    /// </summary>
+    Task<Dictionary<(Guid SourceId, Guid PollutantId), int>> GetCapabilityIntervalsAsync(
+        IReadOnlyCollection<Guid> sourceIds,
+        IReadOnlyCollection<Guid> pollutantIds,
+        CancellationToken ct);
+
+    /// <summary>
     /// Forces a refresh of the <c>measurement_1m</c> continuous aggregate over the given range.
     /// The standing <c>add_continuous_aggregate_policy</c> covers the last 2 hours; the
     /// materializer's late-arriving rescan span can reach further back (e.g. 6h for Hour1 with

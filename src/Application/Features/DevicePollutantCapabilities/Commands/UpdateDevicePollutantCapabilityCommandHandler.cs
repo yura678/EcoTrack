@@ -44,7 +44,7 @@ public class UpdateDevicePollutantCapabilityCommandHandler(IUnitOfWork unitOfWor
         try
         {
             entity.UpdateDetails(request.RangeMin, request.RangeMax, request.RangeUnitId,
-                request.AccuracyClass);
+                request.AccuracyClass, request.ExpectedIntervalMinutes);
             var updated = unitOfWork.DevicePollutantCapabilityRepository.Update(entity);
             await unitOfWork.SaveChangesAsync(cancellationToken);
             return updated;

@@ -7,13 +7,15 @@ public record CreateDevicePollutantCapabilityDto(
     decimal RangeMin,
     decimal RangeMax,
     Guid RangeUnitId,
-    string? AccuracyClass);
+    string? AccuracyClass,
+    int ExpectedIntervalMinutes = 1);
 
 public record UpdateDevicePollutantCapabilityDto(
     decimal RangeMin,
     decimal RangeMax,
     Guid RangeUnitId,
-    string? AccuracyClass);
+    string? AccuracyClass,
+    int ExpectedIntervalMinutes = 1);
 
 public record DevicePollutantCapabilityDto(
     Guid Id,
@@ -22,7 +24,8 @@ public record DevicePollutantCapabilityDto(
     decimal RangeMin,
     decimal RangeMax,
     Guid RangeUnitId,
-    string? AccuracyClass)
+    string? AccuracyClass,
+    int ExpectedIntervalMinutes)
 {
     public static DevicePollutantCapabilityDto FromDomainModel(DevicePollutantCapability capability)
     {
@@ -33,7 +36,8 @@ public record DevicePollutantCapabilityDto(
             capability.RangeMin,
             capability.RangeMax,
             capability.RangeUnitId,
-            capability.AccuracyClass
+            capability.AccuracyClass,
+            capability.ExpectedIntervalMinutes
         );
     }
 }

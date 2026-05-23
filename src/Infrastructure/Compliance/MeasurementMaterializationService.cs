@@ -64,8 +64,14 @@ public class MeasurementMaterializationService(
         }
 
         var pollutantIds = tuples.Select(t => t.PollutantId).Distinct().ToArray();
+        var sourceIdsAll = tuples.Select(t => t.SourceId).Distinct().ToArray();
         var pollutantCanonicals = await queries.GetPollutantCanonicalsAsync(pollutantIds, cancellationToken);
         var o2RefByPollutant = await queries.GetPollutantO2ReferencesAsync(pollutantIds, cancellationToken);
+        // Per-(source, pollutant) reporting cadence in minutes. Default 1 when no capability is
+        // registered, so devices without explicit config behave as 1-minute CEMS — matches the
+        // pre-#7 implicit assumption.
+        var intervalByTuple = await queries.GetCapabilityIntervalsAsync(
+            sourceIdsAll, pollutantIds, cancellationToken);
 
         var newMeasurements = new List<Measurement>();
         var updatedCount = 0;
@@ -227,18 +233,26 @@ public class MeasurementMaterializationService(
                                 fromUnit.Symbol, canonicalUnit.Symbol, tuple.PollutantId, conversionError);
                         }
                     }
-                    // Cap at period.TotalMinutes — a single minute can hold raw rows in multiple
-                    // units (device swap mid-bucket); summing per-unit counts then would briefly
-                    // exceed the physical maximum.
-                    if (validMinutes > (long)period.TotalMinutes)
-                    {
-                        validMinutes = (long)period.TotalMinutes;
-                    }
-
                     if (totalSampleCount == 0) continue;
                     var canonicalAvg = Math.Round(weightedSum / totalSampleCount, 6);
 
-                    var expected = (int)period.TotalMinutes;
+                    // ExpectedPointsCount scales with the configured reporting interval — a sparse
+                    // method (lab analysis at 1/day, portable sampler at 1/5min) declares its
+                    // cadence via DevicePollutantCapability.ExpectedIntervalMinutes so we don't
+                    // false-positive DataAvailabilityLoss on devices that legitimately ship less
+                    // than once per minute. Defaults to 1 (one-per-minute CEMS).
+                    var intervalMinutes = intervalByTuple.GetValueOrDefault(
+                        (tuple.SourceId, tuple.PollutantId), 1);
+                    var expected = Math.Max(1, (int)Math.Ceiling(period.TotalMinutes / intervalMinutes));
+
+                    // Cap validMinutes at expected — a faster-than-configured device or a single
+                    // minute holding multiple per-unit rows (device swap mid-bucket) would
+                    // otherwise push availability above 100%, which is meaningless.
+                    if (validMinutes > expected)
+                    {
+                        validMinutes = expected;
+                    }
+
                     var validCount = (int)Math.Min(int.MaxValue, validMinutes);
                     var normalizedValue = TryComputeNormalized(
                         canonicalAvg, o2Ref, tuple.SourceId, windowStart, paramReadings);

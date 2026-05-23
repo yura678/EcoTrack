@@ -459,6 +459,29 @@ internal class ComplianceDetectionQueries(ApplicationDbContext context) : ICompl
             r => new PollutantCanonical(r.CanonicalUnitId, r.MolarMass));
     }
 
+    public async Task<Dictionary<(Guid SourceId, Guid PollutantId), int>> GetCapabilityIntervalsAsync(
+        IReadOnlyCollection<Guid> sourceIds,
+        IReadOnlyCollection<Guid> pollutantIds,
+        CancellationToken ct)
+    {
+        if (sourceIds.Count == 0 || pollutantIds.Count == 0) return [];
+        var rows = await context.Set<DevicePollutantCapability>()
+            .Where(c => pollutantIds.Contains(c.PollutantId)
+                        && c.Device!.EmissionSourceId.HasValue
+                        && sourceIds.Contains(c.Device.EmissionSourceId.Value))
+            .GroupBy(c => new { SourceId = c.Device!.EmissionSourceId!.Value, c.PollutantId })
+            .Select(g => new
+            {
+                g.Key.SourceId,
+                g.Key.PollutantId,
+                MinInterval = g.Min(c => c.ExpectedIntervalMinutes)
+            })
+            .ToListAsync(ct);
+        return rows.ToDictionary(
+            r => (r.SourceId, r.PollutantId),
+            r => Math.Max(1, r.MinInterval));
+    }
+
     public async Task RefreshMeasurement1mCaAsync(DateTime from, DateTime to, CancellationToken ct)
     {
         // Uses the shared DbContext connection so Npgsql password/SSL config is inherited from

@@ -68,7 +68,7 @@ public class CreateDevicePollutantCapabilityCommandHandler(IUnitOfWork unitOfWor
                 DevicePollutantCapability.New(Guid.NewGuid(),
                     request.DeviceId, request.PollutantId,
                     request.RangeMin, request.RangeMax, request.RangeUnitId,
-                    request.AccuracyClass),
+                    request.AccuracyClass, request.ExpectedIntervalMinutes),
                 cancellationToken);
             await unitOfWork.SaveChangesAsync(cancellationToken);
             return newEntity;

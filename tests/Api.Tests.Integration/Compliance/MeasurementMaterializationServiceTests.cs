@@ -668,6 +668,105 @@ public class MeasurementMaterializationServiceTests : BaseIntegrationTest, IAsyn
             "100 ppm × 46 / 22.414 ≈ 205.229 mg/m³ at EU STP");
     }
 
+    [Fact]
+    public async Task ShouldNotFireDataAvailabilityLossForSparseDeviceWithFullCadence()
+    {
+        // Device reports once every 5 min by design (portable sampler / lab method). With the
+        // matching DevicePollutantCapability.ExpectedIntervalMinutes=5, ExpectedPointsCount
+        // becomes 60/5=12. 12 readings @ minutes 0,5,...,55 → ValidPointsCount=12 → 100%
+        // availability → no substitution, no DataAvailabilityLoss. Pre-#7 this fired every tick.
+        var pollutant = PollutantsData.FirstTestPollutant(_mg.Id);
+        await Context.Set<Pollutant>().AddAsync(pollutant);
+        await Context.Set<DevicePollutantCapability>().AddAsync(DevicePollutantCapability.New(
+            id: Guid.NewGuid(), deviceId: _device.Id, pollutantId: pollutant.Id,
+            rangeMin: 0m, rangeMax: 500m, rangeUnitId: _mg.Id,
+            accuracyClass: null, expectedIntervalMinutes: 5));
+        var (permit, limit) = ActivePermitWithLimit(pollutant.Id, 1000m);
+        await Context.Set<Permit>().AddAsync(permit);
+        await Context.Set<EmissionLimit>().AddAsync(limit);
+
+        var raws = Enumerable.Range(0, 12).Select(i =>
+            RawMeasurement.New(
+                _windowStart.AddMinutes(i * 5).AddSeconds(30),
+                _source.Id, pollutant.Id, _device.Id, _mg.Id, 100m));
+        await Context.Set<RawMeasurement>().AddRangeAsync(raws);
+        await SaveChangesAsync();
+        await RefreshCasAsync();
+        await RunMaterializationAsync();
+
+        var m = await Context.Set<Measurement>().AsNoTracking()
+            .FirstAsync(x => x.WindowEnd == _windowEnd && x.PollutantId == pollutant.Id);
+        m.Value.Should().Be(100m);
+        m.ExpectedPointsCount.Should().Be(12, "ceil(60min / 5min interval)");
+        m.ValidPointsCount.Should().Be(12, "all 12 expected readings arrived");
+        m.Quality.Should().Be(Quality.Valid, "100% availability against the configured cadence");
+    }
+
+    [Fact]
+    public async Task ShouldFireSubstitutionForSparseDeviceMissingHalfItsExpectedReadings()
+    {
+        // Same 5-min-cadence device but only 6 of the 12 expected readings arrived → 50%
+        // availability, below the 75% IED threshold → Quality=Substituted (no history so the
+        // value isn't replaced, just flagged).
+        var pollutant = PollutantsData.FirstTestPollutant(_mg.Id);
+        await Context.Set<Pollutant>().AddAsync(pollutant);
+        await Context.Set<DevicePollutantCapability>().AddAsync(DevicePollutantCapability.New(
+            id: Guid.NewGuid(), deviceId: _device.Id, pollutantId: pollutant.Id,
+            rangeMin: 0m, rangeMax: 500m, rangeUnitId: _mg.Id,
+            accuracyClass: null, expectedIntervalMinutes: 5));
+        var (permit, limit) = ActivePermitWithLimit(pollutant.Id, 1000m);
+        await Context.Set<Permit>().AddAsync(permit);
+        await Context.Set<EmissionLimit>().AddAsync(limit);
+
+        var raws = Enumerable.Range(0, 6).Select(i =>
+            RawMeasurement.New(
+                _windowStart.AddMinutes(i * 5).AddSeconds(30),
+                _source.Id, pollutant.Id, _device.Id, _mg.Id, 100m));
+        await Context.Set<RawMeasurement>().AddRangeAsync(raws);
+        await SaveChangesAsync();
+        await RefreshCasAsync();
+        await RunMaterializationAsync();
+
+        var m = await Context.Set<Measurement>().AsNoTracking()
+            .FirstAsync(x => x.WindowEnd == _windowEnd && x.PollutantId == pollutant.Id);
+        m.ExpectedPointsCount.Should().Be(12);
+        m.ValidPointsCount.Should().Be(6);
+        m.Quality.Should().Be(Quality.Substituted,
+            "6/12 = 50% < 75% IED threshold even on the slower cadence");
+    }
+
+    [Fact]
+    public async Task ShouldCapValidPointsAtExpectedWhenDeviceShipsFasterThanConfigured()
+    {
+        // Operator configured 5-min cadence (expected=12) but the device actually ships every
+        // minute (60 valid minutes). Without cap availability would be 60/12 = 500% — meaningless
+        // for IED. We cap validMinutes at expected so the number stays interpretable as a fraction.
+        var pollutant = PollutantsData.FirstTestPollutant(_mg.Id);
+        await Context.Set<Pollutant>().AddAsync(pollutant);
+        await Context.Set<DevicePollutantCapability>().AddAsync(DevicePollutantCapability.New(
+            id: Guid.NewGuid(), deviceId: _device.Id, pollutantId: pollutant.Id,
+            rangeMin: 0m, rangeMax: 500m, rangeUnitId: _mg.Id,
+            accuracyClass: null, expectedIntervalMinutes: 5));
+        var (permit, limit) = ActivePermitWithLimit(pollutant.Id, 1000m);
+        await Context.Set<Permit>().AddAsync(permit);
+        await Context.Set<EmissionLimit>().AddAsync(limit);
+
+        var raws = Enumerable.Range(0, 60).Select(i =>
+            RawMeasurement.New(
+                _windowStart.AddMinutes(i).AddSeconds(30),
+                _source.Id, pollutant.Id, _device.Id, _mg.Id, 100m));
+        await Context.Set<RawMeasurement>().AddRangeAsync(raws);
+        await SaveChangesAsync();
+        await RefreshCasAsync();
+        await RunMaterializationAsync();
+
+        var m = await Context.Set<Measurement>().AsNoTracking()
+            .FirstAsync(x => x.WindowEnd == _windowEnd && x.PollutantId == pollutant.Id);
+        m.ExpectedPointsCount.Should().Be(12);
+        m.ValidPointsCount.Should().Be(12, "capped at expected even though 60 minutes had data");
+        m.Quality.Should().Be(Quality.Valid);
+    }
+
     // ─── helpers ─────────────────────────────────────────────────────────────────
 
     private (Permit Permit, EmissionLimit Limit) ActivePermitWithLimit(Guid pollutantId, decimal value)

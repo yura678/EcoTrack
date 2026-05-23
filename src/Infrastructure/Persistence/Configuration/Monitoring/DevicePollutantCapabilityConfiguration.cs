@@ -22,6 +22,12 @@ public class DevicePollutantCapabilityConfiguration : IEntityTypeConfiguration<D
             .HasMaxLength(50)
             .IsRequired(false);
 
+        // Default 1 = once-per-minute CEMS, matches the materializer's pre-#7 implicit
+        // assumption. Existing rows pre-migration are backfilled to 1 via HasDefaultValue.
+        builder.Property(x => x.ExpectedIntervalMinutes)
+            .HasDefaultValue(1)
+            .IsRequired();
+
         builder.HasOne(x => x.Device)
             .WithMany(d => d.Capabilities)
             .HasForeignKey(x => x.DeviceId)
