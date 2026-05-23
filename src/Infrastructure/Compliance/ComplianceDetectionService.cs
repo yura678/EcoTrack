@@ -504,9 +504,11 @@ public class ComplianceDetectionService(
                 // the limit's unit. Emit one UnenforceableLimit per LimitId so operator sees the
                 // silent gap; auto-close will resolve it once any source becomes derivable again
                 // (e.g. operator starts shipping volumetric flow on the affected sources).
-                if (existingUnenforceableLimitIds.Add(primary.LimitId)
-                    && canonicals.TryGetValue(primary.PollutantId, out var canonical)
-                    && unitEntities.TryGetValue(canonical.CanonicalUnitId, out var canonicalUnit))
+                // Canonical/unit lookups go first so a missing pollutant config doesn't mutate
+                // the dedup set without us actually emitting an event.
+                if (canonicals.TryGetValue(primary.PollutantId, out var canonical)
+                    && unitEntities.TryGetValue(canonical.CanonicalUnitId, out var canonicalUnit)
+                    && existingUnenforceableLimitIds.Add(primary.LimitId))
                 {
                     sink.Add(ComplianceEvent.ForUnenforceableLimit(
                         Guid.NewGuid(), primary.EmissionSourceId, primary.LimitId,
@@ -886,9 +888,12 @@ public class ComplianceDetectionService(
 
             if (contributingSources.Count == 0)
             {
-                if (existingUnenforceableLimitIds.Add(primary.LimitId)
-                    && canonicals.TryGetValue(primary.PollutantId, out var canonical)
-                    && unitEntities.TryGetValue(canonical.CanonicalUnitId, out var canonicalUnit))
+                // Same operand-ordering discipline as the Fast aggregate: only add to the dedup
+                // set when we're actually about to emit, never as a side-effect of a check that
+                // might short-circuit.
+                if (canonicals.TryGetValue(primary.PollutantId, out var canonical)
+                    && unitEntities.TryGetValue(canonical.CanonicalUnitId, out var canonicalUnit)
+                    && existingUnenforceableLimitIds.Add(primary.LimitId))
                 {
                     sink.Add(ComplianceEvent.ForUnenforceableLimit(
                         Guid.NewGuid(), primary.EmissionSourceId, primary.LimitId, from, to,
