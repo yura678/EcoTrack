@@ -567,6 +567,45 @@ public class MeasurementMaterializationServiceTests : BaseIntegrationTest, IAsyn
     }
 
     [Fact]
+    public async Task ShouldNotInflateValidPointsCountWhenSliceIsDropped()
+    {
+        // 30 min in mg/m³ (converts) + 30 min in ppm with no MolarMass (drops). Pre-fix the CTE
+        // returned a SHARED global minute count repeated across per-unit rows; the materializer's
+        // unconditional Math.Max picked it up regardless of which slices converted, so the
+        // dropped ppm rows still inflated ValidPointsCount to 60 → 100% availability → IED
+        // substitution skipped even though half the readings never made it into Value.
+        var ppmUnit = MeasureUnit.New(Guid.NewGuid(), "ppm", MeasureUnitDimension.Dimensionless, 1m);
+        await Context.Set<MeasureUnit>().AddAsync(ppmUnit);
+        var pollutant = PollutantsData.FirstTestPollutant(_mg.Id); // MolarMass null → ppm un-convertible
+        await Context.Set<Pollutant>().AddAsync(pollutant);
+        var (permit, limit) = ActivePermitWithLimit(pollutant.Id, 1000m);
+        await Context.Set<Permit>().AddAsync(permit);
+        await Context.Set<EmissionLimit>().AddAsync(limit);
+
+        var mgRaws = Enumerable.Range(0, 30).Select(minute =>
+            RawMeasurement.New(
+                _windowStart.AddMinutes(minute).AddSeconds(30),
+                _source.Id, pollutant.Id, _device.Id, _mg.Id, 100m));
+        var ppmRaws = Enumerable.Range(30, 30).Select(minute =>
+            RawMeasurement.New(
+                _windowStart.AddMinutes(minute).AddSeconds(30),
+                _source.Id, pollutant.Id, _device.Id, ppmUnit.Id, 50m));
+        await Context.Set<RawMeasurement>().AddRangeAsync(mgRaws.Concat(ppmRaws));
+        await SaveChangesAsync();
+        await RefreshCasAsync();
+        await RunMaterializationAsync();
+
+        var m = await Context.Set<Measurement>().AsNoTracking()
+            .FirstAsync(x => x.WindowEnd == _windowEnd && x.PollutantId == pollutant.Id);
+        m.Value.Should().Be(100m, "only the convertible mg/m³ slice contributed to the average");
+        m.ValidPointsCount.Should().Be(30,
+            "30 mg/m³ minutes converted; the 30 ppm minutes were dropped and must not be counted");
+        m.ExpectedPointsCount.Should().Be(60);
+        m.Quality.Should().Be(Quality.Substituted,
+            "30/60 availability is below the 75% IED threshold → substitution should fire");
+    }
+
+    [Fact]
     public async Task ShouldDropUnconvertiblePpmSliceAndKeepRemainingUnits()
     {
         // Pollutant has no MolarMass — ppm rows cannot be converted to mg/m³ and must be silently

@@ -197,10 +197,13 @@ public class MeasurementMaterializationService(
 
                     decimal weightedSum = 0m;
                     long totalSampleCount = 0;
+                    // validMinutes accumulates ONLY from converted slices; pre-Phase-3 history or
+                    // a racy unit deletion can leave un-convertible per-unit rows in the CA, and
+                    // counting their minutes here would inflate ValidPointsCount → falsely high
+                    // DataAvailability → IED substitution skipped when it shouldn't be.
                     long validMinutes = 0;
                     foreach (var entry in windowGroup)
                     {
-                        validMinutes = Math.Max(validMinutes, entry.ValidMinutesInWindow);
                         if (entry.SampleCount == 0 || entry.Avg is null) continue;
                         if (!unitEntities.TryGetValue(entry.UnitId, out var fromUnit))
                         {
@@ -215,6 +218,7 @@ public class MeasurementMaterializationService(
                         {
                             weightedSum += canonicalSliceAvg * entry.SampleCount;
                             totalSampleCount += entry.SampleCount;
+                            validMinutes += entry.ValidMinutesInWindow;
                         }
                         else
                         {
@@ -222,6 +226,13 @@ public class MeasurementMaterializationService(
                                 "Cannot convert {Symbol} to canonical {CanonicalSymbol} for pollutant {Pollutant}: {Reason}; slice dropped.",
                                 fromUnit.Symbol, canonicalUnit.Symbol, tuple.PollutantId, conversionError);
                         }
+                    }
+                    // Cap at period.TotalMinutes — a single minute can hold raw rows in multiple
+                    // units (device swap mid-bucket); summing per-unit counts then would briefly
+                    // exceed the physical maximum.
+                    if (validMinutes > (long)period.TotalMinutes)
+                    {
+                        validMinutes = (long)period.TotalMinutes;
                     }
 
                     if (totalSampleCount == 0) continue;

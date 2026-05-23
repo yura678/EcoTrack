@@ -365,17 +365,17 @@ internal class ComplianceDetectionQueries(ApplicationDbContext context) : ICompl
     {
         var periodLiteral = PeriodToPgInterval(period);
 
-        // CTE computes "distinct minutes with any valid data in the window" once per
-        // (source, pollutant, window). The main SELECT preserves the per-unit split so the
-        // materializer can convert each unit's slice into the pollutant's canonical unit before
-        // weighted-averaging. Summing valid_count across per-unit rows would double-count any
-        // minute that received data in more than one unit; the CTE avoids that by counting
-        // distinct 1-minute buckets.
+        // CTE computes "distinct minutes with valid data PER (source, pollutant, unit_id, window)"
+        // so the materializer can sum only the units that successfully converted to canonical —
+        // otherwise a dropped un-convertible slice would inflate ValidPointsCount via a shared
+        // global count. Per-minute overlap across distinct units (the same minute holding raw
+        // rows in two units) is rare in practice; the C# folding sums per-unit minute counts.
         var sql = $@"
             WITH valid_minutes AS (
                 SELECT
                     emission_source_id,
                     pollutant_id,
+                    unit_id,
                     time_bucket(INTERVAL '{periodLiteral}', bucket) AS window_start,
                     COUNT(DISTINCT bucket) AS minutes_with_valid
                 FROM measurement_1m
@@ -384,7 +384,7 @@ internal class ComplianceDetectionQueries(ApplicationDbContext context) : ICompl
                   AND bucket >= @from
                   AND bucket < @to
                   AND valid_count > 0
-                GROUP BY emission_source_id, pollutant_id, window_start
+                GROUP BY emission_source_id, pollutant_id, unit_id, window_start
             ),
             bucketed AS (
                 SELECT
@@ -414,6 +414,7 @@ internal class ComplianceDetectionQueries(ApplicationDbContext context) : ICompl
                 v.emission_source_id = b.emission_source_id
                 AND v.pollutant_id = b.pollutant_id
                 AND v.window_start = b.window_start
+                AND v.unit_id = b.unit_id
             ORDER BY b.emission_source_id, b.pollutant_id, b.window_start, b.unit_id";
 
         await using var command = await CreateCommandAsync(sql, ct);
