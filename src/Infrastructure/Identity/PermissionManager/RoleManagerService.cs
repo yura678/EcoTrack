@@ -84,7 +84,16 @@ internal class RoleManagerService : IRoleManagerService
             .SingleOrDefaultAsync(x => x.Id == roleId);
 
         if (role == null)
-            return;
+        {
+            // Almost always means the caller forgot to commit the new role before seeding —
+            // Phase A's AutoSaveChanges=false on the role store leaves a freshly-created role
+            // only in the change tracker until the caller's SaveChanges runs. Throwing instead
+            // of silently returning surfaces the mistake during dev rather than producing an
+            // admin with zero permission claims at runtime.
+            throw new InvalidOperationException(
+                $"Role {roleId} not found when seeding dynamic permissions. " +
+                "Did the caller forget to call SaveChangesAsync after CreateRoleAsync?");
+        }
 
         var allActions = await GetPermissionActionsAsync();
         var existingKeys = role.Claims

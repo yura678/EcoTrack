@@ -3,14 +3,15 @@ using Api.Controllers.Common;
 using Api.Dtos;
 using Application.Common.Interfaces.Queries.Monitoring;
 using Asp.Versioning;
-using Infrastructure.Identity.PermissionManager;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
 namespace Api.Controllers.V1.Monitoring;
 
+// Measurement units are a global reference dictionary (mg/m³, ppm, …) — any authenticated
+// user needs read access. See SectorController for the same reasoning.
 [ApiVersion("1")]
-[Authorize(ConstantPolicies.DynamicPermission)]
+[Authorize]
 [Route("api/v{version:apiVersion}/units")]
 [ApiController]
 public class MeasureUnitController(

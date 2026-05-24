@@ -3,14 +3,15 @@ using Api.Controllers.Common;
 using Api.Dtos;
 using Application.Common.Interfaces.Queries.Enterprises;
 using Asp.Versioning;
-using Infrastructure.Identity.PermissionManager;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
 namespace Api.Controllers.V1.Enterprise;
 
+// IED categories are a global reference dictionary (EU directive catalog) — any authenticated
+// user needs read access for dropdowns. See SectorController for the same reasoning.
 [ApiVersion("1")]
-[Authorize(ConstantPolicies.DynamicPermission)]
+[Authorize]
 [Route("api/v{version:apiVersion}/iedCategories")]
 [ApiController]
 public class IedCategoryController(

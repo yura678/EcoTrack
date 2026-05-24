@@ -27,10 +27,8 @@ internal class ConfirmEmailCommandHandler(
                 {
                     return new UserVerificationException(u.Id, result.Errors.StringifyIdentityResultErrors());
                 }
-                // Explicit save — defensive against the upcoming AutoSaveChanges=false. The
-                // ConfirmEmailWithCodeAsync above triggers UpdateAsync + UpdateSecurityStampAsync
-                // internally; both rely on the Identity store's auto-save today but will need
-                // this explicit flush once that flips.
+                // AppUserStore.AutoSaveChanges is false, so ConfirmEmailWithCodeAsync only stages
+                // EmailConfirmed + SecurityStamp + ConcurrencyStamp on the tracker; this commits.
                 await unitOfWork.SaveChangesAsync(cancellationToken);
                 return true;
             },

@@ -3,14 +3,16 @@ using Api.Controllers.Common;
 using Api.Dtos;
 using Application.Common.Interfaces.Queries.Enterprises;
 using Asp.Versioning;
-using Infrastructure.Identity.PermissionManager;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
 namespace Api.Controllers.V1.Enterprise;
 
+// Sectors are a global reference dictionary — every authenticated user needs to read them
+// for dropdowns and labelling. Gating with DynamicPermission would force every new tenant
+// role to carry an extra claim just to render the registration form / enterprise card.
 [ApiVersion("1")]
-[Authorize(ConstantPolicies.DynamicPermission)]
+[Authorize]
 [Route("api/v{version:apiVersion}/sectors")]
 [ApiController]
 public class SectorController(

@@ -2,14 +2,16 @@
 using Api.Controllers.Common;
 using Api.Dtos;
 using Application.Common.Interfaces.Queries.Emissions;
-using Infrastructure.Identity.PermissionManager;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
 namespace Api.Controllers.V1.EmissionSources;
 
+// Pollutants are a global reference dictionary (CAS / EPRTR catalog) — any authenticated
+// user needs read access for dropdowns and labelling. See SectorController for the same
+// reasoning. Future write endpoints, if any, should be Roles="superAdmin".
 [Route("api/v{version:apiVersion}/pollutants")]
-[Authorize(ConstantPolicies.DynamicPermission)]
+[Authorize]
 [ApiController]
 public class PollutantController(
     IPollutantQueries pollutantQueries) : BaseController

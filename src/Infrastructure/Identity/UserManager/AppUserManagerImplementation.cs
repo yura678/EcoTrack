@@ -92,12 +92,14 @@ public class AppUserManagerImplementation(AppUserManager userManager, ICurrentUs
         if (!verified)
             return IdentityResult.Failed(new IdentityError { Description = "Incorrect Code" });
 
+        // Set EmailConfirmed on the tracked entity, then let UpdateSecurityStampAsync drive the
+        // single Store.UpdateAsync call that bumps ConcurrencyStamp and stages the row for save.
+        // Calling userManager.UpdateAsync(user) separately first would trigger a second
+        // Context.Update(user) on the already-modified tracker entry; under AutoSaveChanges=false
+        // EF resets OriginalValues on the consecutive update, breaking the concurrency-token
+        // WHERE clause and surfacing DbUpdateConcurrencyException at the caller's SaveChanges.
         user.EmailConfirmed = true;
-        var updateResult = await userManager.UpdateAsync(user);
-        if (!updateResult.Succeeded) return updateResult;
-
-        await userManager.UpdateSecurityStampAsync(user);
-        return IdentityResult.Success;
+        return await userManager.UpdateSecurityStampAsync(user);
     }
 
     public async Task<Option<User>> GetUserByPhoneNumber(string phoneNumber)

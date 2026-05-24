@@ -113,6 +113,12 @@ internal class RegisterEnterpriseAdminCommandHandler(
             return new UserRoleAssignmentException(Guid.Empty, "admin");
         }
 
+        // Commit the new User + Role before seeding permissions. SeedAllDynamicPermissionsAsync
+        // queries the role from the database; with AutoSaveChanges=false on the role store, the
+        // role would otherwise still live only in the change tracker and the query would return
+        // null — leaving the brand-new admin without a single DynamicPermission claim.
+        await unitOfWork.SaveChangesAsync(cancellationToken);
+
         await roleManager.SeedAllDynamicPermissionsAsync(createdRoleId.Value);
 
         await unitOfWork.UserEnterpriseMembershipRepository.AddAsync(
