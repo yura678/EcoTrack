@@ -14,6 +14,7 @@ internal class LoginByCodeQueryHandler(
     IAppUserManager userManager,
     IJwtService jwtService,
     ILoginAttemptRecorder loginRecorder,
+    IEnterpriseAccessGate enterpriseAccessGate,
     IUnitOfWork unitOfWork)
     : IRequestHandler<LoginByCodeQuery, Either<UserException, AccessToken>>
 {
@@ -40,6 +41,19 @@ internal class LoginByCodeQueryHandler(
                         LoginMethod.EmailCode, LoginOutcome.InvalidCredentials, cancellationToken);
                     await unitOfWork.SaveChangesAsync(cancellationToken);
                     return new UserVerificationException(u.Id, result.Errors.StringifyIdentityResultErrors());
+                }
+
+                // Enterprise approval gate: block JWT issuance when the user's only tenants
+                // are Pending/Rejected. The security-stamp rotation from VerifyUserCode above
+                // is intentionally retained — it's a credential-side mutation independent of
+                // tenant access; we just don't issue a token until SuperAdmin approves.
+                var gateBlock = await enterpriseAccessGate.CheckLoginEligibilityAsync(u.Id, cancellationToken);
+                if (gateBlock.IsSome)
+                {
+                    await loginRecorder.RecordAsync(u.Id, request.Email,
+                        LoginMethod.EmailCode, LoginOutcome.EnterpriseNotApproved, cancellationToken);
+                    await unitOfWork.SaveChangesAsync(cancellationToken);
+                    return gateBlock.Match(ex => ex, () => (UserException)new UnhandledUserException(u.Id));
                 }
 
                 await loginRecorder.RecordAsync(u.Id, request.Email,

@@ -5,7 +5,10 @@ using Api.Modules.Errors;
 using Application.Common.Interfaces.Queries.Enterprises;
 using Application.Common.Models;
 using Application.Features.Enterprises.Commands;
+using Application.Features.Enterprises.Commands.Approve;
+using Application.Features.Enterprises.Commands.Reject;
 using Asp.Versioning;
+using Domain.Entities.Enterprises;
 using MediatR;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -135,6 +138,51 @@ public class EnterpriseController(
         CancellationToken cancellationToken)
     {
         var result = await sender.Send(new RestoreEnterpriseCommand(id), cancellationToken);
+        return result.Match(
+            e => Ok(EnterpriseDto.FromDomainModel(e)),
+            e => e.ToObjectResult());
+    }
+
+    // ─── SuperAdmin approval workflow ─────────────────────────────────────────────
+
+    [HttpGet("pending")]
+    [ProducesOkApiResponseType<PageResult<EnterpriseDto>>]
+    public async Task<IActionResult> GetPendingEnterprises(
+        [FromQuery] EnterpriseQueryDto query,
+        CancellationToken cancellationToken)
+    {
+        var result = await enterpriseQueries.GetByStatusPagedAsync(
+            EnterpriseStatus.Pending, query.Page, query.PageSize, cancellationToken);
+
+        return Ok(new PageResult<EnterpriseDto>
+        {
+            Items = result.Items.Select(EnterpriseDto.FromDomainModel).ToList(),
+            TotalCount = result.TotalCount,
+            Page = result.Page,
+            PageSize = result.PageSize
+        });
+    }
+
+    [HttpPost("{id:guid}/approve")]
+    [ProducesOkApiResponseType<EnterpriseDto>]
+    public async Task<IActionResult> ApproveEnterprise(
+        [FromRoute] Guid id, CancellationToken cancellationToken)
+    {
+        var result = await sender.Send(new ApproveEnterpriseCommand(id), cancellationToken);
+        return result.Match(
+            e => Ok(EnterpriseDto.FromDomainModel(e)),
+            e => e.ToObjectResult());
+    }
+
+    [HttpPost("{id:guid}/reject")]
+    [ProducesOkApiResponseType<EnterpriseDto>]
+    public async Task<IActionResult> RejectEnterprise(
+        [FromRoute] Guid id,
+        [FromBody] RejectEnterpriseDto request,
+        CancellationToken cancellationToken)
+    {
+        var result = await sender.Send(
+            new RejectEnterpriseCommand(id, request.Reason), cancellationToken);
         return result.Match(
             e => Ok(EnterpriseDto.FromDomainModel(e)),
             e => e.ToObjectResult());

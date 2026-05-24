@@ -1,6 +1,7 @@
 ﻿using Application.Common.EmailTemplates;
 using Application.Common.Interfaces.Identity;
 using Application.Common.Interfaces.Persistence;
+using Application.Common.Settings;
 using Application.Features.Users.Commands.Create;
 using Application.Features.Users.Exceptions;
 using Application.Models.Identity;
@@ -18,6 +19,7 @@ internal class RegisterEnterpriseAdminCommandHandler(
     IRoleManagerService roleManager,
     IUnitOfWork unitOfWork,
     IEmailService emailService,
+    AdminSettings adminSettings,
     ILogger<RegisterEnterpriseAdminCommandHandler> logger)
     : IRequestHandler<RegisterEnterpriseAdminCommand, Either<UserException, UserCreateCommandResult>>
 {
@@ -66,7 +68,10 @@ internal class RegisterEnterpriseAdminCommandHandler(
             return new EdrpouAlreadyExistsException(request.Edrpou);
 
         var enterpriseId = Guid.NewGuid();
-        var enterprise = Enterprise.New(
+        // Self-service registrations land as Pending — a SuperAdmin must verify the EDRPOU
+        // against the official EDR before any user under this tenant can log in. The login
+        // gate enforces this; we just have to mark the row correctly here.
+        var enterprise = Enterprise.NewPending(
             id: enterpriseId,
             name: request.EnterpriseName,
             edrpou: request.Edrpou,
@@ -127,6 +132,21 @@ internal class RegisterEnterpriseAdminCommandHandler(
             body: emailBody,
             cancellationToken: cancellationToken
         );
+
+        // Notify SuperAdmin that a new tenant is awaiting approval. Empty NotificationEmail
+        // (default in dev/test) disables this so the outbox stays clean during local runs.
+        if (!string.IsNullOrWhiteSpace(adminSettings.NotificationEmail))
+        {
+            var adminBody = EmailTemplates.NewEnterpriseRegistrationToSuperAdmin(
+                request.EnterpriseName, request.Edrpou, request.Email);
+            await emailService.SendEmailAsync(
+                toEmail: adminSettings.NotificationEmail,
+                subject: $"EcoTrack: нова заявка від {request.EnterpriseName} ({request.Edrpou})",
+                body: adminBody,
+                cancellationToken: cancellationToken
+            );
+        }
+
         // Flush the email_outbox row alongside the rest of the registration in the same
         // explicit transaction; transaction.Commit() further up wouldn't flush tracked-but-
         // unsaved entities, and the IEmailService.SendEmailAsync is intentionally save-free.

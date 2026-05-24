@@ -25,3 +25,18 @@ public class EnterpriseHasDependenciesException(
 
 public class UnhandledEnterpriseException(Guid enterpriseId, Exception? innerException = null)
     : EnterpriseException(enterpriseId, "Unexpected error occurred.", innerException);
+
+public class EnterpriseAlreadyActiveException(Guid enterpriseId)
+    : EnterpriseException(enterpriseId,
+        $"Enterprise '{enterpriseId}' is already active; nothing to approve.");
+
+public class EnterpriseInvalidStateForApprovalException(Guid enterpriseId, string currentStatus)
+    : EnterpriseException(enterpriseId,
+        $"Enterprise '{enterpriseId}' is in state '{currentStatus}' and cannot be approved.");
+
+public class EnterpriseInvalidStateForRejectionException(Guid enterpriseId, string currentStatus)
+    : EnterpriseException(enterpriseId,
+        $"Enterprise '{enterpriseId}' is in state '{currentStatus}' and cannot be rejected.");
+
+public class EnterpriseRejectionReasonRequiredException(Guid enterpriseId)
+    : EnterpriseException(enterpriseId, "Rejection reason is required.");

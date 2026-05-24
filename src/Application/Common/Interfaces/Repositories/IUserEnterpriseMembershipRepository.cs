@@ -16,6 +16,13 @@ public interface IUserEnterpriseMembershipRepository
     Task<IReadOnlyList<UserEnterpriseMembership>> GetActiveByUserIdAsync(Guid userId,
         CancellationToken cancellationToken);
 
+    /// <summary>
+    /// Active memberships for an enterprise — used by SuperAdmin approval flow to email
+    /// every admin attached to the tenant once a decision is made.
+    /// </summary>
+    Task<IReadOnlyList<UserEnterpriseMembership>> GetActiveByUserIdsForEnterpriseAsync(
+        Guid enterpriseId, CancellationToken cancellationToken);
+
     Task<UserEnterpriseMembership> AddAsync(UserEnterpriseMembership entity,
         CancellationToken cancellationToken);
 

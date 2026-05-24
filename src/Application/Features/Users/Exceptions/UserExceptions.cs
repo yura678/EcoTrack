@@ -76,3 +76,12 @@ public class UnhandledUserException(
     Guid userId,
     Exception? innerException = null)
     : UserException(userId, "Unexpected error occurred.", innerException);
+
+public class EnterprisePendingApprovalException(Guid userId, string edrpou)
+    : UserException(userId,
+        $"Підприємство (ЄДРПОУ {edrpou}) очікує верифікації суперадміна. " +
+        "Лист про підтвердження прийде після перевірки.");
+
+public class EnterpriseRejectedException(Guid userId, string edrpou, string reason)
+    : UserException(userId,
+        $"Реєстрацію підприємства (ЄДРПОУ {edrpou}) відхилено: {reason}");

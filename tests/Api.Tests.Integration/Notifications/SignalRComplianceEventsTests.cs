@@ -33,7 +33,7 @@ public class SignalRComplianceEventsTests : BaseIntegrationTest, IAsyncLifetime
     {
         _factory = factory;
         // EnterpriseId MUST match the JWT's CompanyId claim because the hub groups by it.
-        _enterprise = Enterprise.New(
+        _enterprise = Enterprise.NewActive(
             TestAuthHandler.TestCompanyId,
             "SignalR test enterprise",
             edrpou: "99999999",

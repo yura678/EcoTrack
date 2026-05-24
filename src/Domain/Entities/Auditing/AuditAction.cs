@@ -21,5 +21,9 @@ public enum AuditAction
     /// <summary>Admin-initiated revoke of all the target user's sessions in the admin's enterprise.</summary>
     UserSessionsRevoked = 11,
     /// <summary>Admin replaced the user's email address. Details carry old/new addresses.</summary>
-    UserEmailChanged = 12
+    UserEmailChanged = 12,
+    /// <summary>SuperAdmin approved a pending self-service enterprise registration.</summary>
+    EnterpriseApproved = 13,
+    /// <summary>SuperAdmin rejected a pending self-service enterprise registration; Details carries the reason.</summary>
+    EnterpriseRejected = 14
 }

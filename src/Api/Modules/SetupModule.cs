@@ -35,8 +35,15 @@ public static class SetupModule
         });
         services.AddCors(configuration);
         services.AddApplicationSettings(configuration);
+        services.AddAdminSettings(configuration);
 
         return services;
+    }
+
+    private static void AddAdminSettings(this IServiceCollection services, IConfiguration configuration)
+    {
+        var adminSettings = configuration.GetSection("Admin").Get<AdminSettings>() ?? new AdminSettings();
+        services.AddSingleton(adminSettings);
     }
 
     private static void AddCors(this IServiceCollection services, IConfiguration configuration)

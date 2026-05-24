@@ -37,6 +37,14 @@ internal class UserEnterpriseMembershipRepository(ApplicationDbContext context)
             .ToListAsync(cancellationToken);
     }
 
+    public async Task<IReadOnlyList<UserEnterpriseMembership>> GetActiveByUserIdsForEnterpriseAsync(
+        Guid enterpriseId, CancellationToken cancellationToken)
+    {
+        return await Table
+            .Where(x => x.EnterpriseId == enterpriseId && x.RevokedAt == null)
+            .ToListAsync(cancellationToken);
+    }
+
     public async Task<IReadOnlyList<UserEnterpriseMembership>> GetByUserIdWithRoleAndEnterpriseAsync(
         Guid userId, CancellationToken cancellationToken)
     {

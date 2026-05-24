@@ -54,5 +54,6 @@ public enum LoginOutcome
     InvalidCredentials = 1,
     UserLocked = 2,
     EmailNotConfirmed = 3,
-    UnknownEmail = 4
+    UnknownEmail = 4,
+    EnterpriseNotApproved = 5
 }

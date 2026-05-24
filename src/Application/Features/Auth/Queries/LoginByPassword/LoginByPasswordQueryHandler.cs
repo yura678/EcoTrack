@@ -14,6 +14,7 @@ internal class LoginByPasswordQueryHandler(
     IAppUserManager userManager,
     IJwtService jwtService,
     ILoginAttemptRecorder loginRecorder,
+    IEnterpriseAccessGate enterpriseAccessGate,
     IUnitOfWork unitOfWork,
     ILogger<LoginByPasswordQueryHandler> logger)
     : IRequestHandler<LoginByPasswordQuery, Either<UserException, AccessToken>>
@@ -53,6 +54,19 @@ internal class LoginByPasswordQueryHandler(
                         LoginMethod.Password, LoginOutcome.EmailNotConfirmed, cancellationToken);
                     await unitOfWork.SaveChangesAsync(cancellationToken);
                     return new UserVerificationException(u.Id, "Email is not confirmed.");
+                }
+
+                // Enterprise approval gate: even with valid credentials, block JWT issuance
+                // if the user's only tenants are Pending/Rejected. The lockout reset + the
+                // login-success audit row above are intentionally kept — the user authenticated
+                // correctly, just isn't authorised to enter their tenant yet.
+                var gateBlock = await enterpriseAccessGate.CheckLoginEligibilityAsync(u.Id, cancellationToken);
+                if (gateBlock.IsSome)
+                {
+                    await loginRecorder.RecordAsync(u.Id, request.Email,
+                        LoginMethod.Password, LoginOutcome.EnterpriseNotApproved, cancellationToken);
+                    await unitOfWork.SaveChangesAsync(cancellationToken);
+                    return gateBlock.Match(ex => ex, () => (UserException)new UnhandledUserException(u.Id));
                 }
 
                 await userManager.ResetUserLockoutAsync(u);

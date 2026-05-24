@@ -106,11 +106,11 @@ public class RefreshTokenInvalidationTests : BaseIntegrationTest, IAsyncLifetime
         // the handler's GetCurrentEnterpriseId() would point at a phantom tenant and the
         // membership lookup would always miss.
         var sector = SectorsData.FirstTestSector();
-        var enterpriseA = Enterprise.New(
+        var enterpriseA = Enterprise.NewActive(
             TestAuthHandler.TestCompanyId,
             "Enterprise A", edrpou: $"A-{Guid.NewGuid():N}".Substring(0, 12),
             "Addr A", RiskGroup.Average, sector.Id);
-        var enterpriseB = Enterprise.New(
+        var enterpriseB = Enterprise.NewActive(
             Guid.NewGuid(),
             "Enterprise B", edrpou: $"B-{Guid.NewGuid():N}".Substring(0, 12),
             "Addr B", RiskGroup.Average, sector.Id);

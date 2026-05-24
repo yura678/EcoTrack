@@ -48,7 +48,8 @@ public static class ServiceCollectionExtension
         services.AddScoped<IUserStore<User>, AppUserStore>();
         services.AddScoped<IRoleManagerService, RoleManagerService>();
         services.AddScoped<ICurrentUserService, CurrentUserService>();
-        
+        services.AddScoped<IEnterpriseAccessGate, EnterpriseAccessGate>();
+
         services.AddIdentity<User, Role>(options =>
             {
                 options.Stores.ProtectPersonalData = false;

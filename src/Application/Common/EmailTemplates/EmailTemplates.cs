@@ -40,4 +40,30 @@ public static class EmailTemplates
             <p>Otherwise, click the link below to choose a new password. The link is single-use and expires soon.</p>
             <a href='{resetLink}'>Reset password</a>";
     }
+
+    public static string NewEnterpriseRegistrationToSuperAdmin(
+        string enterpriseName, string edrpou, string adminEmail)
+    {
+        return $@"<h3>Нова заявка на реєстрацію підприємства</h3>
+            <p><b>Назва:</b> {enterpriseName}</p>
+            <p><b>ЄДРПОУ:</b> {edrpou}</p>
+            <p><b>Email адміна:</b> {adminEmail}</p>
+            <p>Перевірте ЄДРПОУ у реєстрі: <a href='https://usr.minjust.gov.ua/content/free-search/all'>usr.minjust.gov.ua</a></p>
+            <p>Після перевірки погодьте або відхиліть заявку в адмін-панелі.</p>";
+    }
+
+    public static string EnterpriseApprovedToAdmin(string enterpriseName)
+    {
+        return $@"<h3>Реєстрацію підприємства підтверджено</h3>
+            <p>Вашу заявку на реєстрацію підприємства <b>{enterpriseName}</b> підтверджено.</p>
+            <p>Тепер ви можете увійти у застосунок.</p>";
+    }
+
+    public static string EnterpriseRejectedToAdmin(string enterpriseName, string reason)
+    {
+        return $@"<h3>Реєстрацію відхилено</h3>
+            <p>Вашу заявку на реєстрацію підприємства <b>{enterpriseName}</b> відхилено.</p>
+            <p><b>Причина:</b> {reason}</p>
+            <p>Якщо ви вважаєте, що це помилка, зверніться до підтримки.</p>";
+    }
 }

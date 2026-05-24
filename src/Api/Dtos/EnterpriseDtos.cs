@@ -27,6 +27,10 @@ public record EnterpriseDto(
     string Address,
     Guid SectorId,
     SectorDto? Sector,
+    EnterpriseStatus Status,
+    DateTime? ApprovalDecisionAt,
+    Guid? ApprovalDecisionByUserId,
+    string? RejectionReason,
     DateTime CreatedAt,
     DateTime? UpdatedAt,
     IReadOnlyList<SiteDto>? Sites)
@@ -41,12 +45,18 @@ public record EnterpriseDto(
             Address: enterprise.Address,
             SectorId: enterprise.SectorId,
             Sector: enterprise.Sector is not null ? SectorDto.FromDomainModel(enterprise.Sector) : null,
+            Status: enterprise.Status,
+            ApprovalDecisionAt: enterprise.ApprovalDecisionAt,
+            ApprovalDecisionByUserId: enterprise.ApprovalDecisionByUserId,
+            RejectionReason: enterprise.RejectionReason,
             CreatedAt: enterprise.CreatedAt,
             UpdatedAt: enterprise.UpdatedAt,
             Sites: enterprise.Sites?.Select(SiteDto.FromDomainModel).ToList()
         );
     }
 }
+
+public record RejectEnterpriseDto(string Reason);
 
 public record SectorDto(
     Guid Id,

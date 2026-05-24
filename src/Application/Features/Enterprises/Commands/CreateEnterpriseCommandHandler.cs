@@ -51,7 +51,7 @@ public class CreateEnterpriseCommandHandler(
         try
         {
             var newEnterprise = await unitOfWork.EnterpriseRepository.AddAsync(
-                Enterprise.New(Guid.NewGuid(), request.Name, request.Edrpou, request.Address,
+                Enterprise.NewActive(Guid.NewGuid(), request.Name, request.Edrpou, request.Address,
                     request.RiskGroup, request.SectorId), cancellationToken);
             await unitOfWork.SaveChangesAsync(cancellationToken);
             return newEnterprise;

@@ -10,7 +10,11 @@ public static class EnterpriseErrorFactory
         var statusCode = error switch
         {
             EnterpriseEdrpouAlreadyExistsException
-                or EnterpriseHasDependenciesException => StatusCodes.Status409Conflict,
+                or EnterpriseHasDependenciesException
+                or EnterpriseAlreadyActiveException
+                or EnterpriseInvalidStateForApprovalException
+                or EnterpriseInvalidStateForRejectionException => StatusCodes.Status409Conflict,
+            EnterpriseRejectionReasonRequiredException => StatusCodes.Status400BadRequest,
             EnterpriseNotFoundException
                 or SectorNotFoundException => StatusCodes.Status404NotFound,
             UnhandledEnterpriseException => StatusCodes.Status500InternalServerError,

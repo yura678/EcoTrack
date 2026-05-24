@@ -19,4 +19,11 @@ public interface IEnterpriseQueries
     /// per-tenant detection scheduler to fan out one Hangfire job per tenant per tick.
     /// </summary>
     Task<IReadOnlyList<Guid>> GetActiveEnterpriseIdsAsync(CancellationToken cancellationToken);
+
+    /// <summary>
+    /// SuperAdmin queue of enterprises awaiting verification. Ordered oldest-first so the
+    /// reviewer works through the backlog FIFO.
+    /// </summary>
+    Task<PageResult<Enterprise>> GetByStatusPagedAsync(
+        EnterpriseStatus status, int page, int pageSize, CancellationToken cancellationToken);
 }

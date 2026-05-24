@@ -13,7 +13,7 @@ public static class EnterprisesData
         return Interlocked.Increment(ref edrpouCounter).ToString();
     }
 
-    public static Enterprise FirstTestEquipment(Guid sectorId) => Enterprise.New(
+    public static Enterprise FirstTestEquipment(Guid sectorId) => Enterprise.NewActive(
         Guid.NewGuid(),
         "First test enterprise", 
         GetNextEdrpou(),
@@ -21,7 +21,7 @@ public static class EnterprisesData
         RiskGroup.Average, 
         sectorId);
 
-    public static Enterprise SecondTestEquipment(Guid sectorId) => Enterprise.New(
+    public static Enterprise SecondTestEquipment(Guid sectorId) => Enterprise.NewActive(
         Guid.NewGuid(),
         "Second test enterprise", 
         GetNextEdrpou(), 
@@ -29,7 +29,7 @@ public static class EnterprisesData
         RiskGroup.High, 
         sectorId);
 
-    public static Enterprise ThirdTestEquipment(Guid sectorId) => Enterprise.New(
+    public static Enterprise ThirdTestEquipment(Guid sectorId) => Enterprise.NewActive(
         Guid.NewGuid(),
         "Third test enterprise", 
         GetNextEdrpou(), 

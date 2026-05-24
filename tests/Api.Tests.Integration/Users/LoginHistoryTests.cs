@@ -132,7 +132,7 @@ public class LoginHistoryTests : BaseIntegrationTest, IAsyncLifetime
         // Enterprise A = matches TestCompanyId so admin context lookups succeed for the
         // admin-side history test.
         var sector = SectorsData.FirstTestSector();
-        var enterpriseA = Enterprise.New(
+        var enterpriseA = Enterprise.NewActive(
             TestAuthHandler.TestCompanyId,
             "Enterprise A", edrpou: $"A-{Guid.NewGuid():N}".Substring(0, 12),
             "Addr A", RiskGroup.Average, sector.Id);

@@ -458,19 +458,19 @@ public class ApplicationDbContextInitializer(
         // ENTERPRISES
         var enterprises = new List<Enterprise>
         {
-            Enterprise.New(Guid.NewGuid(), "ТОВ «Метінвест Холдинг»", "30101010",
+            Enterprise.NewActive(Guid.NewGuid(), "ТОВ «Метінвест Холдинг»", "30101010",
                 "м. Маріуполь, вул. Набережна, 1", RiskGroup.High, sectorMetal.Id),
 
-            Enterprise.New(Guid.NewGuid(), "ДТЕК Енерго", "30202020",
+            Enterprise.NewActive(Guid.NewGuid(), "ДТЕК Енерго", "30202020",
                 "м. Київ, вул. Велика Васильківська, 5", RiskGroup.High, sectorPower.Id),
 
-            Enterprise.New(Guid.NewGuid(), "ПРАТ «Кривий Ріг Цемент»", "30303030",
+            Enterprise.NewActive(Guid.NewGuid(), "ПРАТ «Кривий Ріг Цемент»", "30303030",
                 "м. Кривий Ріг, вул. Заводська, 10", RiskGroup.Average, sectorCement.Id),
 
-            Enterprise.New(Guid.NewGuid(), "ПрАТ «Авдіївський КХЗ»", "30404040",
+            Enterprise.NewActive(Guid.NewGuid(), "ПрАТ «Авдіївський КХЗ»", "30404040",
                 "м. Авдіївка, вул. Індустріальна, 1", RiskGroup.High, sectorCoke.Id),
 
-            Enterprise.New(Guid.NewGuid(), "ПрАТ «АК Київводоканал»", "30505050",
+            Enterprise.NewActive(Guid.NewGuid(), "ПрАТ «АК Київводоканал»", "30505050",
                 "м. Київ, вул. Лейпцизька, 1А", RiskGroup.Average, sectorWater.Id)
         };
 

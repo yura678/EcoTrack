@@ -24,6 +24,12 @@ public static class UserErrorFactory
             InvalidCredentialsException => StatusCodes.Status401Unauthorized,
             InvalidRefreshTokenException => StatusCodes.Status401Unauthorized,
 
+            // 403 Forbidden — credentials are valid but tenant is gated by SuperAdmin
+            // verification. The body carries the localised message + EDRPOU so the
+            // client can show "очікує верифікації" / "відхилено: {reason}".
+            EnterprisePendingApprovalException
+                or EnterpriseRejectedException => StatusCodes.Status403Forbidden,
+
             PhoneNumberAlreadyExistsException => StatusCodes.Status409Conflict,
             UserNameAlreadyExistsException => StatusCodes.Status409Conflict,
             EmailAlreadyExistsException => StatusCodes.Status409Conflict,

@@ -50,6 +50,28 @@ internal class EnterpriseRepository(ApplicationDbContext context)
         };
     }
 
+    public async Task<PageResult<Enterprise>> GetByStatusPagedAsync(
+        EnterpriseStatus status, int page, int pageSize, CancellationToken cancellationToken)
+    {
+        var query = base.TableNoTracking.Where(e => e.Status == status);
+
+        var total = await query.CountAsync(cancellationToken);
+
+        var items = await query
+            .OrderBy(x => x.CreatedAt)
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
+            .ToListAsync(cancellationToken);
+
+        return new PageResult<Enterprise>
+        {
+            Items = items,
+            TotalCount = total,
+            Page = page,
+            PageSize = pageSize
+        };
+    }
+
     public async Task<Option<Enterprise>> GetByIdAsync(Guid id, CancellationToken cancellationToken)
     {
         var entity = await base.TableNoTracking

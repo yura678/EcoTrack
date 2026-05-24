@@ -155,7 +155,7 @@ public class AdminUserDetailTests : BaseIntegrationTest, IAsyncLifetime
         // Enterprise A = the admin's tenant (matches TestCompanyId so JWT CompanyId claim points
         // at a real row). Enterprise B exists so we can demonstrate cross-tenant isolation.
         var sector = SectorsData.FirstTestSector();
-        var enterpriseA = Enterprise.New(
+        var enterpriseA = Enterprise.NewActive(
             TestAuthHandler.TestCompanyId,
             "Enterprise A", edrpou: $"A-{Guid.NewGuid():N}".Substring(0, 12),
             "Addr A", RiskGroup.Average, sector.Id);

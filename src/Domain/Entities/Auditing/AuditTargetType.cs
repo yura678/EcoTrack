@@ -9,5 +9,6 @@ public enum AuditTargetType
     User = 1,
     Role = 2,
     Membership = 3,
-    Invitation = 4
+    Invitation = 4,
+    Enterprise = 5
 }
