@@ -65,6 +65,8 @@ public static class ServiceCollectionExtensions
             var softDeleteInterceptor = provider.GetRequiredService<SoftDeleteSaveChangesInterceptor>();
             var tenantBackfillInterceptor = provider.GetRequiredService<TenantBackfillInterceptor>();
             var tenantInterceptor = provider.GetRequiredService<TenantSaveChangesInterceptor>();
+            var emailOutboxDispatch = provider
+                .GetRequiredService<Infrastructure.EmailProvider.EmailOutboxDispatchInterceptor>();
             options
                 .UseNpgsql(dataSource,
                     builder =>
@@ -72,7 +74,8 @@ public static class ServiceCollectionExtensions
                         builder.MigrationsAssembly(typeof(ApplicationDbContext).Assembly.FullName);
                         builder.UseNetTopologySuite();
                     })
-                .AddInterceptors(softDeleteInterceptor, tenantBackfillInterceptor, tenantInterceptor)
+                .AddInterceptors(softDeleteInterceptor, tenantBackfillInterceptor,
+                    tenantInterceptor, emailOutboxDispatch)
                 .UseSnakeCaseNamingConvention()
                 .ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
         });

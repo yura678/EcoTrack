@@ -105,7 +105,13 @@ public class IntegrationTestWebFactory: WebApplicationFactory<Program>, IAsyncLi
             .ConfigurePrimaryHttpMessageHandler(() => WebhookHttp);
     }
 
-    private static void DisableHangfire(IServiceCollection services)
+    /// <summary>
+    /// Captures every Hangfire job the production code tries to enqueue so tests can assert on
+    /// outbox dispatch behavior without spinning up a real Hangfire worker.
+    /// </summary>
+    public RecordingBackgroundJobClient Jobs { get; } = new();
+
+    private void DisableHangfire(IServiceCollection services)
     {
         var serverDescriptors = services
             .Where(d => d.ImplementationType?.FullName?.Contains("BackgroundJobServerHostedService") == true
@@ -114,7 +120,7 @@ public class IntegrationTestWebFactory: WebApplicationFactory<Program>, IAsyncLi
         foreach (var d in serverDescriptors) services.Remove(d);
 
         services.RemoveServiceByType(typeof(IBackgroundJobClient));
-        services.AddSingleton<IBackgroundJobClient, NoopBackgroundJobClient>();
+        services.AddSingleton<IBackgroundJobClient>(Jobs);
     }
 
     private void RegisterDatabase(IServiceCollection services)
@@ -131,7 +137,7 @@ public class IntegrationTestWebFactory: WebApplicationFactory<Program>, IAsyncLi
 
         services.AddSingleton(dataSource);
 
-        services.AddDbContext<ApplicationDbContext>(options => options
+        services.AddDbContext<ApplicationDbContext>((provider, options) => options
             .UseNpgsql(
                 dataSource,
                 builder =>
@@ -139,6 +145,10 @@ public class IntegrationTestWebFactory: WebApplicationFactory<Program>, IAsyncLi
                     builder.MigrationsAssembly(typeof(ApplicationDbContext).Assembly.FullName);
                     builder.UseNetTopologySuite();
                 })
+            // Wire the email-outbox dispatch interceptor so transactional-outbox tests
+            // exercise the real interceptor → scheduled Hangfire job chain.
+            .AddInterceptors(provider
+                .GetRequiredService<Infrastructure.EmailProvider.EmailOutboxDispatchInterceptor>())
             .UseSnakeCaseNamingConvention()
             .ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning)));
     }
@@ -166,8 +176,3 @@ public static class TestFactoryExtensions
     }
 }
 
-internal class NoopBackgroundJobClient : IBackgroundJobClient
-{
-    public string Create(Job job, IState state) => Guid.NewGuid().ToString();
-    public bool ChangeState(string jobId, IState state, string? expectedState) => true;
-}

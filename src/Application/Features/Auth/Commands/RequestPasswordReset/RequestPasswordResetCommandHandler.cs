@@ -16,6 +16,7 @@ namespace Application.Features.Auth.Commands.RequestPasswordReset;
 internal class RequestPasswordResetCommandHandler(
     IAppUserManager userManager,
     IEmailService emailService,
+    IUnitOfWork unitOfWork,
     ILogger<RequestPasswordResetCommandHandler> logger)
     : IRequestHandler<RequestPasswordResetCommand, Unit>
 {
@@ -46,6 +47,9 @@ internal class RequestPasswordResetCommandHandler(
                     subject: "Reset your EcoTrack password",
                     body: EmailTemplates.PasswordResetByEmail(resetLink),
                     cancellationToken: cancellationToken);
+                // Commit the email_outbox row. Without this the outbox stays in the tracker
+                // forever and the password-reset link never reaches the user.
+                await unitOfWork.SaveChangesAsync(cancellationToken);
                 return 0;
             },
             None: () =>

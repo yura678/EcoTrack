@@ -10,7 +10,8 @@ namespace Application.Features.Auth.Queries.RequestLoginCode;
 
 internal class RequestLoginCodeQueryHandler(
     IAppUserManager userManager,
-    IEmailService emailService)
+    IEmailService emailService,
+    IUnitOfWork unitOfWork)
     : IRequestHandler<RequestLoginCodeQuery, Either<UserException, bool>>
 {
     public async Task<Either<UserException, bool>> Handle(RequestLoginCodeQuery request,
@@ -30,6 +31,8 @@ internal class RequestLoginCodeQueryHandler(
                     subject: "EcoTrack — your login code",
                     body: EmailTemplates.LoginCode(code),
                     cancellationToken: cancellationToken);
+                // Commit the email_outbox row so the login code actually leaves the system.
+                await unitOfWork.SaveChangesAsync(cancellationToken);
                 return true;
             },
             None: () => true);

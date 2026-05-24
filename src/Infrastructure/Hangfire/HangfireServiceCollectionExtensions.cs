@@ -77,6 +77,14 @@ public static class HangfireServiceCollectionExtensions
             methodCall: s => s.ScheduleAnnualLoadAsync(CancellationToken.None),
             cronExpression: CronForHourInterval(settings.AnnualLoadIntervalHours));
 
+        // Backstop for the email outbox — re-enqueues Pending rows the dispatch interceptor
+        // failed to schedule (Hangfire blip, app crash between commit and enqueue). Every
+        // minute is cheap because the partial index keeps the Pending working set tiny.
+        RecurringJob.AddOrUpdate<Infrastructure.EmailProvider.EmailOutboxSweeper>(
+            recurringJobId: "email-outbox-sweep",
+            methodCall: s => s.SweepAsync(CancellationToken.None),
+            cronExpression: Cron.MinuteInterval(1));
+
         return app;
     }
 

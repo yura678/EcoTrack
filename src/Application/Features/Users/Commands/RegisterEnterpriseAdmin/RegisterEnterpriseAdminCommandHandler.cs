@@ -127,6 +127,10 @@ internal class RegisterEnterpriseAdminCommandHandler(
             body: emailBody,
             cancellationToken: cancellationToken
         );
+        // Flush the email_outbox row alongside the rest of the registration in the same
+        // explicit transaction; transaction.Commit() further up wouldn't flush tracked-but-
+        // unsaved entities, and the IEmailService.SendEmailAsync is intentionally save-free.
+        await unitOfWork.SaveChangesAsync(cancellationToken);
 
         return new UserCreateCommandResult
         {

@@ -22,6 +22,7 @@ public class ComplianceNotificationDispatcher(
     IEmailService emailService,
     IWebhookComplianceNotificationPayloadBuilder webhookPayloadBuilder,
     IWebhookSender webhookSender,
+    IUnitOfWork unitOfWork,
     ILogger<ComplianceNotificationDispatcher> logger)
 {
     [AutomaticRetry(Attempts = 5, DelaysInSeconds = new[] { 30, 120, 600, 1800, 3600 })]
@@ -96,6 +97,14 @@ public class ComplianceNotificationDispatcher(
                     "Failed to deliver compliance event {EventId} via {Channel} to subscription {SubId}",
                     complianceEvent.Id, sub.Channel, sub.Id);
             }
+        }
+
+        // Commit every email_outbox row staged in the loop in one shot. The webhook channel
+        // doesn't touch the DbContext (direct HTTP) so this only flushes email rows. Safe to
+        // call when sentEmails == 0 — SaveChanges with no pending changes is a no-op.
+        if (sentEmails > 0)
+        {
+            await unitOfWork.SaveChangesAsync(cancellationToken);
         }
 
         logger.LogInformation(

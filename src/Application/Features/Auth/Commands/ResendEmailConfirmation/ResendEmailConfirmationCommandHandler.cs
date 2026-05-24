@@ -10,7 +10,8 @@ namespace Application.Features.Auth.Commands.ResendEmailConfirmation;
 
 internal class ResendEmailConfirmationCommandHandler(
     IAppUserManager userManager,
-    IEmailService emailService)
+    IEmailService emailService,
+    IUnitOfWork unitOfWork)
     : IRequestHandler<ResendEmailConfirmationCommand, Either<UserException, bool>>
 {
     public async Task<Either<UserException, bool>> Handle(ResendEmailConfirmationCommand request,
@@ -30,6 +31,8 @@ internal class ResendEmailConfirmationCommandHandler(
                     subject: "EcoTrack — confirm your email",
                     body: EmailTemplates.EmailConfirmation(code),
                     cancellationToken: cancellationToken);
+                // Commit the email_outbox row so the confirmation email actually goes out.
+                await unitOfWork.SaveChangesAsync(cancellationToken);
                 return true;
             },
             None: () => true);

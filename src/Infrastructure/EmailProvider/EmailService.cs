@@ -1,51 +1,25 @@
-﻿using Application.Common.Interfaces.Persistence;
-using MailKit.Net.Smtp;
-using MailKit.Security;
-using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Options;
-using MimeKit;
+using Application.Common.Interfaces.Persistence;
+using Domain.Entities.Notifications;
+using Infrastructure.Persistence;
 
 namespace Infrastructure.EmailProvider;
 
-public class EmailService : IEmailService
+/// <summary>
+/// Public <see cref="IEmailService"/> entry point — transactional outbox writer. Stages the
+/// email row in the caller's <c>ApplicationDbContext</c> change tracker and lets the caller's
+/// own <c>SaveChanges</c> commit it in the same transaction as its business entities. The row's
+/// post-commit dispatch to the Hangfire processor is handled by
+/// <see cref="EmailOutboxDispatchInterceptor"/>, so a rollback leaves no orphan row and no
+/// orphan Hangfire job.
+/// </summary>
+public class EmailService(ApplicationDbContext context) : IEmailService
 {
-    private readonly MailSettings _mailSettings;
-    private readonly ILogger<EmailService> _logger;
-
-    public EmailService(IOptions<MailSettings> mailSettings, ILogger<EmailService> logger)
-    {
-        _mailSettings = mailSettings.Value;
-        _logger = logger;
-    }
-
     public async Task SendEmailAsync(string toEmail, string subject, string body,
         CancellationToken cancellationToken = default)
     {
-        try
-        {
-            var email = new MimeMessage();
-            email.Sender = MailboxAddress.Parse(_mailSettings.From);
-            email.To.Add(MailboxAddress.Parse(toEmail));
-            email.Subject = subject;
-
-            var builder = new BodyBuilder { HtmlBody = body };
-            email.Body = builder.ToMessageBody();
-
-            using var smtp = new SmtpClient();
-
-            await smtp.ConnectAsync(_mailSettings.Host, _mailSettings.Port, SecureSocketOptions.StartTls,
-                cancellationToken);
-
-            await smtp.AuthenticateAsync(_mailSettings.UserName, _mailSettings.Password, cancellationToken);
-
-            await smtp.SendAsync(email, cancellationToken);
-
-            await smtp.DisconnectAsync(true, cancellationToken);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error occurred while sending email to {ToEmail}", toEmail);
-            throw new Exception("Failed to send email.", ex);
-        }
+        var row = EmailOutbox.NewPending(Guid.NewGuid(), toEmail, subject, body);
+        await context.Set<EmailOutbox>().AddAsync(row, cancellationToken);
+        // Intentionally no SaveChanges here — caller controls the unit-of-work and commits
+        // this row alongside its business state.
     }
 }

@@ -77,6 +77,9 @@ internal class SendInvitationCommandHandler(
                 subject: "Your Invitation to EcoTrack",
                 body: EmailTemplates.InvitationByEmail(inviteLink),
                 cancellationToken: cancellationToken);
+            // Flush the outbox row in the tx so transaction.Commit() seals it together with
+            // the Invitation entity above.
+            await unitOfWork.SaveChangesAsync(cancellationToken);
 
             transaction.Commit();
             return invitation.Token;
