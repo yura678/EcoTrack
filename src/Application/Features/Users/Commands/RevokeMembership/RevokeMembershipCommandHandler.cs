@@ -47,6 +47,10 @@ internal class RevokeMembershipCommandHandler(
 
                 var userOption = await userManager.GetUserByIdAsync(request.UserId);
                 await userOption.IfSomeAsync(u => userManager.UpdateSecurityStampAsync(u));
+                // Explicit save so the rotated stamp reaches the DB once AutoSaveChanges flips
+                // off on AppUserStore. Without it the revoked user's existing JWTs continue
+                // validating because the stamp on the User row never changed.
+                await unitOfWork.SaveChangesAsync(cancellationToken);
                 return true;
             },
             None: () => new UserNotFoundException(request.UserId));

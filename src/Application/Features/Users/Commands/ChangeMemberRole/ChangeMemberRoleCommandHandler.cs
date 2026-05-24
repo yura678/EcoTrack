@@ -49,6 +49,11 @@ internal class ChangeMemberRoleCommandHandler(
                 await unitOfWork.SaveChangesAsync(cancellationToken);
 
                 await RotateSecurityStampAsync(request.UserId);
+                // Explicit save — UpdateSecurityStampAsync only tracks the new stamp once
+                // AutoSaveChanges is off on AppUserStore; without this flush the stamp change
+                // never reaches the DB and existing JWTs keep working as if the role hadn't
+                // changed.
+                await unitOfWork.SaveChangesAsync(cancellationToken);
                 return true;
             },
             None: () => new UserNotFoundException(request.UserId));
