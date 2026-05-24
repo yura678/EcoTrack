@@ -85,12 +85,33 @@ app.Use(async (context, next) =>
     await next();
 });
 
-app.UseCors(Api.Modules.SetupModule.CorsPolicyName);
+// Hangfire dashboard is same-origin and doesn't need CORS. Routing CORS through it
+// produces a "CORS policy execution failed" log every ~2s when the dashboard polls
+// /hangfire/stats, and also blocks the browser from reading the JSON, so the live
+// counters never update. Branching CORS off the /hangfire path fixes both.
+app.UseWhen(
+    ctx => !ctx.Request.Path.StartsWithSegments("/hangfire"),
+    branch => branch.UseCors(Api.Modules.SetupModule.CorsPolicyName));
 
 app.UseRateLimiter();
 
 app.UseAuthentication();
 app.UseAuthorization();
+
+// Hangfire 1.8.20's JsonStats endpoint unconditionally calls Request.ReadFormAsync()
+// even for requests without a body (browser GET to /hangfire/stats, dashboard JS POST
+// without Content-Type header, etc.). FormFeature throws "Incorrect Content-Type" on
+// the empty body. Forcing a form Content-Type on every /hangfire request that arrives
+// without one lets the form-reader parse the (possibly empty) body and respond normally.
+app.Use(async (ctx, next) =>
+{
+    if (ctx.Request.Path.StartsWithSegments("/hangfire")
+        && string.IsNullOrEmpty(ctx.Request.Headers.ContentType))
+    {
+        ctx.Request.Headers.ContentType = "application/x-www-form-urlencoded";
+    }
+    await next();
+});
 
 app.UseHangfireDashboardWithAuth();
 app.ConfigureDetectionRecurringJobs();
