@@ -134,6 +134,8 @@ public class ProfileSessionsTests : BaseIntegrationTest, IAsyncLifetime
 
         using var scope = _factory.Services.CreateScope();
         var um = scope.ServiceProvider.GetRequiredService<IAppUserManager>();
+        var scopedDb = scope.ServiceProvider
+            .GetRequiredService<Infrastructure.Persistence.ApplicationDbContext>();
 
         var user = new User
         {
@@ -152,6 +154,7 @@ public class ProfileSessionsTests : BaseIntegrationTest, IAsyncLifetime
         };
         (await um.CreateUser(other, "Pass!Pass1")).Succeeded.Should().BeTrue();
         _otherUserId = other.Id;
+        await scopedDb.SaveChangesAsync();
     }
 
     public Task DisposeAsync() => ResetTenantDataAsync();

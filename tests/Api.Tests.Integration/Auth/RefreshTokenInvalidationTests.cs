@@ -134,6 +134,8 @@ public class RefreshTokenInvalidationTests : BaseIntegrationTest, IAsyncLifetime
         // Target user — the human whose memberships we'll mutate via the admin endpoints.
         using var scope = _factory.Services.CreateScope();
         var um = scope.ServiceProvider.GetRequiredService<IAppUserManager>();
+        var scopedDb = scope.ServiceProvider
+            .GetRequiredService<Infrastructure.Persistence.ApplicationDbContext>();
         var user = new User
         {
             Id = Guid.NewGuid(),
@@ -146,6 +148,7 @@ public class RefreshTokenInvalidationTests : BaseIntegrationTest, IAsyncLifetime
         var created = await um.CreateUser(user, "TestPass!1");
         created.Succeeded.Should().BeTrue(
             string.Join("; ", created.Errors.Select(e => e.Description)));
+        await scopedDb.SaveChangesAsync();
         _targetUserId = user.Id;
 
         // Active membership in A so the admin endpoints find a row to mutate. Membership in B

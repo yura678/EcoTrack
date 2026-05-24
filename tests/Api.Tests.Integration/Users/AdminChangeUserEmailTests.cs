@@ -106,12 +106,17 @@ public class AdminChangeUserEmailTests : BaseIntegrationTest, IAsyncLifetime
     {
         using var scope = _factory.Services.CreateScope();
         var um = scope.ServiceProvider.GetRequiredService<IAppUserManager>();
+        var scopedDb = scope.ServiceProvider
+            .GetRequiredService<Infrastructure.Persistence.ApplicationDbContext>();
         var user = new User
         {
             Id = Guid.NewGuid(), UserName = email, Email = email,
             EmailConfirmed = true, Name = "X", FamilyName = "Y"
         };
         (await um.CreateUser(user, "Pass!Pass1")).Succeeded.Should().BeTrue();
+        // AppUserStore is AutoSaveChanges = false now; the scope's DbContext disposes without
+        // committing unless we flush explicitly here.
+        await scopedDb.SaveChangesAsync();
         return user.Id;
     }
 

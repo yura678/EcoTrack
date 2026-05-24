@@ -114,6 +114,8 @@ public class LoginHistoryTests : BaseIntegrationTest, IAsyncLifetime
     {
         using var scope = _factory.Services.CreateScope();
         var um = scope.ServiceProvider.GetRequiredService<IAppUserManager>();
+        var scopedDb = scope.ServiceProvider
+            .GetRequiredService<Infrastructure.Persistence.ApplicationDbContext>();
         var email = $"other-{Guid.NewGuid():N}@zavod.ua";
         var u = new User
         {
@@ -121,6 +123,7 @@ public class LoginHistoryTests : BaseIntegrationTest, IAsyncLifetime
             EmailConfirmed = true, Name = "X", FamilyName = "Y"
         };
         (await um.CreateUser(u, Password)).Succeeded.Should().BeTrue();
+        await scopedDb.SaveChangesAsync();
         return u.Id;
     }
 
@@ -151,12 +154,15 @@ public class LoginHistoryTests : BaseIntegrationTest, IAsyncLifetime
 
         using var scope = _factory.Services.CreateScope();
         var um = scope.ServiceProvider.GetRequiredService<IAppUserManager>();
+        var scopedDb = scope.ServiceProvider
+            .GetRequiredService<Infrastructure.Persistence.ApplicationDbContext>();
         var user = new User
         {
             Id = Guid.NewGuid(), UserName = _email, Email = _email,
             EmailConfirmed = true, Name = "Hist", FamilyName = "User"
         };
         (await um.CreateUser(user, Password)).Succeeded.Should().BeTrue();
+        await scopedDb.SaveChangesAsync();
         _userId = user.Id;
 
         await Context.Set<UserEnterpriseMembership>().AddAsync(

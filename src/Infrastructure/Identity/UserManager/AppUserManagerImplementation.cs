@@ -198,24 +198,24 @@ public class AppUserManagerImplementation(AppUserManager userManager, ICurrentUs
 
     public async Task<IdentityResult> AdminChangeEmailAsync(User user, string newEmail)
     {
-        // SetEmailAsync clears EmailConfirmed as a precaution (the user must reverify the new
-        // address). Admin-initiated change is the exception — admin has presumably verified
-        // the address out-of-band, so we restore EmailConfirmed after the swap. UserName has
-        // to follow because in this codebase email IS the username (login by email-as-name).
-        var setEmail = await userManager.SetEmailAsync(user, newEmail);
-        if (!setEmail.Succeeded) return setEmail;
-
-        var setName = await userManager.SetUserNameAsync(user, newEmail);
-        if (!setName.Succeeded) return setName;
-
+        // Single Identity write — the previous version chained SetEmailAsync + SetUserNameAsync
+        // + UpdateAsync + UpdateSecurityStampAsync, each of which incremented ConcurrencyStamp
+        // in memory. With AppUserStore.AutoSaveChanges = false there is nothing to commit
+        // between the steps, so the four staged updates collapse into one SaveChanges where the
+        // stored procedure's WHERE-clause concurrency check fails. Set every field directly
+        // and rely on the caller's single SaveChanges to persist them.
+        //
+        // Admin-initiated change keeps EmailConfirmed = true (admin verified out-of-band) and
+        // mirrors UserName because email IS the username in this codebase. SecurityStamp is
+        // rotated so any ASP.NET Identity cookie/ticket minted under the old email becomes
+        // invalid; our custom refresh tokens are not stamp-linked and the caller invalidates
+        // those separately if it wants a full "log out everywhere".
+        user.Email = newEmail;
+        user.NormalizedEmail = userManager.NormalizeEmail(newEmail);
+        user.UserName = newEmail;
+        user.NormalizedUserName = userManager.NormalizeName(newEmail);
         user.EmailConfirmed = true;
-        var update = await userManager.UpdateAsync(user);
-        if (!update.Succeeded) return update;
-
-        // Rotate the security stamp so ASP.NET Identity cookies / tickets minted against the
-        // old email become invalid. Our custom refresh tokens are not stamp-linked — the
-        // caller invalidates those separately if it wants a full "log out everywhere".
-        await userManager.UpdateSecurityStampAsync(user);
-        return IdentityResult.Success;
+        user.SecurityStamp = Guid.NewGuid().ToString();
+        return await userManager.UpdateAsync(user);
     }
 }

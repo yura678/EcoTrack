@@ -103,6 +103,8 @@ public class ProfileTests : BaseIntegrationTest, IAsyncLifetime
     {
         using var scope = _factory.Services.CreateScope();
         var um = scope.ServiceProvider.GetRequiredService<IAppUserManager>();
+        var scopedDb = scope.ServiceProvider
+            .GetRequiredService<Infrastructure.Persistence.ApplicationDbContext>();
         var user = new User
         {
             Id = Guid.NewGuid(),
@@ -115,6 +117,7 @@ public class ProfileTests : BaseIntegrationTest, IAsyncLifetime
         var created = await um.CreateUser(user, OriginalPassword);
         created.Succeeded.Should().BeTrue(
             string.Join("; ", created.Errors.Select(e => e.Description)));
+        await scopedDb.SaveChangesAsync();
         _userId = user.Id;
     }
 
