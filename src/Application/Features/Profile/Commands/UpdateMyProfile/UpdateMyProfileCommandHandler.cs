@@ -1,4 +1,5 @@
 using Application.Common.Interfaces.Identity;
+using Application.Common.Interfaces.Persistence;
 using Application.Common.Interfaces.Queries;
 using Application.Features.Users.Exceptions;
 using Application.Models.Auth;
@@ -17,7 +18,8 @@ namespace Application.Features.Profile.Commands.UpdateMyProfile;
 internal class UpdateMyProfileCommandHandler(
     ICurrentUserService currentUserService,
     IAppUserManager userManager,
-    IUserEnterpriseMembershipQueries membershipQueries)
+    IUserEnterpriseMembershipQueries membershipQueries,
+    IUnitOfWork unitOfWork)
     : IRequestHandler<UpdateMyProfileCommand, Either<UserException, MyProfileInfo>>
 {
     public async Task<Either<UserException, MyProfileInfo>> Handle(
@@ -33,6 +35,9 @@ internal class UpdateMyProfileCommandHandler(
                 user.Name = request.Name;
                 user.FamilyName = request.FamilyName;
                 await userManager.UpdateUserAsync(user);
+                // Explicit save — defensive against the upcoming AutoSaveChanges=false on
+                // AppUserStore. Today the Identity store auto-saves so this is a no-op.
+                await unitOfWork.SaveChangesAsync(cancellationToken);
 
                 var memberships = await membershipQueries
                     .GetByUserIdWithRoleAndEnterpriseAsync(user.Id, cancellationToken);

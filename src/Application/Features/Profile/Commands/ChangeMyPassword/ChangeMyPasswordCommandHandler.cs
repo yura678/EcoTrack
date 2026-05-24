@@ -1,4 +1,5 @@
 using Application.Common.Interfaces.Identity;
+using Application.Common.Interfaces.Persistence;
 using Application.Features.Users.Exceptions;
 using Domain.Entities.User;
 using LanguageExt;
@@ -17,7 +18,8 @@ namespace Application.Features.Profile.Commands.ChangeMyPassword;
 /// </summary>
 internal class ChangeMyPasswordCommandHandler(
     ICurrentUserService currentUserService,
-    IAppUserManager userManager)
+    IAppUserManager userManager,
+    IUnitOfWork unitOfWork)
     : IRequestHandler<ChangeMyPasswordCommand, Either<UserException, bool>>
 {
     public async Task<Either<UserException, bool>> Handle(
@@ -32,9 +34,16 @@ internal class ChangeMyPasswordCommandHandler(
             {
                 var result = await userManager.ChangePasswordAsync(
                     user, request.CurrentPassword, request.NewPassword);
-                return result.Succeeded
-                    ? true
-                    : new UserVerificationException(user.Id, result.Errors.StringifyIdentityResultErrors());
+                if (!result.Succeeded)
+                {
+                    return new UserVerificationException(user.Id, result.Errors.StringifyIdentityResultErrors());
+                }
+                // Explicit save — defensive against the upcoming AutoSaveChanges=false on
+                // AppUserStore. Today the Identity store auto-saves so this is a no-op; once
+                // AutoSaveChanges flips this is the only way the password hash + security stamp
+                // reach the DB.
+                await unitOfWork.SaveChangesAsync(cancellationToken);
+                return true;
             },
             None: () => new UserNotFoundException(userId.Value));
     }
