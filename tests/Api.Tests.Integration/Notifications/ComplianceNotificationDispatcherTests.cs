@@ -14,6 +14,12 @@ using UserEntity = Domain.Entities.User.User;
 
 namespace Api.Tests.Integration.Notifications;
 
+/// <summary>
+/// Tests the fan-out behavior: for each matching subscription, one
+/// <see cref="PerSubscriptionNotificationDispatcher"/> Hangfire job should be enqueued. The
+/// fan-out dispatcher no longer sends anything inline — actual delivery (and HMAC, retry,
+/// idempotency, etc.) is covered by <c>PerSubscriptionNotificationDispatcherTests</c>.
+/// </summary>
 public class ComplianceNotificationDispatcherTests : BaseIntegrationTest, IAsyncLifetime
 {
     private readonly IntegrationTestWebFactory _factory;
@@ -37,7 +43,7 @@ public class ComplianceNotificationDispatcherTests : BaseIntegrationTest, IAsync
     }
 
     [Fact]
-    public async Task ShouldSendEmailToMatchingSubscription()
+    public async Task ShouldEnqueuePerSubJobForMatchingSubscription()
     {
         var sub = NotificationSubscription.NewEmail(
             id: Guid.NewGuid(),
@@ -57,16 +63,16 @@ public class ComplianceNotificationDispatcherTests : BaseIntegrationTest, IAsync
 
         await DispatchAsync(ev.Id);
 
-        _factory.Emails.Sent.Should().HaveCount(1);
-        var email = _factory.Emails.Sent.First();
-        email.To.Should().Be("ops@example.com");
-        email.Subject.Should().Contain("Показники поза діапазоном");
-        email.Body.Should().Contain(_source.Id.ToString());
-        email.Body.Should().Contain("12/60 readings (20%) out of sensor range");
+        var perSub = _factory.Jobs.Created
+            .Where(c => c.Job.Method.DeclaringType == typeof(PerSubscriptionNotificationDispatcher))
+            .ToList();
+        perSub.Should().HaveCount(1);
+        perSub.Single().Job.Args[0].Should().Be(ev.Id);
+        perSub.Single().Job.Args[1].Should().Be(sub.Id);
     }
 
     [Fact]
-    public async Task ShouldSkipSubscriptionWithUnmatchedEventTypeFilter()
+    public async Task ShouldNotEnqueueForUnmatchedEventTypeFilter()
     {
         var sub = NotificationSubscription.NewEmail(
             Guid.NewGuid(), TestAuthHandler.TestUserId, "ops@example.com",
@@ -83,11 +89,11 @@ public class ComplianceNotificationDispatcherTests : BaseIntegrationTest, IAsync
 
         await DispatchAsync(ev.Id);
 
-        _factory.Emails.Sent.Should().BeEmpty();
+        PerSubJobs().Should().BeEmpty();
     }
 
     [Fact]
-    public async Task ShouldSkipSubscriptionWithUnmatchedSourceFilter()
+    public async Task ShouldNotEnqueueForUnmatchedSourceFilter()
     {
         var otherSourceId = Guid.NewGuid();
         var sub = NotificationSubscription.NewEmail(
@@ -105,11 +111,11 @@ public class ComplianceNotificationDispatcherTests : BaseIntegrationTest, IAsync
 
         await DispatchAsync(ev.Id);
 
-        _factory.Emails.Sent.Should().BeEmpty();
+        PerSubJobs().Should().BeEmpty();
     }
 
     [Fact]
-    public async Task ShouldSkipDisabledSubscription()
+    public async Task ShouldNotEnqueueForDisabledSubscription()
     {
         var sub = NotificationSubscription.NewEmail(
             Guid.NewGuid(), TestAuthHandler.TestUserId, "ops@example.com",
@@ -126,18 +132,23 @@ public class ComplianceNotificationDispatcherTests : BaseIntegrationTest, IAsync
 
         await DispatchAsync(ev.Id);
 
-        _factory.Emails.Sent.Should().BeEmpty();
+        PerSubJobs().Should().BeEmpty();
     }
 
     [Fact]
-    public async Task ShouldNotSendEmailForWebhookChannelSubscription()
+    public async Task ShouldEnqueueOneJobPerMatchingSubscriptionAcrossChannels()
     {
-        var sub = NotificationSubscription.NewWebhook(
+        var emailSub = NotificationSubscription.NewEmail(
+            Guid.NewGuid(), TestAuthHandler.TestUserId, "ops@example.com",
+            eventTypes: null, emissionSourceIds: null);
+        emailSub.AssignTenant(_enterprise.Id);
+        var webhookSub = NotificationSubscription.NewWebhook(
             Guid.NewGuid(), TestAuthHandler.TestUserId,
-            webhookUrl: "https://hooks.example.com/eco",
-            webhookSecret: "0123456789abcdef0123456789abcdef");
-        sub.AssignTenant(_enterprise.Id);
-        await Context.Set<NotificationSubscription>().AddAsync(sub);
+            "https://hooks.example.com/eco", "0123456789abcdef0123456789abcdef",
+            eventTypes: null, emissionSourceIds: null);
+        webhookSub.AssignTenant(_enterprise.Id);
+        await Context.Set<NotificationSubscription>().AddAsync(emailSub);
+        await Context.Set<NotificationSubscription>().AddAsync(webhookSub);
 
         var ev = ComplianceEvent.ForOutOfRangeReading(
             Guid.NewGuid(), _source.Id, _device.Id, 0.20m,
@@ -147,13 +158,19 @@ public class ComplianceNotificationDispatcherTests : BaseIntegrationTest, IAsync
 
         await DispatchAsync(ev.Id);
 
-        _factory.Emails.Sent.Should().BeEmpty();
+        var perSub = PerSubJobs();
+        perSub.Should().HaveCount(2);
+        perSub.Select(j => (Guid)j.Job.Args[1]!).Should()
+            .BeEquivalentTo([emailSub.Id, webhookSub.Id]);
     }
+
+    private List<CreatedJob> PerSubJobs() => _factory.Jobs.Created
+        .Where(c => c.Job.Method.DeclaringType == typeof(PerSubscriptionNotificationDispatcher))
+        .ToList();
 
     private async Task DispatchAsync(Guid eventId)
     {
-        // Clear queue from prior test interaction within the same factory instance.
-        _factory.Emails.Clear();
+        _factory.Jobs.Clear();
         using var scope = _factory.Services.CreateScope();
         var dispatcher = scope.ServiceProvider.GetRequiredService<ComplianceNotificationDispatcher>();
         await dispatcher.DispatchAsync(eventId, CancellationToken.None);

@@ -94,6 +94,7 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IWebhookComplianceNotificationPayloadBuilder, WebhookComplianceNotificationPayloadBuilder>();
         services.AddHttpClient<IWebhookSender, HttpWebhookSender>();
         services.AddScoped<ComplianceNotificationDispatcher>();
+        services.AddScoped<PerSubscriptionNotificationDispatcher>();
         // Per-tenant detection jobs — invoked by Hangfire. The master DetectionScheduler runs
         // on the cadence registered in Program.cs (ConfigureDetectionRecurringJobs) and fans
         // out one PerEnterpriseDetectionJob per tenant per kind.

@@ -44,6 +44,7 @@ public abstract class BaseIntegrationTest : IClassFixture<IntegrationTestWebFact
                 "raw_process_parameter",
                 "calibration_record",
                 "device_pollutant_capability",
+                "notification_delivery",
                 "notification_subscription",
                 "compliance_event",
                 "measurement",

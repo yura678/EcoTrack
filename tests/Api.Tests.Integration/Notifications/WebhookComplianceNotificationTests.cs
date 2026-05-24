@@ -1,4 +1,5 @@
 using System.Net;
+using System.Net.Http;
 using System.Security.Cryptography;
 using System.Text;
 using Domain.Entities.EmissionSources;
@@ -17,6 +18,12 @@ using UserEntity = Domain.Entities.User.User;
 
 namespace Api.Tests.Integration.Notifications;
 
+/// <summary>
+/// Webhook delivery is exercised directly via <see cref="PerSubscriptionNotificationDispatcher"/>
+/// because that's where the HTTP POST lives after the Phase B fan-out split. These tests cover
+/// the wire-level contract (signed payload, HMAC) and the per-(sub, event) audit trail in
+/// <see cref="NotificationDelivery"/>.
+/// </summary>
 public class WebhookComplianceNotificationTests : BaseIntegrationTest, IAsyncLifetime
 {
     private readonly IntegrationTestWebFactory _factory;
@@ -43,9 +50,9 @@ public class WebhookComplianceNotificationTests : BaseIntegrationTest, IAsyncLif
     }
 
     [Fact]
-    public async Task ShouldPostSignedPayloadToWebhookSubscriber()
+    public async Task ShouldPostSignedPayloadAndMarkDeliveryDelivered()
     {
-        await SeedWebhookSubscriptionAsync(WebhookUrl, WebhookSecret,
+        var sub = await SeedWebhookSubscriptionAsync(WebhookUrl, WebhookSecret,
             eventTypes: [ComplianceEventType.OutOfRangeReading]);
 
         var ev = ComplianceEvent.ForOutOfRangeReading(
@@ -55,19 +62,18 @@ public class WebhookComplianceNotificationTests : BaseIntegrationTest, IAsyncLif
         await Context.Set<ComplianceEvent>().AddAsync(ev);
         await SaveChangesAsync();
 
-        await DispatchAsync(ev.Id);
+        _factory.WebhookHttp.Clear();
+        await PerSubDispatchAsync(ev.Id, sub.Id);
 
         _factory.WebhookHttp.Requests.Should().HaveCount(1);
         var captured = _factory.WebhookHttp.Requests.First();
         captured.Method.Should().Be(HttpMethod.Post);
         captured.Uri.AbsoluteUri.Should().Be(WebhookUrl);
 
-        // Body is JSON payload — must contain the event id and source id.
         captured.Body.Should().Contain(ev.Id.ToString());
         captured.Body.Should().Contain(_source.Id.ToString());
         captured.Body.Should().Contain("OutOfRangeReading");
 
-        // HMAC headers must be present and signature must verify against the body.
         var signature = captured.Headers.GetValues("X-Signature").Single();
         var timestamp = captured.Headers.GetValues("X-Timestamp").Single();
         var nonce = captured.Headers.GetValues("X-Nonce").Single();
@@ -78,61 +84,51 @@ public class WebhookComplianceNotificationTests : BaseIntegrationTest, IAsyncLif
         signature.Should().Be(expected,
             "subscribers verify our calls by recomputing HMAC over '{ts}.{nonce}.{body}' — " +
             "any mismatch means valid payloads would be rejected as forged");
+
+        var delivery = await GetDeliveryAsync(sub.Id, ev.Id);
+        delivery.Should().NotBeNull();
+        delivery!.Status.Should().Be(NotificationDeliveryStatus.Delivered);
+        delivery.AttemptCount.Should().Be(0,
+            "Phase B counts only failed attempts; success path skips MarkAttempt");
+        delivery.DeliveredAt.Should().NotBeNull();
+        delivery.LastError.Should().BeNull();
+        delivery.Channel.Should().Be(NotificationChannel.Webhook);
     }
 
     [Fact]
-    public async Task ShouldContinueDispatchWhenWebhookEndpointReturnsServerError()
+    public async Task ShouldMarkAttemptAndThrowWhenWebhookEndpointReturnsServerError()
     {
+        var sub = await SeedWebhookSubscriptionAsync(WebhookUrl, WebhookSecret, eventTypes: null);
+
+        var ev = ComplianceEvent.ForOutOfRangeReading(
+            Guid.NewGuid(), _source.Id, _device.Id, 0.20m,
+            DateTime.UtcNow.AddHours(-1), DateTime.UtcNow);
+        await Context.Set<ComplianceEvent>().AddAsync(ev);
+        await SaveChangesAsync();
+
+        // Configure the failure mode AFTER any prior Clear — CapturingHttpMessageHandler.Clear
+        // resets StatusCode to OK, so setting it before any helper call would be a no-op.
+        _factory.WebhookHttp.Clear();
         _factory.WebhookHttp.StatusCode = HttpStatusCode.InternalServerError;
-        await SeedWebhookSubscriptionAsync(WebhookUrl, WebhookSecret, eventTypes: null);
 
-        var ev = ComplianceEvent.ForOutOfRangeReading(
-            Guid.NewGuid(), _source.Id, _device.Id, 0.20m,
-            DateTime.UtcNow.AddHours(-1), DateTime.UtcNow);
-        await Context.Set<ComplianceEvent>().AddAsync(ev);
-        await SaveChangesAsync();
+        // Per-sub dispatcher MUST throw on downstream failure — Hangfire's AutomaticRetry
+        // schedule is the whole point of the Phase B split. Phase A swallowed this.
+        var act = async () => await PerSubDispatchAsync(ev.Id, sub.Id);
+        await act.Should().ThrowAsync<HttpRequestException>();
 
-        // DispatchAsync swallows per-recipient errors. The job itself completes without throw;
-        // Hangfire would normally schedule a retry on uncaught exceptions, but here we want
-        // confirmation that one bad subscriber doesn't crash the dispatcher.
-        var act = async () => await DispatchAsync(ev.Id);
-        await act.Should().NotThrowAsync();
-
-        _factory.WebhookHttp.Requests.Should().HaveCount(1,
-            "the attempt was still made and captured even though the endpoint returned 500");
-    }
-
-    [Fact]
-    public async Task ShouldDeliverToBothEmailAndWebhookSubscribers()
-    {
-        await SeedEmailSubscriptionAsync("ops@example.com", eventTypes: null);
-        await SeedWebhookSubscriptionAsync(WebhookUrl, WebhookSecret, eventTypes: null);
-
-        var ev = ComplianceEvent.ForOutOfRangeReading(
-            Guid.NewGuid(), _source.Id, _device.Id, 0.20m,
-            DateTime.UtcNow.AddHours(-1), DateTime.UtcNow);
-        await Context.Set<ComplianceEvent>().AddAsync(ev);
-        await SaveChangesAsync();
-
-        await DispatchAsync(ev.Id);
-
-        _factory.Emails.Sent.Should().HaveCount(1);
         _factory.WebhookHttp.Requests.Should().HaveCount(1);
+
+        var delivery = await GetDeliveryAsync(sub.Id, ev.Id);
+        delivery.Should().NotBeNull();
+        delivery!.Status.Should().Be(NotificationDeliveryStatus.Pending);
+        delivery.AttemptCount.Should().Be(1);
+        delivery.FirstAttemptedAt.Should().NotBeNull();
+        delivery.LastAttemptedAt.Should().NotBeNull();
+        delivery.LastError.Should().NotBeNullOrEmpty();
+        delivery.DeliveredAt.Should().BeNull();
     }
 
-    // ─── helpers ─────────────────────────────────────────────────────────────────
-
-    private async Task SeedEmailSubscriptionAsync(
-        string email, ComplianceEventType[]? eventTypes)
-    {
-        var sub = NotificationSubscription.NewEmail(
-            Guid.NewGuid(), TestAuthHandler.TestUserId, email, eventTypes, null);
-        sub.AssignTenant(_enterprise.Id);
-        await Context.Set<NotificationSubscription>().AddAsync(sub);
-        await SaveChangesAsync();
-    }
-
-    private async Task SeedWebhookSubscriptionAsync(
+    private async Task<NotificationSubscription> SeedWebhookSubscriptionAsync(
         string url, string secret, ComplianceEventType[]? eventTypes)
     {
         var sub = NotificationSubscription.NewWebhook(
@@ -140,15 +136,20 @@ public class WebhookComplianceNotificationTests : BaseIntegrationTest, IAsyncLif
         sub.AssignTenant(_enterprise.Id);
         await Context.Set<NotificationSubscription>().AddAsync(sub);
         await SaveChangesAsync();
+        return sub;
     }
 
-    private async Task DispatchAsync(Guid eventId)
+    private async Task<NotificationDelivery?> GetDeliveryAsync(Guid subId, Guid eventId) =>
+        await Context.Set<NotificationDelivery>().AsNoTracking()
+            .FirstOrDefaultAsync(d =>
+                d.SubscriptionId == subId && d.ComplianceEventId == eventId);
+
+    private async Task PerSubDispatchAsync(Guid eventId, Guid subId)
     {
-        _factory.WebhookHttp.Clear();
-        _factory.Emails.Clear();
         using var scope = _factory.Services.CreateScope();
-        var dispatcher = scope.ServiceProvider.GetRequiredService<ComplianceNotificationDispatcher>();
-        await dispatcher.DispatchAsync(eventId, CancellationToken.None);
+        var dispatcher = scope.ServiceProvider
+            .GetRequiredService<PerSubscriptionNotificationDispatcher>();
+        await dispatcher.DispatchAsync(eventId, subId, CancellationToken.None);
     }
 
     public async Task InitializeAsync()

@@ -106,6 +106,8 @@ public class ApplicationDbContext
             BypassTenantFilter || x.EnterpriseId == TenantFilterId);
         modelBuilder.Entity<NotificationSubscription>().HasQueryFilter(x =>
             BypassTenantFilter || x.EnterpriseId == TenantFilterId);
+        modelBuilder.Entity<NotificationDelivery>().HasQueryFilter(x =>
+            BypassTenantFilter || x.EnterpriseId == TenantFilterId);
 
         // Roles: global (EnterpriseId == null, e.g. superAdmin) are visible everywhere; tenant roles
         // visible only inside their enterprise.
