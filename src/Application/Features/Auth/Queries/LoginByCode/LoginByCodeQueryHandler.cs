@@ -1,5 +1,6 @@
 using Application.Common.Interfaces;
 using Application.Common.Interfaces.Identity;
+using Application.Common.Interfaces.Persistence;
 using Application.Features.Users.Exceptions;
 using Application.Models.Jwt;
 using Domain.Entities.User;
@@ -12,7 +13,8 @@ namespace Application.Features.Auth.Queries.LoginByCode;
 internal class LoginByCodeQueryHandler(
     IAppUserManager userManager,
     IJwtService jwtService,
-    ILoginAttemptRecorder loginRecorder)
+    ILoginAttemptRecorder loginRecorder,
+    IUnitOfWork unitOfWork)
     : IRequestHandler<LoginByCodeQuery, Either<UserException, AccessToken>>
 {
     public async Task<Either<UserException, AccessToken>> Handle(LoginByCodeQuery request,
@@ -27,6 +29,7 @@ internal class LoginByCodeQueryHandler(
                 {
                     await loginRecorder.RecordAsync(u.Id, request.Email,
                         LoginMethod.EmailCode, LoginOutcome.EmailNotConfirmed, cancellationToken);
+                    await unitOfWork.SaveChangesAsync(cancellationToken);
                     return new UserVerificationException(u.Id, "Email is not confirmed.");
                 }
 
@@ -35,17 +38,22 @@ internal class LoginByCodeQueryHandler(
                 {
                     await loginRecorder.RecordAsync(u.Id, request.Email,
                         LoginMethod.EmailCode, LoginOutcome.InvalidCredentials, cancellationToken);
+                    await unitOfWork.SaveChangesAsync(cancellationToken);
                     return new UserVerificationException(u.Id, result.Errors.StringifyIdentityResultErrors());
                 }
 
                 await loginRecorder.RecordAsync(u.Id, request.Email,
                     LoginMethod.EmailCode, LoginOutcome.Success, cancellationToken);
+                // VerifyUserCode rotated the security stamp on the User row; one save commits
+                // the stamp change alongside the success audit row.
+                await unitOfWork.SaveChangesAsync(cancellationToken);
                 return await jwtService.GenerateAsync(u, null, cancellationToken);
             },
             None: async () =>
             {
                 await loginRecorder.RecordAsync(userId: null, request.Email,
                     LoginMethod.EmailCode, LoginOutcome.UnknownEmail, cancellationToken);
+                await unitOfWork.SaveChangesAsync(cancellationToken);
                 return new InvalidCredentialsException(Guid.Empty);
             });
     }

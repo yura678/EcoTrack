@@ -1,5 +1,6 @@
 using Application.Common.Interfaces;
 using Application.Common.Interfaces.Identity;
+using Application.Common.Interfaces.Persistence;
 using Application.Features.Users.Exceptions;
 using Application.Models.Jwt;
 using Domain.Entities.User;
@@ -13,6 +14,7 @@ internal class LoginByPasswordQueryHandler(
     IAppUserManager userManager,
     IJwtService jwtService,
     ILoginAttemptRecorder loginRecorder,
+    IUnitOfWork unitOfWork,
     ILogger<LoginByPasswordQueryHandler> logger)
     : IRequestHandler<LoginByPasswordQuery, Either<UserException, AccessToken>>
 {
@@ -29,6 +31,7 @@ internal class LoginByPasswordQueryHandler(
                     logger.LogWarning("Login attempt on locked user {UserId}", u.Id);
                     await loginRecorder.RecordAsync(u.Id, request.Email,
                         LoginMethod.Password, LoginOutcome.UserLocked, cancellationToken);
+                    await unitOfWork.SaveChangesAsync(cancellationToken);
                     return new InvalidCredentialsException(Guid.Empty);
                 }
 
@@ -38,6 +41,9 @@ internal class LoginByPasswordQueryHandler(
                     logger.LogWarning("Failed login attempt for user {UserId}", u.Id);
                     await loginRecorder.RecordAsync(u.Id, request.Email,
                         LoginMethod.Password, LoginOutcome.InvalidCredentials, cancellationToken);
+                    // One save commits both the IncrementAccessFailedCount mutation on the User
+                    // row and the LoginAttempt audit row.
+                    await unitOfWork.SaveChangesAsync(cancellationToken);
                     return new InvalidCredentialsException(Guid.Empty);
                 }
 
@@ -45,12 +51,16 @@ internal class LoginByPasswordQueryHandler(
                 {
                     await loginRecorder.RecordAsync(u.Id, request.Email,
                         LoginMethod.Password, LoginOutcome.EmailNotConfirmed, cancellationToken);
+                    await unitOfWork.SaveChangesAsync(cancellationToken);
                     return new UserVerificationException(u.Id, "Email is not confirmed.");
                 }
 
                 await userManager.ResetUserLockoutAsync(u);
                 await loginRecorder.RecordAsync(u.Id, request.Email,
                     LoginMethod.Password, LoginOutcome.Success, cancellationToken);
+                // One save commits the cleared lockout/access-failed counters on the User row
+                // alongside the success LoginAttempt audit row.
+                await unitOfWork.SaveChangesAsync(cancellationToken);
                 return await jwtService.GenerateAsync(u, null, cancellationToken);
             },
             None: async () =>
@@ -58,6 +68,7 @@ internal class LoginByPasswordQueryHandler(
                 logger.LogWarning("Login attempt with unknown email");
                 await loginRecorder.RecordAsync(userId: null, request.Email,
                     LoginMethod.Password, LoginOutcome.UnknownEmail, cancellationToken);
+                await unitOfWork.SaveChangesAsync(cancellationToken);
                 return new InvalidCredentialsException(Guid.Empty);
             });
     }

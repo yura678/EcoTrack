@@ -1,18 +1,21 @@
 using Application.Common.Interfaces.Identity;
-using Application.Common.Interfaces.Persistence;
 using Application.Common.Interfaces.Repositories;
 using Domain.Entities.User;
 using Microsoft.AspNetCore.Http;
-using Microsoft.Extensions.Logging;
 
 namespace Infrastructure.Identity;
 
 internal class LoginAttemptRecorder(
     ILoginAttemptRepository repository,
-    IUnitOfWork unitOfWork,
-    IHttpContextAccessor httpContextAccessor,
-    ILogger<LoginAttemptRecorder> logger) : ILoginAttemptRecorder
+    IHttpContextAccessor httpContextAccessor) : ILoginAttemptRecorder
 {
+    /// <summary>
+    /// Stages a <see cref="LoginAttempt"/> row in the caller's unit-of-work. Does NOT save —
+    /// the caller is responsible for calling <c>SaveChangesAsync</c> so every persistence
+    /// boundary is visible at the handler level. Combine with any Identity mutations
+    /// (IncrementAccessFailed, ResetLockout, UpdateSecurityStamp, …) in a single SaveChanges
+    /// so the audit row + auth side-effect commit atomically.
+    /// </summary>
     public async Task RecordAsync(
         Guid? userId,
         string emailAttempted,
@@ -20,29 +23,16 @@ internal class LoginAttemptRecorder(
         LoginOutcome outcome,
         CancellationToken cancellationToken)
     {
-        try
-        {
-            var httpContext = httpContextAccessor.HttpContext;
-            var attempt = LoginAttempt.Create(
-                userId,
-                emailAttempted,
-                ResolveIpAddress(httpContext),
-                ResolveUserAgent(httpContext),
-                method,
-                outcome);
+        var httpContext = httpContextAccessor.HttpContext;
+        var attempt = LoginAttempt.Create(
+            userId,
+            emailAttempted,
+            ResolveIpAddress(httpContext),
+            ResolveUserAgent(httpContext),
+            method,
+            outcome);
 
-            await repository.AddAsync(attempt, cancellationToken);
-            await unitOfWork.SaveChangesAsync(cancellationToken);
-        }
-        catch (Exception ex)
-        {
-            // Recording a login attempt must never break the auth flow. If the DB write fails
-            // we log a warning so security review can spot dropped events but the caller still
-            // gets the auth result they earned.
-            logger.LogWarning(ex,
-                "Failed to record login attempt for {Email} (outcome={Outcome})",
-                emailAttempted, outcome);
-        }
+        await repository.AddAsync(attempt, cancellationToken);
     }
 
     private static string? ResolveIpAddress(HttpContext? httpContext)
