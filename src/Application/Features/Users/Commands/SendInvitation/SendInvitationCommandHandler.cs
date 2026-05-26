@@ -3,6 +3,7 @@ using Application.Common.EmailTemplates;
 using Application.Common.Interfaces.Auditing;
 using Application.Common.Interfaces.Identity;
 using Application.Common.Interfaces.Persistence;
+using Application.Common.Settings;
 using Application.Features.Admin.Exceptions;
 using Application.Features.Users.Exceptions;
 using Domain.Entities.Auditing;
@@ -18,7 +19,8 @@ internal class SendInvitationCommandHandler(
     IRoleManagerService roleManagerService,
     IAppUserManager userManager,
     IEmailService emailService,
-    IAdminAuditService adminAudit)
+    IAdminAuditService adminAudit,
+    FrontendSettings frontendSettings)
     : IRequestHandler<SendInvitationCommand, Either<UserException, string>>
 {
     public async Task<Either<UserException, string>> Handle(SendInvitationCommand request,
@@ -36,9 +38,18 @@ internal class SendInvitationCommandHandler(
         Guid adminEnterpriseId,
         CancellationToken cancellationToken)
     {
-        var emailExist = await userManager.IsExistEmail(request.Email);
-        if (emailExist)
-            return new EmailAlreadyExistsException(Guid.Empty);
+        // Existing-user invite is allowed as long as the user has no membership (active OR
+        // revoked) in THIS enterprise. Revoked members go through the restore-membership flow,
+        // not a fresh invite.
+        var existingUserOption = await userManager.GetUserByEmail(request.Email);
+        if (existingUserOption.IsSome)
+        {
+            var existingUser = existingUserOption.Match(u => u, () => default!);
+            var existingMembership = await unitOfWork.UserEnterpriseMembershipRepository
+                .GetByUserAndEnterpriseAsync(existingUser.Id, adminEnterpriseId, cancellationToken);
+            if (existingMembership.IsSome)
+                return new UserAlreadyHasMembershipException(existingUser.Id, adminEnterpriseId);
+        }
 
         var existing = await unitOfWork.InvitationRepository
             .GetActiveByEnterpriseAndEmailAsync(adminEnterpriseId, request.Email, cancellationToken);
@@ -71,7 +82,7 @@ internal class SendInvitationCommandHandler(
         {
             await unitOfWork.SaveChangesAsync(cancellationToken);
 
-            var inviteLink = $"https://ecotrack.com/join?token={invitation.Token}";
+            var inviteLink = $"{frontendSettings.BaseUrl}/join?token={invitation.Token}";
             await emailService.SendEmailAsync(
                 toEmail: request.Email,
                 subject: "Your Invitation to EcoTrack",

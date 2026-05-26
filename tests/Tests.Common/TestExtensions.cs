@@ -5,6 +5,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Text.Json.Serialization;
 
 
 namespace Tests.Common;
@@ -24,10 +25,16 @@ public static class TestExtensions
             throw new ArgumentException("Property 'data' was not found in the response.");
         }
 
-        return dataNode.Deserialize<T>(new JsonSerializerOptions
+        // Mirror the API's MVC JSON config (SetupModule.AddJsonOptions). The API serializes
+        // enums as strings via JsonStringEnumConverter; tests must read them back the same way
+        // or every enum-bearing DTO ($.status, $.riskGroup, ...) blows up on deserialize.
+        var options = new JsonSerializerOptions
         {
-            PropertyNameCaseInsensitive = true
-        }) ?? throw new ArgumentException("Response data content cannot be null");
+            PropertyNameCaseInsensitive = true,
+            Converters = { new JsonStringEnumConverter() }
+        };
+        return dataNode.Deserialize<T>(options)
+               ?? throw new ArgumentException("Response data content cannot be null");
     }
 }
 

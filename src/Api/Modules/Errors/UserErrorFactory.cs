@@ -34,6 +34,7 @@ public static class UserErrorFactory
             UserNameAlreadyExistsException => StatusCodes.Status409Conflict,
             EmailAlreadyExistsException => StatusCodes.Status409Conflict,
             EdrpouAlreadyExistsException => StatusCodes.Status409Conflict,
+            UserAlreadyHasMembershipException => StatusCodes.Status409Conflict,
             
             UserIsLockedException => StatusCodes.Status423Locked,
 

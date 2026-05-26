@@ -4,13 +4,16 @@ using Api.Controllers.Common;
 using Api.Modules.Errors;
 using Application.Common.Models;
 using Application.Features.Admin.Commands.AddAdminCommand;
+using Application.Features.Users.Commands.AcceptInvitation;
 using Application.Features.Users.Commands.ChangeMemberRole;
 using Application.Features.Users.Commands.ChangeUserEmail;
 using Application.Features.Users.Commands.ForcePasswordReset;
+using Application.Features.Users.Commands.RestoreMembership;
 using Application.Features.Users.Commands.RevokeMembership;
 using Application.Features.Users.Commands.RevokeUserSessions;
 using Application.Features.Users.Commands.SendInvitation;
 using Application.Features.Users.Commands.UnlockUser;
+using Application.Features.Users.Queries.GetInvitationPreview;
 using Application.Features.Users.Queries.GetUserDetail;
 using Application.Features.Users.Queries.GetUserLoginHistory;
 using Application.Features.Users.Queries.GetUsers;
@@ -58,6 +61,41 @@ public class UsersController(ISender sender) : BaseController
             error => error.ToObjectResult());
     }
 
+    /// <summary>
+    /// Anonymous lookup of an invitation by its token — what the /join landing page calls before
+    /// the recipient submits the accept form. The token is itself the bearer secret; same
+    /// pattern as /reset-password. Returns 400/404 with a generic "invalid, used, or expired"
+    /// message for any unresolvable token to avoid leaking which case applies.
+    /// </summary>
+    [AllowAnonymous]
+    [HttpGet("invitations/{token}")]
+    [ProducesOkApiResponseType<InvitationPreviewInfo>]
+    public async Task<IActionResult> GetInvitationPreview([FromRoute] string token)
+    {
+        var result = await sender.Send(new GetInvitationPreviewQuery(token));
+        return result.Match(
+            preview => Ok(preview),
+            error => error.ToObjectResult());
+    }
+
+    /// <summary>
+    /// Existing-user invitation acceptance. Authenticated path that creates a
+    /// <see cref="Domain.Entities.User.UserEnterpriseMembership"/> for the caller in the
+    /// invitation's enterprise. The JWT subject's email must match the invitation's email.
+    /// Brand-new users without an account go through <c>POST /api/v1/auth/register-by-invitation</c>
+    /// instead; that flow registers the user and creates the membership in one shot.
+    /// </summary>
+    [Authorize]
+    [HttpPost("invitations/{token}/accept")]
+    [ProducesOkApiResponseType<AcceptInvitationResult>]
+    public async Task<IActionResult> AcceptInvitation([FromRoute] string token)
+    {
+        var result = await sender.Send(new AcceptInvitationCommand(token));
+        return result.Match(
+            response => Ok(response),
+            error => error.ToObjectResult());
+    }
+
     [Authorize(Roles = "superAdmin,admin")]
     [HttpPost("")]
     [ProducesOkApiResponseType]
@@ -76,7 +114,8 @@ public class UsersController(ISender sender) : BaseController
         [FromRoute] Guid userId,
         [FromBody] ChangeMemberRoleBody body)
     {
-        var result = await sender.Send(new ChangeMemberRoleCommand(userId, body.RoleId));
+        var result = await sender.Send(
+            new ChangeMemberRoleCommand(userId, body.RoleId, body.EnterpriseId));
         return result.Match(
             response => Ok(response),
             error => error.ToObjectResult());
@@ -85,9 +124,28 @@ public class UsersController(ISender sender) : BaseController
     [Authorize(Roles = "admin,superAdmin")]
     [HttpDelete("{userId:guid}/membership")]
     [ProducesOkApiResponseType]
-    public async Task<IActionResult> RevokeMembership([FromRoute] Guid userId)
+    public async Task<IActionResult> RevokeMembership(
+        [FromRoute] Guid userId,
+        [FromQuery] Guid? enterpriseId = null)
     {
-        var result = await sender.Send(new RevokeMembershipCommand(userId));
+        var result = await sender.Send(new RevokeMembershipCommand(userId, enterpriseId));
+        return result.Match(
+            response => Ok(response),
+            error => error.ToObjectResult());
+    }
+
+    /// <summary>
+    /// Re-activates a previously-revoked membership. Mirrors RevokeMembership for SuperAdmin
+    /// (pass enterpriseId) and tenant admin (taken from JWT). Idempotent.
+    /// </summary>
+    [Authorize(Roles = "admin,superAdmin")]
+    [HttpPost("{userId:guid}/membership/restore")]
+    [ProducesOkApiResponseType]
+    public async Task<IActionResult> RestoreMembership(
+        [FromRoute] Guid userId,
+        [FromQuery] Guid? enterpriseId = null)
+    {
+        var result = await sender.Send(new RestoreMembershipCommand(userId, enterpriseId));
         return result.Match(
             response => Ok(response),
             error => error.ToObjectResult());
@@ -149,9 +207,11 @@ public class UsersController(ISender sender) : BaseController
     [Authorize(Roles = "admin,superAdmin")]
     [HttpDelete("{userId:guid}/sessions")]
     [ProducesOkApiResponseType]
-    public async Task<IActionResult> RevokeUserSessions([FromRoute] Guid userId)
+    public async Task<IActionResult> RevokeUserSessions(
+        [FromRoute] Guid userId,
+        [FromQuery] Guid? enterpriseId = null)
     {
-        var result = await sender.Send(new RevokeUserSessionsCommand(userId));
+        var result = await sender.Send(new RevokeUserSessionsCommand(userId, enterpriseId));
         return result.Match(
             response => Ok(response),
             error => error.ToObjectResult());
@@ -197,6 +257,6 @@ public class UsersController(ISender sender) : BaseController
             error => error.ToObjectResult());
     }
 
-    public record ChangeMemberRoleBody(Guid RoleId);
+    public record ChangeMemberRoleBody(Guid RoleId, Guid? EnterpriseId = null);
     public record ChangeUserEmailBody(string NewEmail);
 }
