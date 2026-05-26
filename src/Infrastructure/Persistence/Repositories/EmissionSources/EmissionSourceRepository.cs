@@ -26,10 +26,30 @@ internal class EmissionSourceRepository(ApplicationDbContext context)
         EmissionSourceType? type,
         int page,
         int pageSize,
+        CancellationToken cancellationToken) =>
+        await GetPagedInternalAsync(installationId, type, page, pageSize, includeDeleted: false, cancellationToken);
+
+    public async Task<PageResult<EmissionSource>> GetPagedIncludingDeletedAsync(
+        Guid installationId,
+        EmissionSourceType? type,
+        int page,
+        int pageSize,
+        CancellationToken cancellationToken) =>
+        await GetPagedInternalAsync(installationId, type, page, pageSize, includeDeleted: true, cancellationToken);
+
+    private async Task<PageResult<EmissionSource>> GetPagedInternalAsync(
+        Guid installationId,
+        EmissionSourceType? type,
+        int page,
+        int pageSize,
+        bool includeDeleted,
         CancellationToken cancellationToken)
     {
-        var query = base.TableNoTracking
-            .Where(x => x.InstallationId == installationId);
+        var query = includeDeleted
+            ? base.Table.AsNoTracking().IgnoreQueryFilters()
+            : base.TableNoTracking;
+
+        query = query.Where(x => x.InstallationId == installationId);
 
         if (type == EmissionSourceType.Air)
         {

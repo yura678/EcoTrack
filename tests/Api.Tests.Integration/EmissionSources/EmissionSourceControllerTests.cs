@@ -253,6 +253,9 @@ public class EmissionSourceControllerTests : BaseIntegrationTest, IAsyncLifetime
     {
         // Arrange
         var request = new UpdateAirEmissionSourceDto(
+            Code: _airSourceToCreate.Code,
+            Latitude: _airSourceToCreate.Location.Y,
+            Longitude: _airSourceToCreate.Location.X,
             Height: _airSourceToCreate.Height,
             Diameter: _airSourceToCreate.Diameter,
             DesignFlowRate: _airSourceToCreate.DesignFlowRate
@@ -282,6 +285,9 @@ public class EmissionSourceControllerTests : BaseIntegrationTest, IAsyncLifetime
     {
         // Arrange
         var request = new UpdateWaterEmissionSourceDto(
+            Code: _waterSourceToCreate.Code,
+            Latitude: _waterSourceToCreate.Location.Y,
+            Longitude: _waterSourceToCreate.Location.X,
             Receiver: _waterSourceToCreate.Receiver,
             DesignFlowRate: _waterSourceToCreate.DesignFlowRate
         );

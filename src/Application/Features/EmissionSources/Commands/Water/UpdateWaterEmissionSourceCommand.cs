@@ -1,4 +1,4 @@
-﻿using Application.Features.EmissionSources.Exceptions;
+using Application.Features.EmissionSources.Exceptions;
 using Domain.Entities.EmissionSources;
 using FluentValidation;
 using LanguageExt;
@@ -12,6 +12,9 @@ public class UpdateWaterEmissionSourceCommand : IRequest<Either<EmissionSourceEx
     IValidatableModel<UpdateWaterEmissionSourceCommand>
 {
     public required Guid Id { get; init; }
+    public required string Code { get; init; }
+    public required double Latitude { get; init; }
+    public required double Longitude { get; init; }
     public required string Receiver { get; init; }
     public required double DesignFlowRate { get; init; }
 
@@ -20,11 +23,21 @@ public class UpdateWaterEmissionSourceCommand : IRequest<Either<EmissionSourceEx
     {
         validator.RuleFor(x => x.Id)
             .NotEmpty();
-        
+
+        validator.RuleFor(x => x.Code)
+            .NotEmpty()
+            .MaximumLength(50);
+
+        validator.RuleFor(x => x.Latitude)
+            .InclusiveBetween(-90, 90);
+
+        validator.RuleFor(x => x.Longitude)
+            .InclusiveBetween(-180, 180);
+
         validator.RuleFor(x => x.Receiver)
             .NotEmpty()
             .MaximumLength(255);
-        
+
         validator.RuleFor(x => x.DesignFlowRate)
             .NotEmpty();
 

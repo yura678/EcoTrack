@@ -1,12 +1,10 @@
-﻿using Application.Common.Interfaces.Persistence;
+using Application.Common.Interfaces.Persistence;
 using Application.Features.EmissionSources.Exceptions;
 using Domain.Entities.EmissionSources;
 using LanguageExt;
 using MediatR;
 
 namespace Application.Features.EmissionSources.Commands.Water;
-
-
 
 public class UpdateWaterEmissionSourceCommandHandler(
     IUnitOfWork unitOfWork)
@@ -17,6 +15,7 @@ public class UpdateWaterEmissionSourceCommandHandler(
     {
         return await CheckEmissionSourceId(request.Id, cancellationToken)
             .BindAsync(CheckType)
+            .BindAsync(e => CheckCode(e, request.Code, cancellationToken))
             .BindAsync(e => UpdateEntity(e, request, cancellationToken));
     }
 
@@ -44,6 +43,25 @@ public class UpdateWaterEmissionSourceCommandHandler(
             emissionSource.GetType());
     }
 
+    private async Task<Either<EmissionSourceException, WaterEmissionSource>> CheckCode(
+        WaterEmissionSource entity,
+        string newCode,
+        CancellationToken cancellationToken)
+    {
+        if (entity.Code == newCode)
+        {
+            return entity;
+        }
+
+        var existing = await unitOfWork.EmissionSourceRepository
+            .GetByCodeIncludingDeletedAsync(entity.InstallationId, newCode, cancellationToken);
+
+        return existing.Match<Either<EmissionSourceException, WaterEmissionSource>>(
+            e => new EmissionSourceCodeAlreadyExistsException(e.Id, newCode),
+            () => entity
+        );
+    }
+
     private async Task<Either<EmissionSourceException, EmissionSource>> UpdateEntity(
         WaterEmissionSource entity,
         UpdateWaterEmissionSourceCommand request,
@@ -51,7 +69,14 @@ public class UpdateWaterEmissionSourceCommandHandler(
     {
         try
         {
+            if (entity.Code != request.Code)
+            {
+                entity.UpdateCode(request.Code);
+            }
+
+            entity.UpdateLocation(request.Latitude, request.Longitude);
             entity.UpdateDetails(request.Receiver, request.DesignFlowRate);
+
             var updatedEmission = unitOfWork.EmissionSourceRepository.Update(entity);
             await unitOfWork.SaveChangesAsync(cancellationToken);
             return updatedEmission;

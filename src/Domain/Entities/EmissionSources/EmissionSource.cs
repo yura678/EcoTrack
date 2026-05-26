@@ -40,6 +40,12 @@ public class EmissionSource : BaseEntity, ISoftDeletable, ITenantOwned
         UpdatedAt = DateTime.UtcNow;
     }
 
+    public void UpdateCode(string code)
+    {
+        Code = code;
+        UpdatedAt = DateTime.UtcNow;
+    }
+
     public void MarkDeleted() => DeletedAt = DateTime.UtcNow;
     public void Restore() => DeletedAt = null;
 

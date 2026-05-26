@@ -29,14 +29,14 @@ public class EmissionSourceController(
     public async Task<IActionResult> GetEmissionSources(
         [FromRoute] Guid installationId,
         [FromQuery] EmissionSourceQueryDto query,
+        [FromQuery] bool includeDeleted,
         CancellationToken cancellationToken)
     {
-        var result = await emissionSourceQueries.GetPagedAsync(
-            installationId,
-            query.Type,
-            query.Page,
-            query.PageSize,
-            cancellationToken);
+        var result = includeDeleted
+            ? await emissionSourceQueries.GetPagedIncludingDeletedAsync(
+                installationId, query.Type, query.Page, query.PageSize, cancellationToken)
+            : await emissionSourceQueries.GetPagedAsync(
+                installationId, query.Type, query.Page, query.PageSize, cancellationToken);
 
         return Ok(new PageResult<EmissionSourceDto>
         {
@@ -51,9 +51,12 @@ public class EmissionSourceController(
     [ProducesOkApiResponseType<EmissionSourceDto>]
     public async Task<IActionResult> GetEmissionSourceById(
         [FromRoute] Guid id,
+        [FromQuery] bool includeDeleted,
         CancellationToken cancellationToken)
     {
-        var entity = await emissionSourceQueries.GetByIdAsync(id, cancellationToken);
+        var entity = includeDeleted
+            ? await emissionSourceQueries.GetByIdIncludingDeletedAsync(id, cancellationToken)
+            : await emissionSourceQueries.GetByIdAsync(id, cancellationToken);
 
         return entity.Match<ActionResult>(
             e => Ok(EmissionSourceDto.FromDomainModel(e)),
@@ -120,6 +123,9 @@ public class EmissionSourceController(
         var input = new UpdateAirEmissionSourceCommand
         {
             Id = id,
+            Code = request.Code,
+            Latitude = request.Latitude,
+            Longitude = request.Longitude,
             Height = request.Height,
             Diameter = request.Diameter,
             DesignFlowRate = request.DesignFlowRate
@@ -143,6 +149,9 @@ public class EmissionSourceController(
         var input = new UpdateWaterEmissionSourceCommand
         {
             Id = id,
+            Code = request.Code,
+            Latitude = request.Latitude,
+            Longitude = request.Longitude,
             Receiver = request.Receiver,
             DesignFlowRate = request.DesignFlowRate
         };

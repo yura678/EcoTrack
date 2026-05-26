@@ -9,8 +9,9 @@ public record EmissionSourceQueryDto(
     int Page = 1,
     int PageSize = 20);
 
-[JsonDerivedType(typeof(AirEmissionSourceDto), "air")]
-[JsonDerivedType(typeof(WaterEmissionSourceDto), "water")]
+[JsonPolymorphic(TypeDiscriminatorPropertyName = "medium")]
+[JsonDerivedType(typeof(AirEmissionSourceDto), "Air")]
+[JsonDerivedType(typeof(WaterEmissionSourceDto), "Water")]
 public abstract record EmissionSourceDto(
     Guid Id,
     Guid InstallationId,
@@ -18,7 +19,8 @@ public abstract record EmissionSourceDto(
     double Latitude,
     double Longitude,
     DateTime CreatedAt,
-    DateTime? UpdatedAt)
+    DateTime? UpdatedAt,
+    DateTime? DeletedAt)
 {
     public static EmissionSourceDto FromDomainModel(EmissionSource emissionSource)
     {
@@ -42,6 +44,9 @@ public record CreateAirEmissionSourceDto(
     double DesignFlowRate);
 
 public record UpdateAirEmissionSourceDto(
+    string Code,
+    double Latitude,
+    double Longitude,
     double Height,
     double Diameter,
     double DesignFlowRate);
@@ -56,7 +61,8 @@ public record AirEmissionSourceDto(
     double Diameter,
     double DesignFlowRate,
     DateTime CreatedAt,
-    DateTime? UpdatedAt) : EmissionSourceDto(Id, InstallationId, Code, Latitude, Longitude, CreatedAt, UpdatedAt)
+    DateTime? UpdatedAt,
+    DateTime? DeletedAt) : EmissionSourceDto(Id, InstallationId, Code, Latitude, Longitude, CreatedAt, UpdatedAt, DeletedAt)
 {
     public static AirEmissionSourceDto FromDomainModel(AirEmissionSource airEmissionSource)
     {
@@ -70,7 +76,8 @@ public record AirEmissionSourceDto(
             airEmissionSource.Diameter,
             airEmissionSource.DesignFlowRate,
             airEmissionSource.CreatedAt,
-            airEmissionSource.UpdatedAt
+            airEmissionSource.UpdatedAt,
+            airEmissionSource.DeletedAt
         );
     }
 }
@@ -83,6 +90,9 @@ public record CreateWaterEmissionSourceDto(
     double DesignFlowRate);
 
 public record UpdateWaterEmissionSourceDto(
+    string Code,
+    double Latitude,
+    double Longitude,
     string Receiver,
     double DesignFlowRate);
 
@@ -95,7 +105,8 @@ public record WaterEmissionSourceDto(
     string Receiver,
     double DesignFlowRate,
     DateTime CreatedAt,
-    DateTime? UpdatedAt) : EmissionSourceDto(Id, InstallationId, Code, Latitude, Longitude, CreatedAt, UpdatedAt)
+    DateTime? UpdatedAt,
+    DateTime? DeletedAt) : EmissionSourceDto(Id, InstallationId, Code, Latitude, Longitude, CreatedAt, UpdatedAt, DeletedAt)
 {
     public static WaterEmissionSourceDto FromDomainModel(WaterEmissionSource waterEmissionSource)
     {
@@ -108,7 +119,8 @@ public record WaterEmissionSourceDto(
             waterEmissionSource.Receiver,
             waterEmissionSource.DesignFlowRate,
             waterEmissionSource.CreatedAt,
-            waterEmissionSource.UpdatedAt
+            waterEmissionSource.UpdatedAt,
+            waterEmissionSource.DeletedAt
         );
     }
 }
