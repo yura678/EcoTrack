@@ -63,10 +63,21 @@ public class EdrpouAlreadyExistsException(string edrpou)
     : UserException(Guid.Empty, $"Enterprise with EDRPOU '{edrpou}' already exists.");
 
 public class SectorNotFoundException(Guid sectorId)
-    : UserException(Guid.Empty, $"Sector with ID '{sectorId}' was not found.");
+    : UserException(Guid.Empty, "Sector was not found.")
+{
+    public Guid SectorId { get; } = sectorId;
+}
 
 public class InvitationEmailMismatchException()
     : UserException(Guid.Empty, "Invitation is bound to a different email address.");
+
+public class UserAlreadyHasMembershipException(Guid userId, Guid enterpriseId)
+    : UserException(userId,
+        "User already has a membership (active or revoked) in this enterprise. " +
+        "Use the restore-membership endpoint for revoked memberships.")
+{
+    public Guid EnterpriseId { get; } = enterpriseId;
+}
 
 public class InvalidRefreshTokenException(
     Guid userId)
@@ -79,9 +90,16 @@ public class UnhandledUserException(
 
 public class EnterprisePendingApprovalException(Guid userId, string edrpou)
     : UserException(userId,
-        $"Підприємство (ЄДРПОУ {edrpou}) очікує верифікації суперадміна. " +
-        "Лист про підтвердження прийде після перевірки.");
+        $"Enterprise (EDRPOU {edrpou}) is awaiting SuperAdmin approval. " +
+        "You'll receive an email once it has been reviewed.")
+{
+    public string Edrpou { get; } = edrpou;
+}
 
 public class EnterpriseRejectedException(Guid userId, string edrpou, string reason)
     : UserException(userId,
-        $"Реєстрацію підприємства (ЄДРПОУ {edrpou}) відхилено: {reason}");
+        $"Enterprise registration (EDRPOU {edrpou}) was rejected: {reason}")
+{
+    public string Edrpou { get; } = edrpou;
+    public string Reason { get; } = reason;
+}

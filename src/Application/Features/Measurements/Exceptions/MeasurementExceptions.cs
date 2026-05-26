@@ -14,14 +14,23 @@ public class MeasurementRelatedEntityNotFoundException(
     Type missingEntityType,
     Guid missingEntityIdValue)
     : MeasurementException(measurementId,
-        $"Required entity {missingEntityType.Name} with ID {missingEntityIdValue} was not found.")
+        $"Related {ToFriendlyName(missingEntityType)} not found.")
 {
     public Type MissingEntityType { get; } = missingEntityType;
     public Guid MissingEntityIdValue { get; } = missingEntityIdValue;
+
+    private static string ToFriendlyName(Type t) => t.Name switch
+    {
+        "EmissionSource" => "emission source",
+        "Pollutant" => "pollutant",
+        "MeasureUnit" => "measurement unit",
+        "MonitoringDevice" => "device",
+        _ => t.Name.ToLowerInvariant()
+    };
 }
 
 public class MeasurementNotFoundException(Guid measurementId)
-    : MeasurementException(measurementId, $"Measurement with ID '{measurementId}' was not found.");
+    : MeasurementException(measurementId, "Measurement not found.");
 
 public class DuplicateMeasurementException(
     Guid id,
@@ -30,10 +39,12 @@ public class DuplicateMeasurementException(
     DateTime timestamp)
     : MeasurementException(
         id,
-        $"A measurement for emission source {sourceId} with pollutant {pollutantId} already exists at timestamp {timestamp}.")
+        $"A measurement for this emission source and pollutant already exists at {timestamp:O}.")
 {
+    public Guid SourceId { get; } = sourceId;
+    public Guid PollutantId { get; } = pollutantId;
+    public DateTime Timestamp { get; } = timestamp;
 }
 
 public class UnhandledMeasurementException(Guid id, Exception innerException)
-    : MeasurementException(id,
-        $"Unexpected error occurred.", innerException);
+    : MeasurementException(id, "Unexpected error occurred.", innerException);

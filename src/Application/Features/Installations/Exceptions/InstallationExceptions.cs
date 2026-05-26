@@ -1,4 +1,4 @@
-﻿namespace Application.Features.Installations.Exceptions;
+namespace Application.Features.Installations.Exceptions;
 
 public abstract class InstallationException(
     Guid installationId,
@@ -10,22 +10,28 @@ public abstract class InstallationException(
 }
 
 public class InstallationNotFoundException(Guid installationId)
-    : InstallationException(installationId, $"Installation with ID '{installationId}' was not found.");
+    : InstallationException(installationId, "Installation not found.");
 
 public class IedCategoryNotFoundException(
     Guid installationId,
     Guid iedCategoryId)
-    : InstallationException(installationId, $"IedCategory with ID '{iedCategoryId}' was not found.");
+    : InstallationException(installationId, "Industrial category not found.")
+{
+    public Guid IedCategoryId { get; } = iedCategoryId;
+}
 
 public class SiteNotFoundException(
     Guid installationId,
     Guid siteId)
-    : InstallationException(installationId, $"Site with ID '{siteId}' was not found.");
+    : InstallationException(installationId, "Site not found.")
+{
+    public Guid SiteId { get; } = siteId;
+}
 
 public class InstallationHasDependenciesException(
     Guid installationId)
     : InstallationException(installationId,
-        $"Installation with ID '{installationId}' has dependencies and cannot be deleted.");
+        "Installation has related data (emission sources, devices) and cannot be deleted.");
 
 public class UnhandledInstallationException(Guid installationId, Exception? innerException = null)
     : InstallationException(installationId, "Unexpected error occurred.", innerException);

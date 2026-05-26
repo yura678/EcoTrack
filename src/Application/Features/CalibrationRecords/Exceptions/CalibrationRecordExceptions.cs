@@ -10,15 +10,21 @@ public abstract class CalibrationRecordException(
 }
 
 public class CalibrationRecordNotFoundException(Guid id)
-    : CalibrationRecordException(id, $"Calibration record with ID '{id}' was not found.");
+    : CalibrationRecordException(id, "Calibration record not found.");
 
 public class CalibrationDeviceNotFoundException(Guid deviceId)
-    : CalibrationRecordException(Guid.Empty,
-        $"Device with ID '{deviceId}' was not found.");
+    : CalibrationRecordException(Guid.Empty, "Device not found.")
+{
+    public Guid DeviceId { get; } = deviceId;
+}
 
 public class CalibrationInvalidScheduleException(DateTime performedAt, DateTime nextDueAt)
     : CalibrationRecordException(Guid.Empty,
-        $"NextDueAt ({nextDueAt:O}) must be after PerformedAt ({performedAt:O}).");
+        "Next calibration date must be after the calibration date.")
+{
+    public DateTime PerformedAt { get; } = performedAt;
+    public DateTime NextDueAt { get; } = nextDueAt;
+}
 
 public class UnhandledCalibrationRecordException(Guid id, Exception? innerException = null)
     : CalibrationRecordException(id, "Unexpected error occurred.", innerException);

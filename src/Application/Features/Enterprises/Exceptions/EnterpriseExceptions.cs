@@ -1,4 +1,4 @@
-﻿namespace Application.Features.Enterprises.Exceptions;
+namespace Application.Features.Enterprises.Exceptions;
 
 public abstract class EnterpriseException(
     Guid enterpriseId,
@@ -11,32 +11,45 @@ public abstract class EnterpriseException(
 
 public class EnterpriseEdrpouAlreadyExistsException(Guid enterpriseId, string edrpou)
     : EnterpriseException(enterpriseId,
-        $"Enterprise already exists with edrpou '{edrpou}' under ID '{enterpriseId}'.");
+        $"An enterprise with EDRPOU '{edrpou}' already exists.")
+{
+    public string Edrpou { get; } = edrpou;
+}
 
 public class EnterpriseNotFoundException(Guid enterpriseId)
-    : EnterpriseException(enterpriseId, $"Enterprise with ID '{enterpriseId}' was not found.");
+    : EnterpriseException(enterpriseId, "Enterprise not found.");
 
 public class SectorNotFoundException(Guid enterpriseId, Guid sectorId)
-    : EnterpriseException(enterpriseId, $"Sector with ID '{sectorId}' was not found.");
+    : EnterpriseException(enterpriseId, "Sector not found.")
+{
+    public Guid SectorId { get; } = sectorId;
+}
 
 public class EnterpriseHasDependenciesException(
     Guid enterpriseId)
-    : EnterpriseException(enterpriseId, $"Enterprise with ID '{enterpriseId}' has dependencies and cannot be deleted.");
+    : EnterpriseException(enterpriseId,
+        "Enterprise has related data (sites, users, etc.) and cannot be deleted.");
 
 public class UnhandledEnterpriseException(Guid enterpriseId, Exception? innerException = null)
     : EnterpriseException(enterpriseId, "Unexpected error occurred.", innerException);
 
 public class EnterpriseAlreadyActiveException(Guid enterpriseId)
     : EnterpriseException(enterpriseId,
-        $"Enterprise '{enterpriseId}' is already active; nothing to approve.");
+        "Enterprise is already active; nothing to approve.");
 
 public class EnterpriseInvalidStateForApprovalException(Guid enterpriseId, string currentStatus)
     : EnterpriseException(enterpriseId,
-        $"Enterprise '{enterpriseId}' is in state '{currentStatus}' and cannot be approved.");
+        $"Enterprise status is '{currentStatus}' and cannot be approved.")
+{
+    public string CurrentStatus { get; } = currentStatus;
+}
 
 public class EnterpriseInvalidStateForRejectionException(Guid enterpriseId, string currentStatus)
     : EnterpriseException(enterpriseId,
-        $"Enterprise '{enterpriseId}' is in state '{currentStatus}' and cannot be rejected.");
+        $"Enterprise status is '{currentStatus}' and cannot be rejected.")
+{
+    public string CurrentStatus { get; } = currentStatus;
+}
 
 public class EnterpriseRejectionReasonRequiredException(Guid enterpriseId)
     : EnterpriseException(enterpriseId, "Rejection reason is required.");

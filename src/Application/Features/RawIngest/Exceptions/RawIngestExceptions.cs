@@ -7,15 +7,15 @@ public class UnconfiguredDevicePollutantsException(
     Guid deviceId,
     IReadOnlyCollection<Guid> unconfiguredPollutantIds)
     : RawIngestException(
-        $"Device '{deviceId}' has no DevicePollutantCapability for pollutant(s): " +
-        $"{string.Join(", ", unconfiguredPollutantIds)}.")
+        $"Device is not configured to measure {unconfiguredPollutantIds.Count} of the submitted pollutant(s). " +
+        "Configure the device's pollutant list before sending data.")
 {
     public Guid DeviceId { get; } = deviceId;
     public IReadOnlyCollection<Guid> UnconfiguredPollutantIds { get; } = unconfiguredPollutantIds;
 }
 
 /// <summary>
-/// One batch entry uses a unit that cannot be converted to its pollutant's canonical unit, or
+/// One batch entry uses a unit that cannot be converted to its pollutant's standard unit, or
 /// the operator-declared capability range itself can't be converted. Surfaced as 422 with a
 /// per-row breakdown so the UI can point the operator at exactly which entries the device
 /// (or capability config) must be fixed to.
@@ -33,8 +33,8 @@ public class UnconvertibleUnitsException(
     Guid deviceId,
     IReadOnlyCollection<UnconvertibleUnitFailure> failures)
     : RawIngestException(
-        $"Device '{deviceId}' shipped {failures.Count} reading(s) whose unit cannot be reconciled " +
-        $"with the pollutant's canonical unit. First failure: row {failures.First().RowIndex} " +
+        $"{failures.Count} reading(s) use a unit that cannot be converted to the pollutant's " +
+        $"standard unit. First failure: row {failures.First().RowIndex} " +
         $"({failures.First().FromUnitSymbol} → {failures.First().CanonicalUnitSymbol}): " +
         $"{failures.First().Reason}.")
 {

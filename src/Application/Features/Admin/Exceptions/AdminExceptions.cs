@@ -12,7 +12,10 @@ public abstract class AdminException(
 public class RoleNotFoundException(
     Guid userId,
     Guid roleId)
-    : AdminException(userId, $"Specified role with ID {roleId} not found.");
+    : AdminException(userId, "Role not found.")
+{
+    public Guid RoleId { get; } = roleId;
+}
 
 public class UserNotFoundException(
     Guid userId,

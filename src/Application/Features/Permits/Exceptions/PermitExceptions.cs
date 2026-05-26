@@ -1,4 +1,4 @@
-﻿using Domain.Entities.Enterprises;
+using Domain.Entities.Enterprises;
 using Domain.Entities.Monitoring;
 
 namespace Application.Features.Permits.Exceptions;
@@ -14,12 +14,15 @@ public abstract class PermitException(
 
 public class PermitNotFoundException(
     Guid permitId)
-    : PermitException(permitId, $"Permit with ID '{permitId}' was not found.");
+    : PermitException(permitId, "Permit not found.");
 
 public class InstallationNotFoundException(
     Guid permitId,
     Guid installationId)
-    : PermitException(permitId, $"Installation with ID '{installationId}' was not found.");
+    : PermitException(permitId, "Installation not found.")
+{
+    public Guid InstallationId { get; } = installationId;
+}
 
 public class InvalidEmissionLimitDateRangeException(
     Guid permitId,
@@ -28,39 +31,60 @@ public class InvalidEmissionLimitDateRangeException(
 public class EmissionLimitNotFoundException(
     Guid permitId,
     Guid emissionLimitId)
-    : PermitException(permitId, $"EmissionLimit with ID '{emissionLimitId}' was not found.");
+    : PermitException(permitId, "Emission limit not found.")
+{
+    public Guid EmissionLimitId { get; } = emissionLimitId;
+}
 
 public class PermitNumberAlreadyExistsException(
     Guid permitId,
     string number)
-    : PermitException(permitId, $"Permit with number '{number}' already exists.");
+    : PermitException(permitId, $"A permit with number '{number}' already exists.")
+{
+    public string Number { get; } = number;
+}
 
 public class PermitInvalidStatusException(
     Guid permitId,
     PermitStatus status,
     string message) : PermitException(permitId,
-    $"Status of permit '{permitId}' is {status}. {message}");
+    $"Permit status is {status}. {message}")
+{
+    public PermitStatus Status { get; } = status;
+}
 
 public class MeasureUnitNotFoundException(
     Guid permitId,
     IReadOnlyList<Guid> unitIds)
-    : PermitException(permitId, $"Units with IDs '{string.Join(", ", unitIds)}' were not found.");
+    : PermitException(permitId,
+        $"{unitIds.Count} measurement unit(s) were not found.")
+{
+    public IReadOnlyList<Guid> UnitIds { get; } = unitIds;
+}
 
 public class EmissionSourceNotFoundException(
     Guid permitId,
     IReadOnlyList<Guid> emissionSourceIds)
-    : PermitException(permitId, $"Emissions source with IDs '{string.Join(", ", emissionSourceIds)}' were not found.");
+    : PermitException(permitId,
+        $"{emissionSourceIds.Count} emission source(s) were not found.")
+{
+    public IReadOnlyList<Guid> EmissionSourceIds { get; } = emissionSourceIds;
+}
 
 public class PollutantNotFoundException(
     Guid permitId,
     IReadOnlyList<Guid> pollutantIds)
-    : PermitException(permitId, $"Pollutants with IDs '{string.Join(", ", pollutantIds)}' were not found.");
+    : PermitException(permitId,
+        $"{pollutantIds.Count} pollutant(s) were not found.")
+{
+    public IReadOnlyList<Guid> PollutantIds { get; } = pollutantIds;
+}
 
 public class ActivePermitAlreadyExistsException(
     Guid permitId)
     : PermitException(
         permitId,
-        $"Active permit already exists with ID '{permitId}' for this installation.");
+        "An active permit already exists for this installation.");
 
 /// <summary>
 /// Operator tried to activate a permit on an installation that is itself Decommissioned.
@@ -72,7 +96,11 @@ public class CannotActivatePermitOnDecommissionedInstallationException(
     Guid permitId,
     Guid installationId)
     : PermitException(permitId,
-        $"Permit '{permitId}' cannot be activated: installation '{installationId}' is Decommissioned. Recommission the installation first.");
+        "Permit cannot be activated while the installation is shut down. " +
+        "Reactivate the installation first.")
+{
+    public Guid InstallationId { get; } = installationId;
+}
 
 public class IncompatibleLimitUnitDimensionException(
     Guid permitId,
@@ -80,8 +108,13 @@ public class IncompatibleLimitUnitDimensionException(
     MeasureUnitDimension actualDimension,
     IReadOnlyCollection<MeasureUnitDimension> allowedDimensions)
     : PermitException(permitId,
-        $"Limit of type '{limitType}' requires a unit with dimension " +
-        $"[{string.Join(", ", allowedDimensions)}] but got '{actualDimension}'.");
+        $"Limit of type '{limitType}' requires a unit of type " +
+        $"[{string.Join(", ", allowedDimensions)}], but the selected unit is '{actualDimension}'.")
+{
+    public LimitType LimitType { get; } = limitType;
+    public MeasureUnitDimension ActualDimension { get; } = actualDimension;
+    public IReadOnlyCollection<MeasureUnitDimension> AllowedDimensions { get; } = allowedDimensions;
+}
 
 public class UnhandledPermitException(
     Guid permitId,

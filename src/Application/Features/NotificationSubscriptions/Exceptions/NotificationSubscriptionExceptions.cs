@@ -8,11 +8,11 @@ public abstract class NotificationSubscriptionException(
 }
 
 public class NotificationSubscriptionNotFoundException(Guid id)
-    : NotificationSubscriptionException(id, $"Notification subscription '{id}' was not found.");
+    : NotificationSubscriptionException(id, "Notification subscription not found.");
 
 public class NotificationSubscriptionForbiddenException(Guid id)
     : NotificationSubscriptionException(id,
-        $"Notification subscription '{id}' is not owned by the current user.");
+        "You don't have access to this notification subscription.");
 
 public class UnhandledNotificationSubscriptionException(Guid id, Exception innerException)
     : NotificationSubscriptionException(id,
