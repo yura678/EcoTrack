@@ -4,6 +4,7 @@ using Application.Common.Models;
 using Domain.Entities.EmissionSources;
 using Domain.Entities.Enterprises;
 using Domain.Entities.Monitoring;
+using Infrastructure.Compliance;
 using Infrastructure.Persistence.Repositories.Common;
 using LanguageExt;
 using Microsoft.EntityFrameworkCore;
@@ -469,7 +470,7 @@ internal class MeasurementRepository(
             }
 
             // Cross-dim: try MassConcentration × VolumetricFlow → kg/h derivation.
-            var derivedKgPerH = TryDeriveMassFlowKgPerH(
+            var derivedKgPerH = LimitComparisonHelpers.TryDeriveMassFlowKgPerH(
                 m.Value, measurementUnit, lim.UnitDimension, m.EmissionSourceId, flowByKey, units);
             if (derivedKgPerH is null)
             {
@@ -563,7 +564,7 @@ internal class MeasurementRepository(
                 continue;
             }
 
-            var derivedKgPerH = TryDeriveMassFlowKgPerH(
+            var derivedKgPerH = LimitComparisonHelpers.TryDeriveMassFlowKgPerH(
                 r.AvgRate, measurementUnit, lim.UnitDimension, key.SourceId, flowByKey, units);
             if (derivedKgPerH is null)
             {
@@ -582,25 +583,6 @@ internal class MeasurementRepository(
             Derived: derived,
             Excluded: excluded,
             MeasuredAt: contributing > 0 ? now : null);
-    }
-
-    private static decimal? TryDeriveMassFlowKgPerH(
-        decimal measurementValue,
-        UnitInfo measurementUnit,
-        MeasureUnitDimension limitDimension,
-        Guid sourceId,
-        IReadOnlyDictionary<Guid, FlowReading> flowByKey,
-        IReadOnlyDictionary<Guid, UnitInfo> units)
-    {
-        if (limitDimension != MeasureUnitDimension.MassFlow) return null;
-        if (measurementUnit.Dimension != MeasureUnitDimension.MassConcentration) return null;
-        if (!flowByKey.TryGetValue(sourceId, out var flow)) return null;
-        if (!units.TryGetValue(flow.UnitId, out var flowUnit)) return null;
-        if (flowUnit.Dimension != MeasureUnitDimension.VolumetricFlow) return null;
-
-        var concBase = measurementValue * measurementUnit.ToBaseFactor; // mg/m³
-        var flowBase = flow.Value * flowUnit.ToBaseFactor;               // m³/h
-        return Math.Round((concBase * flowBase) / 1_000_000m, 6);        // mg/h → kg/h
     }
 
     private static decimal? TryComputeAnnualO2Normalization(

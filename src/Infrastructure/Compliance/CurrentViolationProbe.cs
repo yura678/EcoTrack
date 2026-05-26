@@ -2,6 +2,7 @@ using Application.Common.Interfaces.Queries.Monitoring;
 using Application.Common.Settings;
 using Domain.Entities.Enterprises;
 using Domain.Entities.Monitoring;
+using Domain.Services;
 using Microsoft.Extensions.Options;
 
 namespace Infrastructure.Compliance;
@@ -83,8 +84,13 @@ public class CurrentViolationProbe(
             .Distinct()
             .ToList();
 
+        // Single 'now' for the whole probe call so the annual range used for rolling-rate is
+        // identical to the annual range used for the flow fetch a few lines later.
+        var now = DateTime.UtcNow;
+
         var byPeriodLatest = new Dictionary<(Guid, Guid, AveragingWindow), MeasurementSnapshot>();
         var byPeriodRolling = new Dictionary<(Guid, Guid, AveragingWindow), RollingAverage>();
+        var annualRanges = new Dictionary<AveragingWindow, (DateTime From, DateTime To)>();
         foreach (var byPeriod in pairs.GroupBy(p => p.Period))
         {
             var pairsInPeriod = byPeriod
@@ -96,13 +102,13 @@ public class CurrentViolationProbe(
             {
                 var window = AnnualLoadPeriodToTimeSpan(byPeriod.Key);
                 if (window == TimeSpan.Zero) continue;
-                var now = DateTime.UtcNow;
                 var sources = pairsInPeriod.Select(p => p.SourceId).Distinct().ToArray();
                 var pollutants = pairsInPeriod.Select(p => p.PollutantId).Distinct().ToArray();
                 var rolling = await queries.GetRollingAverageRateAsync(
                     sources, pollutants, now - window, now, ct);
                 foreach (var (key, r) in rolling)
                     byPeriodRolling[(key.SourceId, key.PollutantId, byPeriod.Key)] = r;
+                annualRanges[byPeriod.Key] = (now - window, now);
             }
             else
             {
@@ -112,12 +118,44 @@ public class CurrentViolationProbe(
             }
         }
 
+        // Flow fetches mirror the detector exactly. Annual: one call per period over (now - window, now).
+        // Non-annual: one call per distinct (WindowStart, WindowEnd) of the latest snapshots so each
+        // event compares against the flow of its own window, not a smeared average.
+        var annualFlowByPeriod = new Dictionary<AveragingWindow, IReadOnlyDictionary<Guid, FlowReading>>();
+        foreach (var (period, range) in annualRanges)
+        {
+            var sources = byPeriodRolling
+                .Where(kvp => kvp.Key.Item3 == period)
+                .Select(kvp => kvp.Key.Item1)
+                .Distinct()
+                .ToArray();
+            if (sources.Length == 0) continue;
+            annualFlowByPeriod[period] = await queries.GetVolumetricFlowForRangeAsync(
+                sources, range.From, range.To, ct);
+        }
+
+        var nonAnnualFlowByWindow = new Dictionary<(DateTime Start, DateTime End), IReadOnlyDictionary<Guid, FlowReading>>();
+        foreach (var byWindow in byPeriodLatest.Values.GroupBy(s => (s.WindowStart, s.WindowEnd)))
+        {
+            var sources = byWindow.Select(s => s.EmissionSourceId).Distinct().ToArray();
+            nonAnnualFlowByWindow[byWindow.Key] = await queries.GetVolumetricFlowForRangeAsync(
+                sources, byWindow.Key.WindowStart, byWindow.Key.WindowEnd, ct);
+        }
+
+        // Canonical lookups enable Path 2 (UnitConverter ppm ↔ mg/m³).
+        var pollutantIds = limits.Values.Select(l => l.PollutantId).Distinct().ToArray();
+        var canonicals = await queries.GetPollutantCanonicalsAsync(pollutantIds, ct);
+
         var allUnitIds = limits.Values.Select(l => l.UnitId)
             .Concat(byPeriodLatest.Values.Select(s => s.UnitId))
             .Concat(byPeriodRolling.Values.Select(r => r.UnitId))
+            .Concat(canonicals.Values.Select(c => c.CanonicalUnitId))
+            .Concat(annualFlowByPeriod.Values.SelectMany(d => d.Values.Select(v => v.UnitId)))
+            .Concat(nonAnnualFlowByWindow.Values.SelectMany(d => d.Values.Select(v => v.UnitId)))
             .Distinct()
             .ToArray();
         var units = await queries.GetUnitsAsync(allUnitIds, ct);
+        var unitEntities = LimitComparisonHelpers.BuildUnitEntities(units);
 
         foreach (var e in eventsArr)
         {
@@ -126,34 +164,82 @@ public class CurrentViolationProbe(
                 result[e.Id] = null;
                 continue;
             }
-            if (!units.TryGetValue(limit.UnitId, out var limitUnit))
+            if (!units.TryGetValue(limit.UnitId, out var limitUnit)
+                || !unitEntities.TryGetValue(limit.UnitId, out var limitUnitEntity))
             {
                 result[e.Id] = null;
                 continue;
+            }
+
+            PollutantCanonical? canonical = null;
+            MeasureUnit? canonicalUnitEntity = null;
+            if (canonicals.TryGetValue(limit.PollutantId, out var c))
+            {
+                canonical = c;
+                unitEntities.TryGetValue(c.CanonicalUnitId, out canonicalUnitEntity);
             }
 
             var key = (e.EmissionSourceId, limit.PollutantId, limit.Period);
             if (IsAnnualLoadPeriod(limit.Period))
             {
                 if (!byPeriodRolling.TryGetValue(key, out var rolling)
-                    || !units.TryGetValue(rolling.UnitId, out var measurementUnit))
+                    || !units.TryGetValue(rolling.UnitId, out var measurementUnit)
+                    || !unitEntities.TryGetValue(rolling.UnitId, out var measurementUnitEntity))
                 {
                     result[e.Id] = null;
                     continue;
                 }
-                if (measurementUnit.Dimension != limitUnit.Dimension)
+
+                // Path 1 — same dimension on both sides.
+                if (measurementUnit.Dimension == limitUnit.Dimension)
                 {
-                    result[e.Id] = null; // derived mass flow not probed in v1
+                    var measured = rolling.AvgRate * measurementUnit.ToBaseFactor;
+                    var limitBase = limit.Value * limitUnit.ToBaseFactor;
+                    result[e.Id] = measured > limitBase;
                     continue;
                 }
-                var measured = rolling.AvgRate * measurementUnit.ToBaseFactor;
-                var limitBase = limit.Value * limitUnit.ToBaseFactor;
-                result[e.Id] = measured > limitBase;
+
+                // Path 2 — UnitConverter cross-dim via pollutant molar mass.
+                if (canonical is not null && canonicalUnitEntity is not null
+                    && measurementUnit.Dimension == canonicalUnitEntity.Dimension)
+                {
+                    var effective = rolling.AvgRate;
+                    if (rolling.UnitId != canonical.CanonicalUnitId
+                        && UnitConverter.TryToCanonical(effective, measurementUnitEntity,
+                            canonicalUnitEntity, canonical.MolarMass, out var convertedMeas, out _))
+                    {
+                        effective = convertedMeas;
+                    }
+                    if (UnitConverter.TryToCanonical(limit.Value, limitUnitEntity, canonicalUnitEntity,
+                            canonical.MolarMass, out var limitCanonical, out _))
+                    {
+                        result[e.Id] = effective > limitCanonical;
+                        continue;
+                    }
+                }
+
+                // Path 3 — concentration × volumetric flow → mass flow. Uses raw AvgRate
+                // because flow and concentration are both at actual stack conditions.
+                if (annualFlowByPeriod.TryGetValue(limit.Period, out var annualFlow))
+                {
+                    var derivedKgPerH = LimitComparisonHelpers.TryDeriveMassFlowKgPerH(
+                        rolling.AvgRate, measurementUnit, limitUnit.Dimension,
+                        e.EmissionSourceId, annualFlow, units);
+                    if (derivedKgPerH is not null)
+                    {
+                        var limitKgPerH = limit.Value * limitUnit.ToBaseFactor;
+                        result[e.Id] = derivedKgPerH.Value > limitKgPerH;
+                        continue;
+                    }
+                }
+
+                result[e.Id] = null;
             }
             else
             {
                 if (!byPeriodLatest.TryGetValue(key, out var snapshot)
-                    || !units.TryGetValue(snapshot.UnitId, out var measurementUnit))
+                    || !units.TryGetValue(snapshot.UnitId, out var measurementUnit)
+                    || !unitEntities.TryGetValue(snapshot.UnitId, out var measurementUnitEntity))
                 {
                     result[e.Id] = null;
                     continue;
@@ -163,15 +249,54 @@ public class CurrentViolationProbe(
                     result[e.Id] = null;
                     continue;
                 }
-                if (measurementUnit.Dimension != limitUnit.Dimension)
+
+                var effective = snapshot.NormalizedValue ?? snapshot.Value;
+
+                // Path 1 — same dimension on both sides.
+                if (measurementUnit.Dimension == limitUnit.Dimension)
                 {
-                    result[e.Id] = null;
+                    var measured = effective * measurementUnit.ToBaseFactor;
+                    var limitBase = limit.Value * limitUnit.ToBaseFactor;
+                    result[e.Id] = measured > limitBase;
                     continue;
                 }
-                var effective = snapshot.NormalizedValue ?? snapshot.Value;
-                var measured = effective * measurementUnit.ToBaseFactor;
-                var limitBase = limit.Value * limitUnit.ToBaseFactor;
-                result[e.Id] = measured > limitBase;
+
+                // Path 2 — UnitConverter cross-dim via pollutant molar mass.
+                if (canonical is not null && canonicalUnitEntity is not null
+                    && measurementUnit.Dimension == canonicalUnitEntity.Dimension)
+                {
+                    var effectiveCanonical = effective;
+                    if (snapshot.UnitId != canonical.CanonicalUnitId
+                        && UnitConverter.TryToCanonical(effective, measurementUnitEntity,
+                            canonicalUnitEntity, canonical.MolarMass, out var convertedMeas, out _))
+                    {
+                        effectiveCanonical = convertedMeas;
+                    }
+                    if (UnitConverter.TryToCanonical(limit.Value, limitUnitEntity, canonicalUnitEntity,
+                            canonical.MolarMass, out var limitCanonical, out _))
+                    {
+                        result[e.Id] = effectiveCanonical > limitCanonical;
+                        continue;
+                    }
+                }
+
+                // Path 3 — concentration × volumetric flow → mass flow. Uses raw Value (not
+                // NormalizedValue) to match the detector — the flow reading is at actual stack
+                // conditions, so multiplying it by an O₂-referenced concentration would be wrong.
+                if (nonAnnualFlowByWindow.TryGetValue((snapshot.WindowStart, snapshot.WindowEnd), out var flowByKey))
+                {
+                    var derivedKgPerH = LimitComparisonHelpers.TryDeriveMassFlowKgPerH(
+                        snapshot.Value, measurementUnit, limitUnit.Dimension,
+                        e.EmissionSourceId, flowByKey, units);
+                    if (derivedKgPerH is not null)
+                    {
+                        var limitKgPerH = limit.Value * limitUnit.ToBaseFactor;
+                        result[e.Id] = derivedKgPerH.Value > limitKgPerH;
+                        continue;
+                    }
+                }
+
+                result[e.Id] = null;
             }
         }
     }

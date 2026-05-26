@@ -109,6 +109,9 @@ public class ComplianceDetectionService(
         // can replace this with a transactional outbox if loss becomes unacceptable.
         foreach (var ev in events)
         {
+            logger.LogInformation(
+                "Publishing ComplianceEventOpenedNotification: EventId={EventId} Enterprise={EnterpriseId} Type={Type}",
+                ev.Id, ev.EnterpriseId, ev.EventType);
             await publisher.Publish(new ComplianceEventOpenedNotification(ev.Id), ct);
         }
     }
@@ -153,7 +156,7 @@ public class ComplianceDetectionService(
                 .Distinct()
                 .ToArray();
             var units = await queries.GetUnitsAsync(unitIds, ct);
-            unitEntities = BuildUnitEntities(units);
+            unitEntities = LimitComparisonHelpers.BuildUnitEntities(units);
         }
 
         var closedIds = new List<Guid>();
@@ -197,6 +200,8 @@ public class ComplianceDetectionService(
             // discipline as PersistAsync for opened events.
             foreach (var id in closedIds)
             {
+                logger.LogInformation(
+                    "Publishing ComplianceEventClosedNotification: EventId={EventId} (auto-close)", id);
                 await publisher.Publish(new ComplianceEventClosedNotification(id), ct);
             }
         }
@@ -258,7 +263,7 @@ public class ComplianceDetectionService(
                 .Distinct()
                 .ToArray();
             var units = await queries.GetUnitsAsync(unitIds, ct);
-            var unitEntities = BuildUnitEntities(units);
+            var unitEntities = LimitComparisonHelpers.BuildUnitEntities(units);
 
             var needsFlow = byPeriod.Any(t =>
                 units.TryGetValue(t.UnitId, out var u)
@@ -374,18 +379,22 @@ public class ComplianceDetectionService(
                     }
 
                     // Path 3 — concentration × volumetric flow → mass flow.
-                    var derived = TryDeriveMassFlow(t, m.Value, limitUnit, measurementUnit, flowByKey, units);
-                    if (derived is not null)
+                    var derivedKgPerH = LimitComparisonHelpers.TryDeriveMassFlowKgPerH(
+                        m.Value, measurementUnit, limitUnit.Dimension, t.EmissionSourceId, flowByKey, units);
+                    if (derivedKgPerH is not null)
                     {
                         evaluatedLimitIds.Add(t.LimitId);
-                        if (derived.MassFlowKgPerH <= derived.LimitKgPerH) continue;
-                        var derivedRatio = Math.Round(derived.MassFlowKgPerH / derived.LimitKgPerH, 4);
+                        var limitKgPerH = t.Value * limitUnit.ToBaseFactor;
+                        if (derivedKgPerH.Value <= limitKgPerH) continue;
+                        var derivedRatio = Math.Round(derivedKgPerH.Value / limitKgPerH, 4);
+                        var flow = flowByKey[t.EmissionSourceId];
+                        var flowUnit = units[flow.UnitId];
                         newEvents.Add(ComplianceEvent.ForLimitExceedance(
                             Guid.NewGuid(), t.EmissionSourceId,
                             measurementId: m.Id, t.LimitId, derivedRatio, m.WindowStart, m.WindowEnd,
-                            notes: $"Derived mass flow {derived.MassFlowKgPerH:0.###} kg/h " +
+                            notes: $"Derived mass flow {derivedKgPerH.Value:0.###} kg/h " +
                                    $"({m.Value:0.###} {measurementUnit.Symbol} × " +
-                                   $"{derived.FlowDescription}) > " +
+                                   $"{flow.Value:0.###} {flowUnit.Symbol}) > " +
                                    $"{t.Value:0.###} {limitUnit.Symbol} (ratio {derivedRatio:0.##})"));
                         existingKeys.Add((t.LimitId, t.EmissionSourceId));
                         continue;
@@ -404,11 +413,6 @@ public class ComplianceDetectionService(
         return (newEvents, evaluatedLimitIds);
     }
 
-    private static Dictionary<Guid, MeasureUnit> BuildUnitEntities(IReadOnlyDictionary<Guid, UnitInfo> units) =>
-        units.ToDictionary(
-            kvp => kvp.Key,
-            kvp => MeasureUnit.New(kvp.Key, kvp.Value.Symbol, kvp.Value.Dimension, kvp.Value.ToBaseFactor));
-
     private static string BuildUnenforceableNote(
         LimitTarget t, UnitInfo limitUnit, MeasureUnit canonicalUnit, PollutantCanonical canonical)
     {
@@ -423,7 +427,7 @@ public class ComplianceDetectionService(
     /// <summary>
     /// Handles installation-level MassFlow limits by summing values across all sources of the
     /// installation and comparing the total with the limit. Sources reporting MassConcentration
-    /// instead of MassFlow are derived via TryDeriveMassFlow (concentration × volumetric flow).
+    /// instead of MassFlow are derived via concentration × volumetric flow.
     /// Sources that can be neither matched nor derived are excluded from the sum but the rest
     /// of the aggregate still proceeds, matching the per-source detector's behaviour.
     /// Returns the set of LimitIds it processed so the caller can skip them in the per-source
@@ -477,16 +481,17 @@ public class ComplianceDetectionService(
                     continue;
                 }
 
-                var derived = TryDeriveMassFlow(t, m.Value, limitUnit, measurementUnit, flowByKey, units);
-                if (derived is null)
+                var derivedKgPerH = LimitComparisonHelpers.TryDeriveMassFlowKgPerH(
+                    m.Value, measurementUnit, limitUnit.Dimension, t.EmissionSourceId, flowByKey, units);
+                if (derivedKgPerH is null)
                 {
                     excludedCount++;
                     continue;
                 }
 
-                // TryDeriveMassFlow already returns kg/h (the MassFlow base unit), so no further
-                // factor conversion is needed.
-                sumBase += derived.MassFlowKgPerH;
+                // Helper already returns kg/h (the MassFlow base unit), so no further factor
+                // conversion is needed.
+                sumBase += derivedKgPerH.Value;
                 contributingSources.Add(t.EmissionSourceId);
                 derivedCount++;
                 windowStart = m.WindowStart;
@@ -549,31 +554,6 @@ public class ComplianceDetectionService(
         return $" [{string.Join("; ", parts)}]";
     }
 
-    private record DerivedMassFlow(decimal MassFlowKgPerH, decimal LimitKgPerH, string FlowDescription);
-
-    private static DerivedMassFlow? TryDeriveMassFlow(
-        LimitTarget t, decimal measurementValue,
-        UnitInfo limitUnit, UnitInfo measurementUnit,
-        IReadOnlyDictionary<Guid, FlowReading> flowByKey,
-        IReadOnlyDictionary<Guid, UnitInfo> units)
-    {
-        if (limitUnit.Dimension != MeasureUnitDimension.MassFlow) return null;
-        if (measurementUnit.Dimension != MeasureUnitDimension.MassConcentration) return null;
-        if (!flowByKey.TryGetValue(t.EmissionSourceId, out var flow)) return null;
-        if (!units.TryGetValue(flow.UnitId, out var flowUnit)) return null;
-        if (flowUnit.Dimension != MeasureUnitDimension.VolumetricFlow) return null;
-
-        // (mg/m³ base) × (m³/h base) = mg/h → /1e6 = kg/h
-        var concBase = measurementValue * measurementUnit.ToBaseFactor;
-        var flowBase = flow.Value * flowUnit.ToBaseFactor;
-        var massFlowKgPerH = (concBase * flowBase) / 1_000_000m;
-        var limitKgPerH = t.Value * limitUnit.ToBaseFactor;
-        return new DerivedMassFlow(
-            MassFlowKgPerH: Math.Round(massFlowKgPerH, 6),
-            LimitKgPerH: limitKgPerH,
-            FlowDescription: $"{flow.Value:0.###} {flowUnit.Symbol}");
-    }
-
     // ─── AnnualLoad ──────────────────────────────────────────────────────────────
 
     private async Task<(List<ComplianceEvent> Events, HashSet<Guid> EvaluatedLimitIds)>
@@ -625,7 +605,7 @@ public class ComplianceDetectionService(
                 .Distinct()
                 .ToArray();
             var units = await queries.GetUnitsAsync(unitIds, ct);
-            var unitEntities = BuildUnitEntities(units);
+            var unitEntities = LimitComparisonHelpers.BuildUnitEntities(units);
 
             var needsFlow = byPeriod.Any(t =>
                 units.TryGetValue(t.UnitId, out var u)
@@ -757,17 +737,21 @@ public class ComplianceDetectionService(
                 }
 
                 // Path 3 — MassConcentration × volumetric flow → MassFlow.
-                var derived = TryDeriveMassFlow(t, r.AvgRate, limitUnit, measurementUnit, flowByKey, units);
-                if (derived is not null)
+                var derivedKgPerH = LimitComparisonHelpers.TryDeriveMassFlowKgPerH(
+                    r.AvgRate, measurementUnit, limitUnit.Dimension, t.EmissionSourceId, flowByKey, units);
+                if (derivedKgPerH is not null)
                 {
                     evaluatedLimitIds.Add(t.LimitId);
-                    if (derived.MassFlowKgPerH <= derived.LimitKgPerH) continue;
-                    var derivedRatio = Math.Round(derived.MassFlowKgPerH / derived.LimitKgPerH, 4);
+                    var limitKgPerH = t.Value * limitUnit.ToBaseFactor;
+                    if (derivedKgPerH.Value <= limitKgPerH) continue;
+                    var derivedRatio = Math.Round(derivedKgPerH.Value / limitKgPerH, 4);
+                    var flow = flowByKey[t.EmissionSourceId];
+                    var flowUnit = units[flow.UnitId];
                     newEvents.Add(ComplianceEvent.ForLimitExceedance(
                         Guid.NewGuid(), t.EmissionSourceId,
                         measurementId: null, t.LimitId, derivedRatio, from, now,
-                        notes: $"AnnualLoad derived: {derived.MassFlowKgPerH:0.###} kg/h " +
-                               $"({r.AvgRate:0.###} {measurementUnit.Symbol} × {derived.FlowDescription}) " +
+                        notes: $"AnnualLoad derived: {derivedKgPerH.Value:0.###} kg/h " +
+                               $"({r.AvgRate:0.###} {measurementUnit.Symbol} × {flow.Value:0.###} {flowUnit.Symbol}) " +
                                $"over last {window.TotalDays:0}d > {t.Value:0.###} {limitUnit.Symbol} " +
                                $"(ratio {derivedRatio:0.##})"));
                     continue;
@@ -867,14 +851,15 @@ public class ComplianceDetectionService(
                 }
 
                 // Cross-dimension: try derivation (only MassConcentration → MassFlow path supported).
-                var derived = TryDeriveMassFlow(t, r.AvgRate, limitUnit, measurementUnit, flowByKey, units);
-                if (derived is null)
+                var derivedKgPerH = LimitComparisonHelpers.TryDeriveMassFlowKgPerH(
+                    r.AvgRate, measurementUnit, limitUnit.Dimension, t.EmissionSourceId, flowByKey, units);
+                if (derivedKgPerH is null)
                 {
                     excludedCount++;
                     continue;
                 }
 
-                sumBase += derived.MassFlowKgPerH;
+                sumBase += derivedKgPerH.Value;
                 totalSamples += r.Samples;
                 contributingSources.Add(t.EmissionSourceId);
                 derivedCount++;
@@ -941,6 +926,7 @@ public class ComplianceDetectionService(
             .Select(e => e.DeviceId!.Value)
             .ToHashSet();
 
+        logger.LogInformation("Devices d {1} {2}", enterpriseId, devices.ToList());
         var lastSeen = await queries.GetDeviceLastSeenAsync(
             devices.Select(d => d.Id).ToArray(), cutoff, ct);
 

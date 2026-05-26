@@ -3,6 +3,7 @@ using Domain.Entities.EmissionSources;
 using Domain.Entities.Enterprises;
 using Domain.Entities.Monitoring;
 using FluentAssertions;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Tests.Common;
 using Tests.Data.EmissionSources;
@@ -23,6 +24,9 @@ public class CurrentViolationProbeTests : BaseIntegrationTest, IAsyncLifetime
     private readonly EmissionSource _source;
     private readonly Pollutant _pollutant;
     private readonly MeasureUnit _mg;
+    private readonly MeasureUnit _kgh;
+    private readonly MeasureUnit _m3h;
+    private MeasureUnit _ppm = null!; // resolved in InitializeAsync — pre-seeded globally
     private readonly MonitoringDevice _device;
 
     private readonly DateTime _windowEnd;
@@ -38,6 +42,8 @@ public class CurrentViolationProbeTests : BaseIntegrationTest, IAsyncLifetime
         _installation = InstallationData.FirstTestInstallation(_site.Id, _iedCategory.Id);
         _source = EmissionSourcesData.FirstTestEmissionSource(_installation.Id);
         _mg = MeasureUnitsData.MgPerM3();
+        _kgh = MeasureUnitsData.KgPerHour();
+        _m3h = MeasureUnitsData.CubicMetersPerHour();
         _pollutant = PollutantsData.FirstTestPollutant(_mg.Id);
         _device = MonitoringDevicesData.FirstTestDevice(_source.Id, _installation.Id);
 
@@ -119,14 +125,201 @@ public class CurrentViolationProbeTests : BaseIntegrationTest, IAsyncLifetime
         probe[ev.Id].Should().Be(false);
     }
 
+    // ─── Path 3 (derived mass flow) ──────────────────────────────────────────────
+
+    [Fact]
+    public async Task ShouldReportStillViolatingForDerivedMassFlowAboveLimit()
+    {
+        // Limit 5 kg/h, snapshot 100 mg/m³, flow 60 000 m³/h → derived 6 kg/h > 5 → still violating.
+        var (permit, limit) = ActivePermitWithLimit(
+            value: 5m, unitId: _kgh.Id, pollutantId: _pollutant.Id, limitType: LimitType.MassFlow);
+        await Context.Set<Permit>().AddAsync(permit);
+        await Context.Set<EmissionLimit>().AddAsync(limit);
+        await Context.Set<Measurement>().AddAsync(HourlyMeasurement(value: 100m));
+        await Context.Set<RawProcessParameter>().AddAsync(RawProcessParameter.New(
+            time: _windowStart.AddMinutes(30),
+            emissionSourceId: _source.Id, deviceId: _device.Id,
+            parameterType: ParameterType.VolumetricFlow,
+            value: 60_000m, unitId: _m3h.Id));
+
+        var ev = ComplianceEvent.ForLimitExceedance(
+            Guid.NewGuid(), _source.Id, measurementId: null, limit.Id, ratio: 1.2m,
+            _windowStart, _windowEnd, notes: "derived");
+        await Context.Set<ComplianceEvent>().AddAsync(ev);
+        await SaveChangesAsync();
+        await RefreshProcessParameterCaAsync();
+
+        var probe = await RunProbeAsync([ev]);
+        probe[ev.Id].Should().Be(true);
+    }
+
+    [Fact]
+    public async Task ShouldReportNotViolatingForDerivedMassFlowBelowLimit()
+    {
+        // Same setup, but concentration dropped to 60 mg/m³ → derived 3.6 kg/h < 5 → no longer violating.
+        var (permit, limit) = ActivePermitWithLimit(
+            value: 5m, unitId: _kgh.Id, pollutantId: _pollutant.Id, limitType: LimitType.MassFlow);
+        await Context.Set<Permit>().AddAsync(permit);
+        await Context.Set<EmissionLimit>().AddAsync(limit);
+        await Context.Set<Measurement>().AddAsync(HourlyMeasurement(value: 60m));
+        await Context.Set<RawProcessParameter>().AddAsync(RawProcessParameter.New(
+            time: _windowStart.AddMinutes(30),
+            emissionSourceId: _source.Id, deviceId: _device.Id,
+            parameterType: ParameterType.VolumetricFlow,
+            value: 60_000m, unitId: _m3h.Id));
+
+        var ev = ComplianceEvent.ForLimitExceedance(
+            Guid.NewGuid(), _source.Id, measurementId: null, limit.Id, ratio: 1.2m,
+            _windowStart, _windowEnd, notes: "derived");
+        await Context.Set<ComplianceEvent>().AddAsync(ev);
+        await SaveChangesAsync();
+        await RefreshProcessParameterCaAsync();
+
+        var probe = await RunProbeAsync([ev]);
+        probe[ev.Id].Should().Be(false);
+    }
+
+    [Fact]
+    public async Task ShouldReportNullForDerivedMassFlowWhenFlowDataIsMissing()
+    {
+        // Limit 5 kg/h, snapshot 100 mg/m³, but no flow row → probe cannot derive → null.
+        var (permit, limit) = ActivePermitWithLimit(
+            value: 5m, unitId: _kgh.Id, pollutantId: _pollutant.Id, limitType: LimitType.MassFlow);
+        await Context.Set<Permit>().AddAsync(permit);
+        await Context.Set<EmissionLimit>().AddAsync(limit);
+        await Context.Set<Measurement>().AddAsync(HourlyMeasurement(value: 100m));
+
+        var ev = ComplianceEvent.ForLimitExceedance(
+            Guid.NewGuid(), _source.Id, measurementId: null, limit.Id, ratio: 1.2m,
+            _windowStart, _windowEnd, notes: "derived");
+        await Context.Set<ComplianceEvent>().AddAsync(ev);
+        await SaveChangesAsync();
+        await RefreshProcessParameterCaAsync();
+
+        var probe = await RunProbeAsync([ev]);
+        probe[ev.Id].Should().Be(null);
+    }
+
+    // ─── Path 2 (cross-dimension via molar mass) ─────────────────────────────────
+
+    [Fact]
+    public async Task ShouldReportStillViolatingForPpmLimitWithMolarMass()
+    {
+        // NO₂ M = 46.0055 g/mol; 50 ppm → 50 × 46.0055 / 22.414 ≈ 102.65 mg/m³.
+        // Measurement 110 mg/m³ > 102.65 → still violating.
+        var pollutant = PollutantsData.SecondTestPollutant(_mg.Id, molarMass: 46.0055m);
+        await Context.Set<Pollutant>().AddAsync(pollutant);
+
+        var (permit, limit) = ActivePermitWithLimit(
+            value: 50m, unitId: _ppm.Id, pollutantId: pollutant.Id, limitType: LimitType.Concentration);
+        await Context.Set<Permit>().AddAsync(permit);
+        await Context.Set<EmissionLimit>().AddAsync(limit);
+        await Context.Set<Measurement>().AddAsync(HourlyMeasurement(value: 110m, pollutantId: pollutant.Id));
+
+        var ev = ComplianceEvent.ForLimitExceedance(
+            Guid.NewGuid(), _source.Id, measurementId: null, limit.Id, ratio: 1.07m,
+            _windowStart, _windowEnd, notes: "ppm exceedance");
+        await Context.Set<ComplianceEvent>().AddAsync(ev);
+        await SaveChangesAsync();
+
+        var probe = await RunProbeAsync([ev]);
+        probe[ev.Id].Should().Be(true);
+    }
+
+    [Fact]
+    public async Task ShouldReportNotViolatingForPpmLimitWhenBelowConvertedThreshold()
+    {
+        var pollutant = PollutantsData.SecondTestPollutant(_mg.Id, molarMass: 46.0055m);
+        await Context.Set<Pollutant>().AddAsync(pollutant);
+
+        var (permit, limit) = ActivePermitWithLimit(
+            value: 50m, unitId: _ppm.Id, pollutantId: pollutant.Id, limitType: LimitType.Concentration);
+        await Context.Set<Permit>().AddAsync(permit);
+        await Context.Set<EmissionLimit>().AddAsync(limit);
+        // 90 mg/m³ < 102.65 → no longer violating.
+        await Context.Set<Measurement>().AddAsync(HourlyMeasurement(value: 90m, pollutantId: pollutant.Id));
+
+        var ev = ComplianceEvent.ForLimitExceedance(
+            Guid.NewGuid(), _source.Id, measurementId: null, limit.Id, ratio: 1.07m,
+            _windowStart, _windowEnd, notes: "ppm exceedance");
+        await Context.Set<ComplianceEvent>().AddAsync(ev);
+        await SaveChangesAsync();
+
+        var probe = await RunProbeAsync([ev]);
+        probe[ev.Id].Should().Be(false);
+    }
+
+    [Fact]
+    public async Task ShouldReportNullForPpmLimitWhenPollutantHasNoMolarMass()
+    {
+        // Default pollutant has no molar mass → ppm conversion fails → no flow either → null.
+        var (permit, limit) = ActivePermitWithLimit(
+            value: 50m, unitId: _ppm.Id, pollutantId: _pollutant.Id, limitType: LimitType.Concentration);
+        await Context.Set<Permit>().AddAsync(permit);
+        await Context.Set<EmissionLimit>().AddAsync(limit);
+        await Context.Set<Measurement>().AddAsync(HourlyMeasurement(value: 110m));
+
+        var ev = ComplianceEvent.ForLimitExceedance(
+            Guid.NewGuid(), _source.Id, measurementId: null, limit.Id, ratio: 1.07m,
+            _windowStart, _windowEnd, notes: "ppm exceedance");
+        await Context.Set<ComplianceEvent>().AddAsync(ev);
+        await SaveChangesAsync();
+
+        var probe = await RunProbeAsync([ev]);
+        probe[ev.Id].Should().Be(null);
+    }
+
+    // ─── Annual derived mass flow ────────────────────────────────────────────────
+
+    [Fact]
+    public async Task ShouldReportStillViolatingForAnnualDerivedMassFlow()
+    {
+        // AnnualLoad Month1 limit 5 kg/h; rolling concentration ~100 mg/m³ + flow 60 000 m³/h
+        // → derived 6 kg/h > 5 → still violating.
+        var (permit, limit) = ActivePermitWithLimit(
+            value: 5m, unitId: _kgh.Id, pollutantId: _pollutant.Id,
+            limitType: LimitType.AnnualLoad, period: AveragingWindow.Month1);
+        await Context.Set<Permit>().AddAsync(permit);
+        await Context.Set<EmissionLimit>().AddAsync(limit);
+
+        var now = DateTime.UtcNow;
+        await Context.Set<RawMeasurement>().AddRangeAsync(
+            Enumerable.Range(0, 5).Select(i => RawMeasurement.New(
+                time: now.AddMinutes(-i - 1),
+                emissionSourceId: _source.Id, pollutantId: _pollutant.Id,
+                deviceId: _device.Id, unitId: _mg.Id, rawValue: 100m)));
+        await Context.Set<RawProcessParameter>().AddRangeAsync(
+            Enumerable.Range(0, 5).Select(i => RawProcessParameter.New(
+                time: now.AddMinutes(-i - 1),
+                emissionSourceId: _source.Id, deviceId: _device.Id,
+                parameterType: ParameterType.VolumetricFlow,
+                value: 60_000m, unitId: _m3h.Id)));
+
+        var ev = ComplianceEvent.ForLimitExceedance(
+            Guid.NewGuid(), _source.Id, measurementId: null, limit.Id, ratio: 1.2m,
+            now.AddDays(-30), now, notes: "annual derived");
+        await Context.Set<ComplianceEvent>().AddAsync(ev);
+        await SaveChangesAsync();
+        await RefreshMeasurementCaAsync();
+        await RefreshProcessParameterCaAsync();
+
+        var probe = await RunProbeAsync([ev]);
+        probe[ev.Id].Should().Be(true);
+    }
+
     // ─── helpers ─────────────────────────────────────────────────────────────────
 
-    private (Permit Permit, EmissionLimit Limit) ActivePermitWithLimit(decimal value)
+    private (Permit Permit, EmissionLimit Limit) ActivePermitWithLimit(decimal value) =>
+        ActivePermitWithLimit(value, _mg.Id, _pollutant.Id, LimitType.Concentration);
+
+    private (Permit Permit, EmissionLimit Limit) ActivePermitWithLimit(
+        decimal value, Guid unitId, Guid pollutantId,
+        LimitType limitType, AveragingWindow period = AveragingWindow.Hour1)
     {
         var permitId = Guid.NewGuid();
         var limit = EmissionLimit.New(
-            Guid.NewGuid(), value, LimitType.Concentration, AveragingWindow.Hour1,
-            permitId, _mg.Id, _pollutant.Id,
+            Guid.NewGuid(), value, limitType, period,
+            permitId, unitId, pollutantId,
             emissionSourceId: _source.Id, installationId: null,
             validFrom: DateTime.UtcNow.AddDays(-1), validTo: null);
         var permit = Permit.New(
@@ -140,14 +333,22 @@ public class CurrentViolationProbeTests : BaseIntegrationTest, IAsyncLifetime
         return (permit, limit);
     }
 
-    private Measurement HourlyMeasurement(decimal value) =>
+    private Measurement HourlyMeasurement(decimal value, Guid? pollutantId = null) =>
         Measurement.New(
             id: Guid.NewGuid(),
             windowStart: _windowStart, windowEnd: _windowEnd,
             window: AveragingWindow.Hour1, aggregation: Aggregation.Average,
-            emissionSourceId: _source.Id, pollutantId: _pollutant.Id,
+            emissionSourceId: _source.Id, pollutantId: pollutantId ?? _pollutant.Id,
             deviceId: _device.Id, unitId: _mg.Id,
             value: value, validPointsCount: 60, expectedPointsCount: 60);
+
+    private Task RefreshMeasurementCaAsync() =>
+        Context.Database.ExecuteSqlRawAsync(
+            "CALL refresh_continuous_aggregate('measurement_1m', NULL, NULL);");
+
+    private Task RefreshProcessParameterCaAsync() =>
+        Context.Database.ExecuteSqlRawAsync(
+            "CALL refresh_continuous_aggregate('process_parameter_1m', NULL, NULL);");
 
     private async Task<IReadOnlyDictionary<Guid, bool?>> RunProbeAsync(
         IReadOnlyCollection<ComplianceEvent> events)
@@ -167,8 +368,25 @@ public class CurrentViolationProbeTests : BaseIntegrationTest, IAsyncLifetime
         await Context.Set<EmissionSource>().AddAsync(_source);
         await Context.Set<Pollutant>().AddAsync(_pollutant);
         await Context.Set<MeasureUnit>().AddAsync(_mg);
+        await Context.Set<MeasureUnit>().AddAsync(_kgh);
+        await Context.Set<MeasureUnit>().AddAsync(_m3h);
         await Context.Set<MonitoringDevice>().AddAsync(_device);
         await SaveChangesAsync();
+
+        // ApplicationDbContextInitializer seeds "ppm" on first app boot, but ResetTenantDataAsync
+        // truncates measure_unit between tests — so after the first test, the global ppm is gone.
+        // Reuse-or-insert keeps the row available for every test in the class.
+        var existingPpm = await Context.Set<MeasureUnit>().FirstOrDefaultAsync(u => u.Symbol == "ppm");
+        if (existingPpm is not null)
+        {
+            _ppm = existingPpm;
+        }
+        else
+        {
+            _ppm = MeasureUnit.New(Guid.NewGuid(), "ppm", MeasureUnitDimension.Dimensionless, 1m);
+            await Context.Set<MeasureUnit>().AddAsync(_ppm);
+            await SaveChangesAsync();
+        }
     }
 
     public Task DisposeAsync() => ResetTenantDataAsync();
