@@ -30,6 +30,7 @@ public record SiteDto(
     Guid EnterpriseId,
     DateTime CreatedAt,
     DateTime? UpdatedAt,
+    DateTime? DeletedAt,
     IReadOnlyCollection<InstallationDto>? Installations)
 {
     public static SiteDto FromDomainModel(Site site)
@@ -45,6 +46,7 @@ public record SiteDto(
             site.EnterpriseId,
             site.CreatedAt,
             site.UpdatedAt,
+            site.DeletedAt,
             site.Installations?.Select(InstallationDto.FromDomainModel).ToList()
         );
     }

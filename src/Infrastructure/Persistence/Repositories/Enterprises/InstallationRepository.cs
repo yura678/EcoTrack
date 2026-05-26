@@ -22,6 +22,7 @@ internal class InstallationRepository(ApplicationDbContext context)
         CancellationToken cancellationToken)
     {
         return await base.TableNoTracking
+            .Include(x => x.IedCategory)
             .Where(x => x.SiteId == siteId)
             .ToListAsync(cancellationToken);
     }
@@ -44,6 +45,7 @@ internal class InstallationRepository(ApplicationDbContext context)
     public async Task<Option<Installation>> GetByIdAsync(Guid id, CancellationToken cancellationToken)
     {
         var entity = await base.TableNoTracking
+            .Include(x => x.IedCategory)
             .FirstOrDefaultAsync(x => x.Id == id, cancellationToken);
 
         return entity ?? Option<Installation>.None;
@@ -53,6 +55,7 @@ internal class InstallationRepository(ApplicationDbContext context)
         CancellationToken cancellationToken)
     {
         var entity = await base.TableNoTracking
+            .Include(x => x.IedCategory)
             .Include(x => x.EmissionSources)
             .FirstOrDefaultAsync(x => x.Id.Equals(id), cancellationToken);
 

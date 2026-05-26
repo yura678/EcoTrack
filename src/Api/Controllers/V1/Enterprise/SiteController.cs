@@ -27,10 +27,12 @@ public class SiteController(
     [ProducesOkApiResponseType<IReadOnlyList<SiteDto>>]
     public async Task<IActionResult> GetEnterpriseSites(
         [FromRoute] Guid enterpriseId,
+        [FromQuery] bool includeDeleted,
         CancellationToken cancellationToken)
     {
-        var entities =
-            await siteQueries.GetByEnterpriseIdAsync(enterpriseId, cancellationToken);
+        var entities = includeDeleted
+            ? await siteQueries.GetByEnterpriseIdIncludingDeletedAsync(enterpriseId, cancellationToken)
+            : await siteQueries.GetByEnterpriseIdAsync(enterpriseId, cancellationToken);
 
         return Ok(entities.Select(SiteDto.FromDomainModel).ToList());
     }
@@ -40,9 +42,12 @@ public class SiteController(
     [ProducesOkApiResponseType<SiteDto>]
     public async Task<IActionResult> GetSite(
         [FromRoute] Guid id,
+        [FromQuery] bool includeDeleted,
         CancellationToken cancellationToken)
     {
-        var entity = await siteQueries.GetByIdAsync(id, cancellationToken);
+        var entity = includeDeleted
+            ? await siteQueries.GetByIdIncludingDeletedAsync(id, cancellationToken)
+            : await siteQueries.GetByIdAsync(id, cancellationToken);
 
         return entity.Match<ActionResult>(
             s => Ok(SiteDto.FromDomainModel(s)),

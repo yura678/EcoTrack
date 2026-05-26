@@ -14,7 +14,10 @@ internal class PermitRepository(ApplicationDbContext context)
     public async Task<Option<Permit>> GetByIdAsync(Guid id, CancellationToken cancellationToken)
     {
         var entity = await base.TableNoTracking
-            .Include(x => x.EmissionLimits)
+            .Include(x => x.Installation)
+            .Include(x => x.EmissionLimits!).ThenInclude(l => l.Unit)
+            .Include(x => x.EmissionLimits!).ThenInclude(l => l.Pollutant)
+            .Include(x => x.EmissionLimits!).ThenInclude(l => l.EmissionSource)
             .FirstOrDefaultAsync(x => x.Id == id, cancellationToken);
 
         return entity ?? Option<Permit>.None;
@@ -44,7 +47,9 @@ internal class PermitRepository(ApplicationDbContext context)
         CancellationToken cancellationToken)
     {
         var query = base.TableNoTracking
-            .Include(x => x.EmissionLimits)
+            .Include(x => x.EmissionLimits!).ThenInclude(l => l.Unit)
+            .Include(x => x.EmissionLimits!).ThenInclude(l => l.Pollutant)
+            .Include(x => x.EmissionLimits!).ThenInclude(l => l.EmissionSource)
             .Where(x => x.InstallationId == installationId);
 
         if (from.HasValue)

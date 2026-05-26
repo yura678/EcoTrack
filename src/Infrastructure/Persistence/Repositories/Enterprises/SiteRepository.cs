@@ -25,6 +25,15 @@ internal class SiteRepository(ApplicationDbContext context)
             .ToListAsync(cancellationToken);
     }
 
+    public async Task<IReadOnlyList<Site>> GetByEnterpriseIdIncludingDeletedAsync(Guid enterpriseId,
+        CancellationToken cancellationToken)
+    {
+        return await base.Table
+            .IgnoreQueryFilters()
+            .Where(x => x.EnterpriseId == enterpriseId)
+            .ToListAsync(cancellationToken);
+    }
+
     public async Task<Option<Site>> GetByIdAsync(Guid id, CancellationToken cancellationToken)
     {
         var entity = await base.TableNoTracking

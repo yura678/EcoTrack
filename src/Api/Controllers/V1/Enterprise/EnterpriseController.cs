@@ -1,7 +1,8 @@
-﻿using Api.Attributes;
+using Api.Attributes;
 using Api.Controllers.Common;
 using Api.Dtos;
 using Api.Modules.Errors;
+using Application.Common.Interfaces.Identity;
 using Application.Common.Interfaces.Queries.Enterprises;
 using Application.Common.Models;
 using Application.Features.Enterprises.Commands;
@@ -16,13 +17,14 @@ using Microsoft.AspNetCore.Mvc;
 namespace Api.Controllers.V1.Enterprise;
 
 [ApiVersion("1")]
-[Authorize(Roles = "superAdmin")]
 [ApiController]
 [Route("api/v{version:apiVersion}/enterprises")]
 public class EnterpriseController(
     IEnterpriseQueries enterpriseQueries,
+    ICurrentUserService currentUserService,
     ISender sender) : BaseController
 {
+    [Authorize(Roles = "superAdmin")]
     [HttpGet]
     [ProducesOkApiResponseType<PageResult<EnterpriseDto>>]
     public async Task<IActionResult> GetEnterprises(
@@ -43,6 +45,28 @@ public class EnterpriseController(
         });
     }
 
+    /// <summary>
+    /// Returns the current admin's own enterprise. Convenience endpoint for the SPA's
+    /// "My enterprise" tab — saves the client from carrying around the activeEnterpriseId.
+    /// </summary>
+    [Authorize(Roles = "superAdmin,admin")]
+    [HttpGet("me")]
+    [ProducesOkApiResponseType<EnterpriseDto>]
+    public async Task<IActionResult> GetMyEnterprise(CancellationToken cancellationToken)
+    {
+        var enterpriseId = currentUserService.GetCurrentEnterpriseId();
+        if (!enterpriseId.HasValue)
+        {
+            return NotFound();
+        }
+
+        var entity = await enterpriseQueries.GetByIdAsync(enterpriseId.Value, cancellationToken);
+        return entity.Match<ActionResult>(
+            e => Ok(EnterpriseDto.FromDomainModel(e)),
+            () => NotFound());
+    }
+
+    [Authorize(Roles = "superAdmin,admin")]
     [HttpGet("{id:guid}")]
     [ProducesOkApiResponseType<EnterpriseDto>]
     public async Task<IActionResult> GetEnterprise(
@@ -50,6 +74,17 @@ public class EnterpriseController(
         [FromRoute] Guid id,
         CancellationToken cancellationToken)
     {
+        // Tenant-scope: admin may only read their own enterprise. NotFound (not Forbidden) so
+        // an admin of enterprise A cannot probe which enterprise ids exist for enterprise B.
+        if (!currentUserService.IsSuperAdmin())
+        {
+            var current = currentUserService.GetCurrentEnterpriseId();
+            if (current is null || current.Value != id)
+            {
+                return NotFound();
+            }
+        }
+
         var entity = includeSites
             ? await enterpriseQueries.GetByIdWithSitesAsync(id, cancellationToken)
             : await enterpriseQueries.GetByIdAsync(id, cancellationToken);
@@ -59,6 +94,7 @@ public class EnterpriseController(
             () => NotFound());
     }
 
+    [Authorize(Roles = "superAdmin")]
     [HttpGet("{edrpou}")]
     [ProducesOkApiResponseType<EnterpriseDto>]
     public async Task<IActionResult> GetEnterpriseByEdrpou(
@@ -72,6 +108,7 @@ public class EnterpriseController(
             () => NotFound());
     }
 
+    [Authorize(Roles = "superAdmin")]
     [HttpPost]
     [ProducesOkApiResponseType<EnterpriseDto>]
     public async Task<IActionResult> CreateEnterprise(
@@ -93,12 +130,24 @@ public class EnterpriseController(
             e => e.ToObjectResult());
     }
 
+    [Authorize(Roles = "superAdmin,admin")]
     [HttpPut("{id:guid}")]
     [ProducesOkApiResponseType<EnterpriseDto>]
     public async Task<IActionResult> UpdateEnterprise(
         [FromBody] UpdateEnterpriseDto request, [FromRoute] Guid id,
         CancellationToken cancellationToken)
     {
+        // Mirror the GetEnterprise tenant-scope rule. Handler also validates, but failing
+        // here saves a DB round-trip on a clear misuse.
+        if (!currentUserService.IsSuperAdmin())
+        {
+            var current = currentUserService.GetCurrentEnterpriseId();
+            if (current is null || current.Value != id)
+            {
+                return NotFound();
+            }
+        }
+
         var input = new UpdateEnterpriseCommand
         {
             Id = id,
@@ -114,6 +163,7 @@ public class EnterpriseController(
             e => e.ToObjectResult());
     }
 
+    [Authorize(Roles = "superAdmin")]
     [HttpDelete("{id:guid}")]
     [ProducesOkApiResponseType<EnterpriseDto>]
     public async Task<IActionResult> DeleteEnterprise(
@@ -131,6 +181,7 @@ public class EnterpriseController(
             e => e.ToObjectResult());
     }
 
+    [Authorize(Roles = "superAdmin")]
     [HttpPost("{id:guid}/restore")]
     [ProducesOkApiResponseType<EnterpriseDto>]
     public async Task<IActionResult> RestoreEnterprise(
@@ -145,6 +196,7 @@ public class EnterpriseController(
 
     // ─── SuperAdmin approval workflow ─────────────────────────────────────────────
 
+    [Authorize(Roles = "superAdmin")]
     [HttpGet("pending")]
     [ProducesOkApiResponseType<PageResult<EnterpriseDto>>]
     public async Task<IActionResult> GetPendingEnterprises(
@@ -163,6 +215,7 @@ public class EnterpriseController(
         });
     }
 
+    [Authorize(Roles = "superAdmin")]
     [HttpPost("{id:guid}/approve")]
     [ProducesOkApiResponseType<EnterpriseDto>]
     public async Task<IActionResult> ApproveEnterprise(
@@ -174,6 +227,7 @@ public class EnterpriseController(
             e => e.ToObjectResult());
     }
 
+    [Authorize(Roles = "superAdmin")]
     [HttpPost("{id:guid}/reject")]
     [ProducesOkApiResponseType<EnterpriseDto>]
     public async Task<IActionResult> RejectEnterprise(
