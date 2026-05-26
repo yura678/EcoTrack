@@ -23,6 +23,7 @@ internal class AdminAuditLogRepository(ApplicationDbContext context)
         DateTime? to,
         int page,
         int pageSize,
+        bool excludeSuperAdminActions,
         CancellationToken cancellationToken)
     {
         var query = TableNoTracking.AsQueryable();
@@ -33,6 +34,7 @@ internal class AdminAuditLogRepository(ApplicationDbContext context)
         if (actorUserId.HasValue) query = query.Where(x => x.ActorUserId == actorUserId.Value);
         if (from.HasValue) query = query.Where(x => x.OccurredAt >= from.Value);
         if (to.HasValue) query = query.Where(x => x.OccurredAt <= to.Value);
+        if (excludeSuperAdminActions) query = query.Where(x => x.ActorRole != "superAdmin");
 
         var total = await query.CountAsync(cancellationToken);
         var items = await query

@@ -1,9 +1,16 @@
-﻿
 namespace Application.Features.Users.Queries.GetUsers;
 
-public record GetUsersQueryResponse 
-{
-    public string UserName { get; set; }
-    public string Email { get; set; }
-    public Guid UserId { get; set; }
-}
+public record GetUsersQueryResponse(
+    Guid Id,
+    string Email,
+    string UserName,
+    string? Name,
+    string? FamilyName,
+    Guid? RoleId,
+    string? Role,
+    bool IsActive,
+    bool IsLocked,
+    bool EmailConfirmed,
+    DateTime? LastLoginAt,
+    Guid? EnterpriseId,
+    string? EnterpriseName);

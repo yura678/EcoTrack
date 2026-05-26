@@ -1,25 +1,17 @@
-﻿using Application.Common.Interfaces.Identity;
+using Application.Common.Interfaces.Queries;
 using MediatR;
 
 namespace Application.Features.Users.Queries.GetUsers;
 
-internal class GetUsersQueryHandler(
-    IAppUserManager userManager)
+internal class GetUsersQueryHandler(IUserEnterpriseMembershipQueries membershipQueries)
     : IRequestHandler<GetUsersQuery, List<GetUsersQueryResponse>>
 {
-    public async Task<List<GetUsersQueryResponse>> Handle(GetUsersQuery request,
+    public async Task<List<GetUsersQueryResponse>> Handle(
+        GetUsersQuery request,
         CancellationToken cancellationToken)
     {
-        var usersModel =
-            (await userManager.GetAllUsersAsync()).Select(u =>
-                new GetUsersQueryResponse
-                {
-                    UserName = u.UserName,
-                    UserId = u.Id,
-                    Email = u.Email
-                }).ToList();
-
-
-        return usersModel;
+        // superAdmin path — cross-tenant listing, no enterprise filter.
+        var rows = await membershipQueries.GetAdminListAsync(null, cancellationToken);
+        return rows.ToList();
     }
 }

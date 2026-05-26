@@ -10,6 +10,8 @@ public interface IAdminAuditLogRepository
     /// <summary>
     /// Paged listing newest-first. Filters compose with AND. Tenant isolation is enforced
     /// upstream via the DbContext query filter — callers don't need to pass an EnterpriseId.
+    /// `excludeSuperAdminActions` is decided by the controller from the caller's identity
+    /// (never by client query string) and hides superAdmin activity from tenant admins.
     /// </summary>
     Task<PageResult<AdminAuditLog>> GetPagedAsync(
         AuditAction? action,
@@ -20,5 +22,6 @@ public interface IAdminAuditLogRepository
         DateTime? to,
         int page,
         int pageSize,
+        bool excludeSuperAdminActions,
         CancellationToken cancellationToken);
 }

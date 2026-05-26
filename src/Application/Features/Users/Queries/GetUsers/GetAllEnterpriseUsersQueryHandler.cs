@@ -1,25 +1,25 @@
-﻿using Application.Common.Interfaces.Identity;
+using Application.Common.Interfaces.Identity;
+using Application.Common.Interfaces.Queries;
 using MediatR;
 
 namespace Application.Features.Users.Queries.GetUsers;
 
 internal class GetAllEnterpriseUsersQueryHandler(
-    IAppUserManager userManager)
+    ICurrentUserService currentUserService,
+    IUserEnterpriseMembershipQueries membershipQueries)
     : IRequestHandler<GetEnterpriseUsersQuery, List<GetUsersQueryResponse>>
 {
-    public async Task<List<GetUsersQueryResponse>> Handle(GetEnterpriseUsersQuery request,
+    public async Task<List<GetUsersQueryResponse>> Handle(
+        GetEnterpriseUsersQuery request,
         CancellationToken cancellationToken)
     {
-        var usersModel =
-            (await userManager.GetAllEnterpriseUsersAsync()).Select(u =>
-                new GetUsersQueryResponse
-                {
-                    UserName = u.UserName,
-                    UserId = u.Id,
-                    Email = u.Email
-                }).ToList();
+        var enterpriseId = currentUserService.GetCurrentEnterpriseId();
+        if (!enterpriseId.HasValue)
+        {
+            return [];
+        }
 
-
-        return usersModel;
+        var rows = await membershipQueries.GetAdminListAsync(enterpriseId.Value, cancellationToken);
+        return rows.ToList();
     }
 }
