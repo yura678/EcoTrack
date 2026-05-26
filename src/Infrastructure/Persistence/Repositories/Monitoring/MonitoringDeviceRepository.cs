@@ -23,6 +23,8 @@ internal class MonitoringDeviceRepository(ApplicationDbContext context)
         CancellationToken cancellationToken)
     {
         var query = base.TableNoTracking
+            .Include(x => x.Installation)
+            .Include(x => x.EmissionSource)
             .Where(x => x.InstallationId == installationId);
 
         var total = await query.CountAsync(cancellationToken);
@@ -46,6 +48,8 @@ internal class MonitoringDeviceRepository(ApplicationDbContext context)
         CancellationToken cancellationToken)
     {
         var entity = await base.TableNoTracking
+            .Include(x => x.Installation)
+            .Include(x => x.EmissionSource)
             .FirstOrDefaultAsync(x => x.Id == id, cancellationToken);
 
         return entity ?? Option<MonitoringDevice>.None;

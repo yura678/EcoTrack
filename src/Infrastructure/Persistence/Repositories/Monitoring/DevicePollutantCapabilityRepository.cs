@@ -16,6 +16,8 @@ internal class DevicePollutantCapabilityRepository(ApplicationDbContext context)
         CancellationToken cancellationToken)
     {
         var entity = await Table
+            .Include(x => x.Pollutant)
+            .Include(x => x.RangeUnit)
             .FirstOrDefaultAsync(x => x.Id == id, cancellationToken);
 
         return entity ?? Option<DevicePollutantCapability>.None;
@@ -36,6 +38,8 @@ internal class DevicePollutantCapabilityRepository(ApplicationDbContext context)
         Guid deviceId, CancellationToken cancellationToken)
     {
         return await TableNoTracking
+            .Include(x => x.Pollutant)
+            .Include(x => x.RangeUnit)
             .Where(x => x.DeviceId == deviceId)
             .ToListAsync(cancellationToken);
     }

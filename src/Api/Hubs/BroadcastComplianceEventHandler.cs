@@ -18,7 +18,9 @@ public class BroadcastComplianceEventHandler(
     IHubContext<ComplianceEventsHub> hub,
     ILogger<BroadcastComplianceEventHandler> logger)
     : INotificationHandler<ComplianceEventOpenedNotification>,
-      INotificationHandler<ComplianceEventClosedNotification>
+      INotificationHandler<ComplianceEventClosedNotification>,
+      INotificationHandler<ComplianceEventInvestigatingNotification>,
+      INotificationHandler<ComplianceEventReopenedNotification>
 {
     public Task Handle(ComplianceEventOpenedNotification notification, CancellationToken cancellationToken) =>
         BroadcastByIdAsync(notification.ComplianceEventId, ComplianceEventsHub.EventOpenedMethod, cancellationToken);
@@ -26,8 +28,16 @@ public class BroadcastComplianceEventHandler(
     public Task Handle(ComplianceEventClosedNotification notification, CancellationToken cancellationToken) =>
         BroadcastByIdAsync(notification.ComplianceEventId, ComplianceEventsHub.EventClosedMethod, cancellationToken);
 
+    public Task Handle(ComplianceEventInvestigatingNotification notification, CancellationToken cancellationToken) =>
+        BroadcastByIdAsync(notification.ComplianceEventId, ComplianceEventsHub.EventInvestigatingMethod, cancellationToken);
+
+    public Task Handle(ComplianceEventReopenedNotification notification, CancellationToken cancellationToken) =>
+        BroadcastByIdAsync(notification.ComplianceEventId, ComplianceEventsHub.EventReopenedMethod, cancellationToken);
+
     private async Task BroadcastByIdAsync(Guid eventId, string method, CancellationToken cancellationToken)
     {
+        logger.LogInformation(
+            "BroadcastByIdAsync: EventId={EventId} Method={Method}", eventId, method);
         var option = await queries.GetByIdAsync(eventId, cancellationToken);
         await option.Match(
             Some: ev => BroadcastAsync(ev, method, cancellationToken),
@@ -46,6 +56,9 @@ public class BroadcastComplianceEventHandler(
         try
         {
             var dto = ComplianceEventDto.FromDomainModel(ev);
+            logger.LogInformation(
+                "SignalR broadcast → group enterprise:{EnterpriseId} method={Method} eventId={EventId}",
+                ev.EnterpriseId, method, ev.Id);
             await hub.Clients
                 .Group(ComplianceEventsHub.GroupName(ev.EnterpriseId))
                 .SendAsync(method, dto, cancellationToken);
