@@ -3,6 +3,7 @@ using Application.Common.EmailTemplates;
 using Application.Common.Interfaces.Auditing;
 using Application.Common.Interfaces.Identity;
 using Application.Common.Interfaces.Persistence;
+using Application.Common.Settings;
 using Application.Features.Users.Exceptions;
 using Domain.Entities.Auditing;
 using Domain.Entities.User;
@@ -29,7 +30,8 @@ internal class ForcePasswordResetCommandHandler(
     IAppUserManager userManager,
     ICurrentUserService currentUserService,
     IEmailService emailService,
-    IAdminAuditService adminAudit)
+    IAdminAuditService adminAudit,
+    FrontendSettings frontendSettings)
     : IRequestHandler<ForcePasswordResetCommand, Either<UserException, bool>>
 {
     public async Task<Either<UserException, bool>> Handle(
@@ -60,7 +62,7 @@ internal class ForcePasswordResetCommandHandler(
 
                 var token = await userManager.GeneratePasswordResetTokenAsync(user);
                 var resetLink =
-                    $"https://ecotrack.com/reset-password?email={Uri.EscapeDataString(user.Email!)}" +
+                    $"{frontendSettings.BaseUrl}/reset-password?email={Uri.EscapeDataString(user.Email!)}" +
                     $"&token={Uri.EscapeDataString(token)}";
                 await emailService.SendEmailAsync(
                     toEmail: user.Email!,

@@ -7,7 +7,9 @@ using Shared.ValidationBase.Interfaces;
 
 namespace Application.Features.Users.Commands.RevokeMembership;
 
-public record RevokeMembershipCommand(Guid UserId)
+// EnterpriseId is optional: tenant admins leave it null and the handler derives it from
+// the JWT's CompanyId claim. SuperAdmin must pass it explicitly to target a tenant.
+public record RevokeMembershipCommand(Guid UserId, Guid? EnterpriseId = null)
     : IRequest<Either<UserException, bool>>, IValidatableModel<RevokeMembershipCommand>
 {
     public IValidator<RevokeMembershipCommand> ValidateApplicationModel(

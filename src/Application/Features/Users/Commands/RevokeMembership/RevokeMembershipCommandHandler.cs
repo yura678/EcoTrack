@@ -16,13 +16,19 @@ internal class RevokeMembershipCommandHandler(
     public async Task<Either<UserException, bool>> Handle(RevokeMembershipCommand request,
         CancellationToken cancellationToken)
     {
-        var enterpriseId = currentUserService.GetCurrentEnterpriseId();
+        // SuperAdmin acts cross-tenant via request.EnterpriseId; regular admin always uses
+        // the JWT's CompanyId claim. See ChangeMemberRoleCommandHandler for the same pattern
+        // and rationale (avoid letting tenant A's admin revoke memberships in tenant B).
+        var isSuperAdmin = currentUserService.IsSuperAdmin();
+        var enterpriseId = isSuperAdmin
+            ? request.EnterpriseId
+            : currentUserService.GetCurrentEnterpriseId();
         if (enterpriseId is null)
             return new EnterpriseNotFound(Guid.Empty);
 
         if (request.UserId == currentUserService.GetCurrentUserId())
             return new UserVerificationException(request.UserId,
-                "Admin cannot revoke their own membership; transfer admin rights first.");
+                "Admin cannot revoke their own membership; transfer admin rights first");
 
         var membershipOption = await unitOfWork.UserEnterpriseMembershipRepository
             .GetByUserAndEnterpriseAsync(request.UserId, enterpriseId.Value, cancellationToken);

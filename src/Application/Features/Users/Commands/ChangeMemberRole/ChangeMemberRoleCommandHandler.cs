@@ -17,7 +17,14 @@ internal class ChangeMemberRoleCommandHandler(
     public async Task<Either<UserException, bool>> Handle(ChangeMemberRoleCommand request,
         CancellationToken cancellationToken)
     {
-        var enterpriseId = currentUserService.GetCurrentEnterpriseId();
+        // SuperAdmin acts cross-tenant: they have no CompanyId claim and must pass
+        // request.EnterpriseId so the handler knows which membership row to touch. A regular
+        // admin's request.EnterpriseId is ignored — we always trust the JWT to avoid
+        // letting an admin in tenant A poke a user in tenant B by forging the body.
+        var isSuperAdmin = currentUserService.IsSuperAdmin();
+        var enterpriseId = isSuperAdmin
+            ? request.EnterpriseId
+            : currentUserService.GetCurrentEnterpriseId();
         if (enterpriseId is null)
             return new EnterpriseNotFound(Guid.Empty);
 

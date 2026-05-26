@@ -7,7 +7,10 @@ using Shared.ValidationBase.Interfaces;
 
 namespace Application.Features.Users.Commands.ChangeMemberRole;
 
-public record ChangeMemberRoleCommand(Guid UserId, Guid RoleId)
+// EnterpriseId is optional: tenant admins leave it null (handler derives it from the JWT's
+// CompanyId claim). SuperAdmin must pass it explicitly because their session has no
+// CompanyId — without it the handler can't tell which tenant the role change targets.
+public record ChangeMemberRoleCommand(Guid UserId, Guid RoleId, Guid? EnterpriseId = null)
     : IRequest<Either<UserException, bool>>, IValidatableModel<ChangeMemberRoleCommand>
 {
     public IValidator<ChangeMemberRoleCommand> ValidateApplicationModel(

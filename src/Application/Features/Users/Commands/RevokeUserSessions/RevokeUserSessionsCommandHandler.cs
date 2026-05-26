@@ -10,11 +10,12 @@ using MediatR;
 namespace Application.Features.Users.Commands.RevokeUserSessions;
 
 /// <summary>
-/// Admin-initiated "log out everywhere in MY tenant" for a target user. Reuses the per-tenant
-/// invalidation primitive built for membership revoke (commit 73b1ee5) — sessions in OTHER
-/// enterprises stay live, because an admin of A has no business kicking the user out of B.
-/// SuperAdmin is intentionally not given a "kill all sessions everywhere" path here; if that's
-/// ever needed it's a different endpoint with a stronger audit trail.
+/// Admin-initiated "log out everywhere in tenant X" for a target user. Tenant admin acts only
+/// within their own enterprise (CompanyId claim). SuperAdmin acts cross-tenant by passing
+/// request.EnterpriseId — they pick which tenant's sessions to kill, instead of a
+/// blanket "everywhere" so the audit row still anchors to a single enterprise.
+/// Sessions in other tenants always stay live: revoking from one tenant must not log the
+/// user out of unrelated tenants.
 /// </summary>
 internal class RevokeUserSessionsCommandHandler(
     IUnitOfWork unitOfWork,
@@ -26,7 +27,10 @@ internal class RevokeUserSessionsCommandHandler(
     public async Task<Either<UserException, bool>> Handle(
         RevokeUserSessionsCommand request, CancellationToken cancellationToken)
     {
-        var enterpriseId = currentUserService.GetCurrentEnterpriseId();
+        var isSuperAdmin = currentUserService.IsSuperAdmin();
+        var enterpriseId = isSuperAdmin
+            ? request.EnterpriseId
+            : currentUserService.GetCurrentEnterpriseId();
         if (enterpriseId is null)
             return new EnterpriseNotFound(Guid.Empty);
 
@@ -34,16 +38,12 @@ internal class RevokeUserSessionsCommandHandler(
         return await userOption.MatchAsync<User, Either<UserException, bool>>(
             Some: async user =>
             {
-                var isSuperAdmin = currentUserService.IsSuperAdmin();
-                if (!isSuperAdmin)
-                {
-                    var membershipOption = await unitOfWork.UserEnterpriseMembershipRepository
-                        .GetByUserAndEnterpriseAsync(user.Id, enterpriseId.Value, cancellationToken);
-                    var isMember = membershipOption.Match(
-                        Some: m => m.IsActive,
-                        None: () => false);
-                    if (!isMember) return new UserNotFoundException(request.UserId);
-                }
+                var membershipOption = await unitOfWork.UserEnterpriseMembershipRepository
+                    .GetByUserAndEnterpriseAsync(user.Id, enterpriseId.Value, cancellationToken);
+                var isMember = membershipOption.Match(
+                    Some: m => m.IsActive,
+                    None: () => false);
+                if (!isMember) return new UserNotFoundException(request.UserId);
 
                 await unitOfWork.UserRefreshTokenRepository
                     .InvalidateAllForUserAndEnterpriseAsync(

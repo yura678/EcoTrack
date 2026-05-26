@@ -25,5 +25,7 @@ public enum AuditAction
     /// <summary>SuperAdmin approved a pending self-service enterprise registration.</summary>
     EnterpriseApproved = 13,
     /// <summary>SuperAdmin rejected a pending self-service enterprise registration; Details carries the reason.</summary>
-    EnterpriseRejected = 14
+    EnterpriseRejected = 14,
+    /// <summary>Admin reinstated a previously-revoked membership; the row's RevokedAt is cleared and the user can log into the tenant again.</summary>
+    UserMembershipRestored = 15
 }
