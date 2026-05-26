@@ -9,6 +9,7 @@ using Domain.Entities.User;
 using Infrastructure.Persistence.Converters;
 using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 using Shared.Extensions;
 
 namespace Infrastructure.Persistence;
@@ -16,31 +17,53 @@ namespace Infrastructure.Persistence;
 public class ApplicationDbContext
     : IdentityDbContext<User, Role, Guid, UserClaim, UserRole, UserLogin, RoleClaim, UserToken>
 {
-    public ApplicationDbContext(DbContextOptions options, ICurrentUserService currentUserService)
+    private readonly ICurrentUserService _currentUserService;
+
+    public ApplicationDbContext(
+        DbContextOptions options,
+        ICurrentUserService currentUserService,
+        ILogger<ApplicationDbContext>? logger = null)
         : base(options)
     {
-        var userId = currentUserService.GetCurrentUserId();
-        // Bypass tenant isolation for system operations (no HttpContext) and superAdmin
-        BypassTenantFilter = userId is null || currentUserService.IsSuperAdmin();
-        TenantFilterId = BypassTenantFilter ? null : currentUserService.GetCurrentEnterpriseId();
-        CurrentUserFilterId = BypassTenantFilter ? null : userId;
+        _currentUserService = currentUserService;
+
+        // Diagnostic-only ctor log. The *real* tenant-filter values are computed on every
+        // property read (see BypassTenantFilter/TenantFilterId below) because ctor runs
+        // during JwtBearer security-stamp lookup, before HttpContext.User is populated —
+        // caching them here would lock the whole request into bypass mode.
+        logger?.LogInformation(
+            "DbContext init (snapshot, values may flip once auth completes): UserId={UserId} IsSuperAdmin={IsSuperAdmin}",
+            currentUserService.GetCurrentUserId(), currentUserService.IsSuperAdmin());
     }
 
     /// <summary>
     /// When true, global query filters skip tenant-id matching.
     /// True for: superAdmin users, system operations (no HttpContext: seed, background jobs, design-time).
+    /// <para>
+    /// Implemented as a computed property (not a ctor-captured field) because
+    /// <see cref="ApplicationDbContext"/> is resolved during JwtBearer authentication for
+    /// security-stamp lookup, BEFORE <c>HttpContext.User</c> is populated. Capturing in the
+    /// ctor would make every subsequent query in the same scope think the user is
+    /// anonymous, bypassing the tenant filter for the entire request. EF Core re-reads
+    /// instance members at query time (visible in SQL as
+    /// <c>@__ef_filter__BypassTenantFilter_1</c> parameter), so the getter gives a fresh
+    /// answer per query.
+    /// </para>
     /// </summary>
-    public bool BypassTenantFilter { get; }
+    public bool BypassTenantFilter =>
+        _currentUserService.GetCurrentUserId() is null || _currentUserService.IsSuperAdmin();
 
     /// <summary>
     /// The EnterpriseId used by global query filters when <see cref="BypassTenantFilter"/> is false.
     /// </summary>
-    public Guid? TenantFilterId { get; }
+    public Guid? TenantFilterId =>
+        BypassTenantFilter ? null : _currentUserService.GetCurrentEnterpriseId();
 
     /// <summary>
     /// The UserId used by user-scoped query filters when <see cref="BypassTenantFilter"/> is false.
     /// </summary>
-    public Guid? CurrentUserFilterId { get; }
+    public Guid? CurrentUserFilterId =>
+        BypassTenantFilter ? null : _currentUserService.GetCurrentUserId();
 
     protected override void ConfigureConventions(ModelConfigurationBuilder configurationBuilder)
     {
