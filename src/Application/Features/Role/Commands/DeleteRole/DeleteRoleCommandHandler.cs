@@ -22,9 +22,8 @@ internal class DeleteRoleCommandHandler(
         if (!authorized)
             return new RoleNotFoundException(Guid.Empty, request.RoleId);
 
-        var deleted = await roleManagerService.DeleteRoleAsync(request.RoleId);
-        return deleted
-            ? true
-            : new UnhandledRoleException(request.RoleId);
+        // DeleteRoleAsync surfaces RoleNotFoundException / RoleInUseException directly so the
+        // controller can map them to 404 / 409. Anything else bubbles as UnhandledRoleException.
+        return await roleManagerService.DeleteRoleAsync(request.RoleId);
     }
 }

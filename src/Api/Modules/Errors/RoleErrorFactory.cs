@@ -14,6 +14,8 @@ public static class RoleErrorFactory
             RoleCreationException => StatusCodes.Status400BadRequest,
             RoleClaimsUpdateException => StatusCodes.Status400BadRequest,
 
+            RoleInUseException => StatusCodes.Status409Conflict,
+
             UnhandledRoleException => StatusCodes.Status500InternalServerError,
 
             _ => throw new NotImplementedException(

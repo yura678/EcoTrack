@@ -1,7 +1,9 @@
 ﻿using System.ComponentModel.DataAnnotations;
 using System.Reflection;
 using Application.Common.Interfaces.Identity;
+using Application.Features.Role.Exceptions;
 using Application.Models.Identity;
+using Domain.Entities.Enterprises;
 using Domain.Entities.User;
 using Infrastructure.Identity.Manager;
 using Infrastructure.Persistence;
@@ -48,7 +50,8 @@ internal class RoleManagerService : IRoleManagerService
     public async Task<List<GetRolesDto>> GetRolesAsync()
     {
         var result = await _roleManger.Roles
-            .Select(r => new GetRolesDto { Id = r.Id.ToString(), Name = r.Name! , EnterpirseId = r.EnterpriseId}).ToListAsync();
+            .Select(r => new GetRolesDto { Id = r.Id.ToString(), Name = r.Name!, EnterpriseId = r.EnterpriseId })
+            .ToListAsync();
 
         return result;
     }
@@ -57,7 +60,7 @@ internal class RoleManagerService : IRoleManagerService
     {
         var result = await _roleManger.Roles
             .Where(c => c.EnterpriseId == enterpriseId)
-            .Select(r => new GetRolesDto { Id = r.Id.ToString(), Name = r.Name! })
+            .Select(r => new GetRolesDto { Id = r.Id.ToString(), Name = r.Name!, EnterpriseId = r.EnterpriseId })
             .ToListAsync();
 
         return result;
@@ -118,18 +121,37 @@ internal class RoleManagerService : IRoleManagerService
         await _db.SaveChangesAsync();
     }
 
-    public async Task<bool> DeleteRoleAsync(Guid roleId)
+    public async Task<Either<RoleException, bool>> DeleteRoleAsync(Guid roleId)
     {
         var role = await _roleManger.Roles.Include(r => r.Claims)
             .FirstOrDefaultAsync(r => r.Id == roleId);
 
-        if (role == null)
-            return false;
+        if (role == null || string.IsNullOrEmpty(role.Name))
+            return new RoleNotFoundException(Guid.Empty, roleId);
 
-        if (string.IsNullOrEmpty(role.Name))
-            return false;
+        // FK constraints on user_enterprise_membership.role_id and enterprise_invitations.role_id
+        // are configured OnDelete=Restrict, so any reference crashes SaveChanges with PG 23503.
+        // Pre-check explicitly and surface a 409 with counts so the operator can see what blocks
+        // the delete. IgnoreQueryFilters because a role may be referenced from a tenant outside
+        // the current scope (SuperAdmin acting on a tenant role).
+        var activeMemberships = await _db.Set<UserEnterpriseMembership>()
+            .IgnoreQueryFilters()
+            .CountAsync(m => m.RoleId == roleId && m.RevokedAt == null);
+        var historicalMemberships = await _db.Set<UserEnterpriseMembership>()
+            .IgnoreQueryFilters()
+            .CountAsync(m => m.RoleId == roleId && m.RevokedAt != null);
+        var pendingInvitations = await _db.Set<EnterpriseInvitation>()
+            .IgnoreQueryFilters()
+            .CountAsync(i => i.RoleId == roleId && !i.IsUsed && i.ExpiresAt > DateTime.UtcNow);
 
-        // Bump security stamp on all users assigned this role so their JWTs become invalid.
+        if (activeMemberships > 0 || historicalMemberships > 0 || pendingInvitations > 0)
+        {
+            return new RoleInUseException(
+                roleId, activeMemberships, historicalMemberships, pendingInvitations);
+        }
+
+        // Defensive: even though the pre-check ruled out active memberships, bump SecurityStamp
+        // for any race-window inserts. The list is normally empty.
         var affectedUserIds = await _db.Set<UserEnterpriseMembership>()
             .Where(m => m.RoleId == roleId && m.RevokedAt == null)
             .Select(m => m.UserId)
@@ -273,6 +295,12 @@ internal class RoleManagerService : IRoleManagerService
                     await _userManager.UpdateSecurityStampAsync(user);
             }
 
+            // Commit the SecurityStamp bumps from the loop above. AppUserStore.AutoSaveChanges
+            // is false (Phase A), so UpdateSecurityStampAsync only stages the new stamp on the
+            // tracked user; without this flush the stamps never reach the database and every
+            // affected user keeps cruising with their old JWT until natural TTL expiry.
+            await _db.SaveChangesAsync();
+
             return true;
         }
 
@@ -287,5 +315,16 @@ internal class RoleManagerService : IRoleManagerService
     public async Task<Option<Role>> GetRoleByNameAsync(string name)
     {
         return await _roleManger.FindByNameAsync(name);
+    }
+
+    public async Task<IReadOnlyList<string>> GetDynamicPermissionClaimsByRoleIdAsync(Guid roleId)
+    {
+        var claims = await _roleManger.Roles
+            .Where(r => r.Id == roleId)
+            .SelectMany(r => r.Claims)
+            .Where(c => c.ClaimType == ConstantPolicies.DynamicPermission && c.ClaimValue != null)
+            .Select(c => c.ClaimValue!)
+            .ToListAsync();
+        return claims;
     }
 }

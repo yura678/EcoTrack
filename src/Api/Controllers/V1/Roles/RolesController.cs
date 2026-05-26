@@ -6,6 +6,7 @@ using Application.Features.Role.Commands.DeleteRole;
 using Application.Features.Role.Commands.UpdateRoleClaimsCommand;
 using Application.Features.Role.Queries.GetAllRolesQuery;
 using Application.Features.Role.Queries.GetAuthorizableRoutesQuery;
+using Application.Features.Role.Queries.GetRolePermissionsQuery;
 using Asp.Versioning;
 using MediatR;
 using Microsoft.AspNetCore.Authorization;
@@ -52,6 +53,17 @@ public class RolesController(ISender sender) : BaseController
     {
         var result = await sender.Send(model);
         return result.Match<ActionResult>(
+            response => Ok(response),
+            error => error.ToObjectResult());
+    }
+
+    [Authorize(Roles = "superAdmin,admin")]
+    [HttpGet("{roleId:guid}/permissions")]
+    [ProducesOkApiResponseType<IReadOnlyList<string>>]
+    public async Task<IActionResult> GetRolePermissions([FromRoute] Guid roleId)
+    {
+        var result = await sender.Send(new GetRolePermissionsQuery(roleId));
+        return result.Match(
             response => Ok(response),
             error => error.ToObjectResult());
     }

@@ -1,3 +1,4 @@
-﻿namespace Application.Features.Role.Queries.GetAllRolesQuery;
+namespace Application.Features.Role.Queries.GetAllRolesQuery;
 
-public record GetAllEnterpriseRolesQueryResponse(Guid RoleId, string RoleName);
+public record GetAllEnterpriseRolesQueryResponse(
+    Guid Id, string Name, Guid? EnterpriseId, string? EnterpriseName, bool IsSystem);
