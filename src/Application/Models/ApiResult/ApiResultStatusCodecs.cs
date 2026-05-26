@@ -15,6 +15,9 @@ public enum ApiResultStatusCode
 
     [Display(Name = "Not Found")]
     NotFound = 404,
+
+    [Display(Name = "Conflict")]
+    Conflict = 409,
     
     [Display(Name = "Request Process Error")]
     EntityProcessError = 422,

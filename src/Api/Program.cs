@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Text.Json.Serialization;
 using System.Threading.RateLimiting;
 using Api.Hubs;
 using Api.Modules;
@@ -33,7 +34,14 @@ builder.Services.SetupServices(configuration)
 
 builder.Services.RegisterValidatorsAsServices();
 builder.Services.AddMemoryCache();
-builder.Services.AddSignalR();
+// SignalR's JSON protocol is configured independently of the MVC pipeline's AddJsonOptions;
+// without an explicit StringEnumConverter the broadcast payload serializes
+// ComplianceEventType / Status enums as integers (e.g. "Event closed: 2"). Mirror the MVC
+// setup so the hub speaks the same JSON dialect the SPA expects from REST.
+builder.Services.AddSignalR().AddJsonProtocol(options =>
+{
+    options.PayloadSerializerOptions.Converters.Add(new JsonStringEnumConverter());
+});
 
 builder.Services.AddRateLimiter(options =>
 {

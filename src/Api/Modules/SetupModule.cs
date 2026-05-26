@@ -1,4 +1,5 @@
-﻿using Api.Filters;
+﻿using System.Text.Json.Serialization;
+using Api.Filters;
 using Application.Common.Settings;
 using Application.Models.ApiResult;
 using FluentValidation;
@@ -28,6 +29,12 @@ public static class SetupModule
                 StatusCodes.Status403Forbidden));
             options.Filters.Add(new ProducesResponseTypeAttribute(typeof(ApiResult),
                 StatusCodes.Status500InternalServerError));
+        }).AddJsonOptions(options =>
+        {
+            // Serialize enums as their string names instead of integers — the SPA's typed
+            // unions ('Open'|'Closed'|...) rely on this, and number-encoded enums silently
+            // mismatch frontend expectations (badges show "0" instead of "Open" etc.).
+            options.JsonSerializerOptions.Converters.Add(new JsonStringEnumConverter());
         }).ConfigureApiBehaviorOptions(options =>
         {
             options.SuppressModelStateInvalidFilter = true;
@@ -36,6 +43,7 @@ public static class SetupModule
         services.AddCors(configuration);
         services.AddApplicationSettings(configuration);
         services.AddAdminSettings(configuration);
+        services.AddFrontendSettings(configuration);
 
         return services;
     }
@@ -44,6 +52,12 @@ public static class SetupModule
     {
         var adminSettings = configuration.GetSection("Admin").Get<AdminSettings>() ?? new AdminSettings();
         services.AddSingleton(adminSettings);
+    }
+
+    private static void AddFrontendSettings(this IServiceCollection services, IConfiguration configuration)
+    {
+        var frontendSettings = configuration.GetSection("Frontend").Get<FrontendSettings>() ?? new FrontendSettings();
+        services.AddSingleton(frontendSettings);
     }
 
     private static void AddCors(this IServiceCollection services, IConfiguration configuration)
