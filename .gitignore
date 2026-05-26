@@ -7,6 +7,9 @@ src/Api/logs/
 **/logs/*.json
 appsettings.Local.json
 
+# Simulator runtime config (contains plaintext device secrets)
+tools/Simulator/simulator.config.json
+
 # IDE / editor user-specific files
 .idea/
 .vs/

@@ -1,0 +1,34 @@
+{
+  // Cross-platform sample config. Run `dotnet run --project tools/Simulator -- bootstrap`
+  // to generate a real `simulator.config.json` with rotated secrets and seeded ids.
+  "apiBaseUrl": "http://localhost:5269",
+  "intervalSeconds": 10,
+  "includeOfflineDevices": false,
+  "devices": [
+    {
+      "serial": "SN-XXXXXXXX",
+      "ingestionSecret": "<base64 secret returned by /rotate-ingestion-secret>",
+      "enterpriseId": "00000000-0000-0000-0000-000000000000",
+      "emissionSourceId": "00000000-0000-0000-0000-000000000000",
+      "pollutants": [
+        {
+          "pollutantId": "00000000-0000-0000-0000-000000000000",
+          "code": "CO",
+          "unitId": "00000000-0000-0000-0000-000000000000",
+          "mean": 50,
+          "stdev": 12,
+          "rangeMin": 0,
+          "rangeMax": 200
+        }
+      ],
+      "parameters": [
+        {
+          "type": "VolumetricFlow",
+          "unitId": "00000000-0000-0000-0000-000000000000",
+          "mean": 1200,
+          "stdev": 200
+        }
+      ]
+    }
+  ]
+}
