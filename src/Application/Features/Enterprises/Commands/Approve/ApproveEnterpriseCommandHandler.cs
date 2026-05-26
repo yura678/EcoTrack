@@ -40,12 +40,10 @@ internal class ApproveEnterpriseCommandHandler(
         if (enterprise is null)
             return new EnterpriseNotFoundException(request.EnterpriseId);
 
+        // Idempotent: already-Active enterprise needs no audit row or notification email.
+        // Returning success keeps the UI's optimistic mutation happy.
         if (enterprise.Status == EnterpriseStatus.Active)
-            return new EnterpriseAlreadyActiveException(request.EnterpriseId);
-
-        if (enterprise.Status != EnterpriseStatus.Pending)
-            return new EnterpriseInvalidStateForApprovalException(
-                request.EnterpriseId, enterprise.Status.ToString());
+            return enterprise;
 
         try
         {

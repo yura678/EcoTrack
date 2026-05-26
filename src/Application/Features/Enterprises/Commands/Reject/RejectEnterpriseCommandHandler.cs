@@ -38,10 +38,6 @@ internal class RejectEnterpriseCommandHandler(
         if (enterprise is null)
             return new EnterpriseNotFoundException(request.EnterpriseId);
 
-        if (enterprise.Status == EnterpriseStatus.Active)
-            return new EnterpriseInvalidStateForRejectionException(
-                request.EnterpriseId, enterprise.Status.ToString());
-
         try
         {
             enterprise.Reject(actorId.Value, request.Reason);

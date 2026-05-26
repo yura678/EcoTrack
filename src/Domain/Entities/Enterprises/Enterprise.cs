@@ -89,9 +89,6 @@ public class Enterprise : BaseEntity, ISoftDeletable
     public void Approve(Guid decisionByUserId)
     {
         if (Status == EnterpriseStatus.Active) return;
-        if (Status == EnterpriseStatus.Rejected)
-            throw new InvalidOperationException(
-                "Rejected enterprise cannot be approved; re-register or restore manually.");
         Status = EnterpriseStatus.Active;
         ApprovalDecisionAt = DateTime.UtcNow;
         ApprovalDecisionByUserId = decisionByUserId;
@@ -100,9 +97,6 @@ public class Enterprise : BaseEntity, ISoftDeletable
 
     public void Reject(Guid decisionByUserId, string reason)
     {
-        if (Status == EnterpriseStatus.Active)
-            throw new InvalidOperationException(
-                "Active enterprise cannot be rejected; use Suspend instead.");
         if (string.IsNullOrWhiteSpace(reason))
             throw new ArgumentException("Rejection reason is required.", nameof(reason));
         Status = EnterpriseStatus.Rejected;
