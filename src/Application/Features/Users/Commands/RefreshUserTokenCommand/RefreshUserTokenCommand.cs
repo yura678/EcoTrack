@@ -1,5 +1,5 @@
 ﻿using Application.Features.Users.Exceptions;
-using Application.Models.Jwt;
+using Application.Models.Auth;
 using FluentValidation;
 using LanguageExt;
 using MediatR;
@@ -8,7 +8,7 @@ using Shared.ValidationBase.Interfaces;
 
 namespace Application.Features.Users.Commands.RefreshUserTokenCommand;
 
-public record RefreshUserTokenCommand(Guid RefreshToken) : IRequest<Either<UserException, AccessToken>>,
+public record RefreshUserTokenCommand(Guid RefreshToken) : IRequest<Either<UserException, AuthSession>>,
     IValidatableModel<RefreshUserTokenCommand>
 {
     public IValidator<RefreshUserTokenCommand> ValidateApplicationModel(

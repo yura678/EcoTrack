@@ -1,5 +1,5 @@
 using Application.Features.Users.Exceptions;
-using Application.Models.Jwt;
+using Application.Models.Auth;
 using FluentValidation;
 using LanguageExt;
 using MediatR;
@@ -9,7 +9,7 @@ using Shared.ValidationBase.Interfaces;
 namespace Application.Features.Auth.Queries.LoginByCode;
 
 public record LoginByCodeQuery(string Email, string Code)
-    : IRequest<Either<UserException, AccessToken>>, IValidatableModel<LoginByCodeQuery>
+    : IRequest<Either<UserException, AuthSession>>, IValidatableModel<LoginByCodeQuery>
 {
     public IValidator<LoginByCodeQuery> ValidateApplicationModel(
         ApplicationBaseValidationModelProvider<LoginByCodeQuery> validator)

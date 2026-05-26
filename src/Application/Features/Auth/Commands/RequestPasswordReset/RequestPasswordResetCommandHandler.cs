@@ -1,6 +1,7 @@
 using Application.Common.EmailTemplates;
 using Application.Common.Interfaces.Identity;
 using Application.Common.Interfaces.Persistence;
+using Application.Common.Settings;
 using MediatR;
 using Microsoft.Extensions.Logging;
 
@@ -17,6 +18,7 @@ internal class RequestPasswordResetCommandHandler(
     IAppUserManager userManager,
     IEmailService emailService,
     IUnitOfWork unitOfWork,
+    FrontendSettings frontendSettings,
     ILogger<RequestPasswordResetCommandHandler> logger)
     : IRequestHandler<RequestPasswordResetCommand, Unit>
 {
@@ -40,7 +42,7 @@ internal class RequestPasswordResetCommandHandler(
 
                 var token = await userManager.GeneratePasswordResetTokenAsync(user);
                 var resetLink =
-                    $"https://ecotrack.com/reset-password?email={Uri.EscapeDataString(user.Email!)}" +
+                    $"{frontendSettings.BaseUrl}/reset-password?email={Uri.EscapeDataString(user.Email!)}" +
                     $"&token={Uri.EscapeDataString(token)}";
                 await emailService.SendEmailAsync(
                     toEmail: user.Email!,

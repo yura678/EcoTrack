@@ -35,7 +35,7 @@ public class JwtService : IJwtService
         _unitOfWork = unitOfWork;
     }
 
-    public async Task<AccessToken> GenerateAsync(User user, Guid? enterpriseId, CancellationToken cancellationToken)
+    public async Task<TokenIssueResult> GenerateAsync(User user, Guid? enterpriseId, CancellationToken cancellationToken)
     {
         var secretKey = Encoding.UTF8.GetBytes(_siteSetting.SecretKey);
         var signingCredentials =
@@ -115,7 +115,9 @@ public class JwtService : IJwtService
             user.Id, resolvedEnterpriseId, refreshExpires, cancellationToken);
         await _unitOfWork.SaveChangesAsync(cancellationToken);
 
-        return new AccessToken(securityToken, refreshToken.ToString());
+        return new TokenIssueResult(
+            new AccessToken(securityToken, refreshToken.ToString()),
+            resolvedEnterpriseId);
     }
 
     public Task<ClaimsPrincipal> GetPrincipalFromExpiredToken(string token)
@@ -141,7 +143,7 @@ public class JwtService : IJwtService
         return Task.FromResult(principal);
     }
 
-    public async Task<AccessToken> GenerateByPhoneNumberAsync(string phoneNumber, CancellationToken cancellationToken)
+    public async Task<TokenIssueResult> GenerateByPhoneNumberAsync(string phoneNumber, CancellationToken cancellationToken)
     {
         var user = await _userManager.Users.AsNoTracking()
             .FirstOrDefaultAsync(u => u.PhoneNumber == phoneNumber, cancellationToken);
@@ -149,11 +151,11 @@ public class JwtService : IJwtService
         return result;
     }
 
-    public async Task<Option<AccessToken>> RefreshToken(Guid refreshTokenId, CancellationToken cancellationToken)
+    public async Task<Option<(TokenIssueResult Issued, User User)>> RefreshToken(Guid refreshTokenId, CancellationToken cancellationToken)
     {
         var refreshTokenOption = await _unitOfWork.UserRefreshTokenRepository.GetTokenWithInvalidation(refreshTokenId);
 
-        return await refreshTokenOption.MatchAsync<UserRefreshToken, Option<AccessToken>>(
+        return await refreshTokenOption.MatchAsync<UserRefreshToken, Option<(TokenIssueResult, User)>>(
             Some: async refreshToken =>
             {
                 refreshToken.IsValid = false;
@@ -161,16 +163,16 @@ public class JwtService : IJwtService
 
                 var userOption = await _unitOfWork.UserRefreshTokenRepository.GetUserByRefreshToken(refreshTokenId);
 
-                return await userOption.MatchAsync<User, Option<AccessToken>>(
+                return await userOption.MatchAsync<User, Option<(TokenIssueResult, User)>>(
                     Some: async unpackedUser =>
                     {
                         var result = await this.GenerateAsync(unpackedUser, refreshToken.EnterpriseId, cancellationToken);
-                        return Option<AccessToken>.Some(result);
+                        return Option<(TokenIssueResult, User)>.Some((result, unpackedUser));
                     },
-                    None: () => Option<AccessToken>.None
+                    None: () => Option<(TokenIssueResult, User)>.None
                 );
             },
-            None: () => Option<AccessToken>.None
+            None: () => Option<(TokenIssueResult, User)>.None
         );
     }
 

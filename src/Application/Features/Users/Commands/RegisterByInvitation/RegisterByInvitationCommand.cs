@@ -1,4 +1,4 @@
-﻿using Application.Features.Users.Commands.Create;
+using Application.Features.Users.Commands.Create;
 using Application.Features.Users.Exceptions;
 using FluentValidation;
 using LanguageExt;
@@ -11,12 +11,10 @@ namespace Application.Features.Users.Commands.RegisterByInvitation;
 
 public record RegisterByInvitationCommand(
     string Token,
-    string UserName,
     string Name,
     string FamilyName,
     string Email,
-    string Password,
-    string RepeatPassword)
+    string Password)
     : IRequest<Either<UserException, UserCreateCommandResult>>
         , IValidatableModel<RegisterByInvitationCommand>
 {
@@ -28,11 +26,6 @@ public record RegisterByInvitationCommand(
             .NotEmpty()
             .NotNull()
             .WithMessage("User must have first name");
-
-        validator.RuleFor(c => c.UserName)
-            .NotEmpty()
-            .NotNull()
-            .WithMessage("Please enter your username");
 
         validator
             .RuleFor(c => c.FamilyName)
@@ -48,8 +41,7 @@ public record RegisterByInvitationCommand(
 
         validator.RuleFor(c => c.Password)
             .NotEmpty()
-            .Equal(c => c.RepeatPassword)
-            .WithMessage("Passwords do not match");
+            .MinimumLength(8).WithMessage("Password must be at least 8 characters");
 
         return validator;
     }

@@ -1,8 +1,6 @@
 using Application.Common.Interfaces.Identity;
 using Application.Common.Interfaces.Persistence;
-using Application.Common.Interfaces.Queries;
 using Application.Features.Users.Exceptions;
-using Application.Models.Auth;
 using Application.Models.Profile;
 using Domain.Entities.User;
 using LanguageExt;
@@ -18,7 +16,7 @@ namespace Application.Features.Profile.Commands.UpdateMyProfile;
 internal class UpdateMyProfileCommandHandler(
     ICurrentUserService currentUserService,
     IAppUserManager userManager,
-    IUserEnterpriseMembershipQueries membershipQueries,
+    IUserProfileBuilder profileBuilder,
     IUnitOfWork unitOfWork)
     : IRequestHandler<UpdateMyProfileCommand, Either<UserException, MyProfileInfo>>
 {
@@ -39,23 +37,8 @@ internal class UpdateMyProfileCommandHandler(
                 // AppUserStore. Today the Identity store auto-saves so this is a no-op.
                 await unitOfWork.SaveChangesAsync(cancellationToken);
 
-                var memberships = await membershipQueries
-                    .GetByUserIdWithRoleAndEnterpriseAsync(user.Id, cancellationToken);
-                var membershipInfo = memberships.Select(m => new MembershipInfo(
-                    m.EnterpriseId,
-                    m.Enterprise?.Name ?? string.Empty,
-                    m.RoleId,
-                    m.Role?.Name ?? string.Empty,
-                    m.Role?.DisplayName,
-                    m.JoinedAt)).ToList();
-
-                return new MyProfileInfo(
-                    UserId: user.Id,
-                    Email: user.Email ?? string.Empty,
-                    EmailConfirmed: user.EmailConfirmed,
-                    Name: user.Name,
-                    FamilyName: user.FamilyName,
-                    Memberships: membershipInfo);
+                var activeEnterpriseId = currentUserService.GetCurrentEnterpriseId();
+                return await profileBuilder.BuildAsync(user, activeEnterpriseId, cancellationToken);
             },
             None: () => new UserNotFoundException(userId.Value));
     }

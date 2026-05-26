@@ -4,6 +4,7 @@ using Application.Common.Interfaces;
 using Application.Common.Interfaces.Identity;
 using Application.Models.ApiResult;
 using Domain.Entities.User;
+using Infrastructure.Identity;
 using Infrastructure.Identity.Dtos;
 using Infrastructure.Identity.Extensions;
 using Infrastructure.Identity.Jwt;
@@ -48,6 +49,7 @@ public static class ServiceCollectionExtension
         services.AddScoped<IUserStore<User>, AppUserStore>();
         services.AddScoped<IRoleManagerService, RoleManagerService>();
         services.AddScoped<ICurrentUserService, CurrentUserService>();
+        services.AddScoped<IUserProfileBuilder, UserProfileBuilder>();
         services.AddScoped<IEnterpriseAccessGate, EnterpriseAccessGate>();
 
         services.AddIdentity<User, Role>(options =>

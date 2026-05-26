@@ -55,17 +55,13 @@ internal class RegisterByInvitationCommandHandler(
                 if (roleOption.IsNone)
                     return new UserRoleNotFoundException(Guid.Empty, i.RoleId);
 
-                var userNameExist = await userManager.IsExistUserName(request.UserName);
-                if (userNameExist)
-                    return new UserNameAlreadyExistsException(Guid.Empty);
-
                 var emailExist = await userManager.IsExistEmail(request.Email);
                 if (emailExist)
                     return new EmailAlreadyExistsException(Guid.Empty);
 
                 var user = new User
                 {
-                    UserName = request.UserName,
+                    UserName = request.Email,
                     Name = request.Name,
                     FamilyName = request.FamilyName,
                     Email = request.Email,

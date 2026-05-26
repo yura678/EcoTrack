@@ -17,7 +17,6 @@ using Application.Features.Users.Commands.RegisterByInvitation;
 using Application.Features.Users.Commands.RegisterEnterpriseAdmin;
 using Application.Features.Users.Commands.RequestLogout;
 using Application.Models.Auth;
-using Application.Models.Jwt;
 using Asp.Versioning;
 using MediatR;
 using Microsoft.AspNetCore.Authentication;
@@ -125,7 +124,7 @@ public class AuthController(ISender sender) : BaseController
 
     [HttpPost("login/verify-code")]
     [EnableRateLimiting("auth")]
-    [ProducesOkApiResponseType<AccessToken>]
+    [ProducesOkApiResponseType<AuthSession>]
     public async Task<IActionResult> LoginByCode(LoginByCodeQuery model)
     {
         var result = await sender.Send(model);
@@ -138,7 +137,7 @@ public class AuthController(ISender sender) : BaseController
 
     [HttpPost("login/password")]
     [EnableRateLimiting("auth")]
-    [ProducesOkApiResponseType<AccessToken>]
+    [ProducesOkApiResponseType<AuthSession>]
     public async Task<IActionResult> LoginByPassword(LoginByPasswordQuery model)
     {
         var result = await sender.Send(model);
@@ -152,7 +151,7 @@ public class AuthController(ISender sender) : BaseController
     [HttpPost("refresh")]
     [EnableRateLimiting("auth")]
     [RequireTokenWithoutAuthorization]
-    [ProducesOkApiResponseType<AccessToken>]
+    [ProducesOkApiResponseType<AuthSession>]
     public async Task<IActionResult> Refresh(RefreshUserTokenCommand model)
     {
         var currentTokenValid = await HttpContext.AuthenticateAsync(JwtBearerDefaults.AuthenticationScheme);
@@ -189,7 +188,7 @@ public class AuthController(ISender sender) : BaseController
 
     [HttpPost("switch-enterprise/{enterpriseId:guid}")]
     [Authorize]
-    [ProducesOkApiResponseType<AccessToken>]
+    [ProducesOkApiResponseType<AuthSession>]
     public async Task<IActionResult> SwitchEnterprise(
         [FromRoute] Guid enterpriseId,
         CancellationToken cancellationToken)

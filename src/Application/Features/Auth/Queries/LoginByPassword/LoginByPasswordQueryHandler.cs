@@ -2,7 +2,7 @@ using Application.Common.Interfaces;
 using Application.Common.Interfaces.Identity;
 using Application.Common.Interfaces.Persistence;
 using Application.Features.Users.Exceptions;
-using Application.Models.Jwt;
+using Application.Models.Auth;
 using Domain.Entities.User;
 using LanguageExt;
 using MediatR;
@@ -13,18 +13,19 @@ namespace Application.Features.Auth.Queries.LoginByPassword;
 internal class LoginByPasswordQueryHandler(
     IAppUserManager userManager,
     IJwtService jwtService,
+    IUserProfileBuilder profileBuilder,
     ILoginAttemptRecorder loginRecorder,
     IEnterpriseAccessGate enterpriseAccessGate,
     IUnitOfWork unitOfWork,
     ILogger<LoginByPasswordQueryHandler> logger)
-    : IRequestHandler<LoginByPasswordQuery, Either<UserException, AccessToken>>
+    : IRequestHandler<LoginByPasswordQuery, Either<UserException, AuthSession>>
 {
-    public async Task<Either<UserException, AccessToken>> Handle(LoginByPasswordQuery request,
+    public async Task<Either<UserException, AuthSession>> Handle(LoginByPasswordQuery request,
         CancellationToken cancellationToken)
     {
         var userOption = await userManager.GetUserByEmail(request.Email);
 
-        return await userOption.MatchAsync<User, Either<UserException, AccessToken>>(
+        return await userOption.MatchAsync<User, Either<UserException, AuthSession>>(
             Some: async u =>
             {
                 if (await userManager.IsUserLockedOutAsync(u))
@@ -75,7 +76,9 @@ internal class LoginByPasswordQueryHandler(
                 // One save commits the cleared lockout/access-failed counters on the User row
                 // alongside the success LoginAttempt audit row.
                 await unitOfWork.SaveChangesAsync(cancellationToken);
-                return await jwtService.GenerateAsync(u, null, cancellationToken);
+                var issued = await jwtService.GenerateAsync(u, null, cancellationToken);
+                var profile = await profileBuilder.BuildAsync(u, issued.ResolvedEnterpriseId, cancellationToken);
+                return new AuthSession(issued.Token, profile);
             },
             None: async () =>
             {

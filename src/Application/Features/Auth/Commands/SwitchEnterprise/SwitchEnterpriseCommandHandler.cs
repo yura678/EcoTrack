@@ -2,11 +2,10 @@ using Application.Common.Interfaces;
 using Application.Common.Interfaces.Identity;
 using Application.Common.Interfaces.Persistence;
 using Application.Features.Auth.Exceptions;
-using Application.Models.Jwt;
+using Application.Models.Auth;
 using Domain.Entities.User;
 using LanguageExt;
 using MediatR;
-using Microsoft.EntityFrameworkCore;
 
 namespace Application.Features.Auth.Commands.SwitchEnterprise;
 
@@ -14,10 +13,11 @@ public class SwitchEnterpriseCommandHandler(
     IUnitOfWork unitOfWork,
     ICurrentUserService currentUserService,
     IJwtService jwtService,
+    IUserProfileBuilder profileBuilder,
     IAppUserManager userManager)
-    : IRequestHandler<SwitchEnterpriseCommand, Either<AuthException, AccessToken>>
+    : IRequestHandler<SwitchEnterpriseCommand, Either<AuthException, AuthSession>>
 {
-    public async Task<Either<AuthException, AccessToken>> Handle(SwitchEnterpriseCommand request,
+    public async Task<Either<AuthException, AuthSession>> Handle(SwitchEnterpriseCommand request,
         CancellationToken cancellationToken)
     {
         var userId = currentUserService.GetCurrentUserId();
@@ -27,21 +27,23 @@ public class SwitchEnterpriseCommandHandler(
         var membership = await unitOfWork.UserEnterpriseMembershipRepository
             .GetByUserAndEnterpriseAsync(userId.Value, request.EnterpriseId, cancellationToken);
 
-        return await membership.MatchAsync<UserEnterpriseMembership, Either<AuthException, AccessToken>>(
+        return await membership.MatchAsync<UserEnterpriseMembership, Either<AuthException, AuthSession>>(
             Some: async m =>
             {
                 if (!m.IsActive)
                     return new MembershipNotFoundException(userId.Value, request.EnterpriseId);
 
                 var user = await userManager.GetUserByIdAsync(userId.Value);
-                return await user.MatchAsync<User, Either<AuthException, AccessToken>>(
+                return await user.MatchAsync<User, Either<AuthException, AuthSession>>(
                     Some: async u =>
                     {
                         try
                         {
-                            var token = await jwtService.GenerateAsync(u, request.EnterpriseId,
+                            var issued = await jwtService.GenerateAsync(u, request.EnterpriseId,
                                 cancellationToken);
-                            return token;
+                            var profile = await profileBuilder.BuildAsync(
+                                u, issued.ResolvedEnterpriseId, cancellationToken);
+                            return new AuthSession(issued.Token, profile);
                         }
                         catch (Exception exception)
                         {

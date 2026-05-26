@@ -2,7 +2,7 @@ using Application.Common.Interfaces;
 using Application.Common.Interfaces.Identity;
 using Application.Common.Interfaces.Persistence;
 using Application.Features.Users.Exceptions;
-using Application.Models.Jwt;
+using Application.Models.Auth;
 using Domain.Entities.User;
 using LanguageExt;
 using MediatR;
@@ -13,17 +13,18 @@ namespace Application.Features.Auth.Queries.LoginByCode;
 internal class LoginByCodeQueryHandler(
     IAppUserManager userManager,
     IJwtService jwtService,
+    IUserProfileBuilder profileBuilder,
     ILoginAttemptRecorder loginRecorder,
     IEnterpriseAccessGate enterpriseAccessGate,
     IUnitOfWork unitOfWork)
-    : IRequestHandler<LoginByCodeQuery, Either<UserException, AccessToken>>
+    : IRequestHandler<LoginByCodeQuery, Either<UserException, AuthSession>>
 {
-    public async Task<Either<UserException, AccessToken>> Handle(LoginByCodeQuery request,
+    public async Task<Either<UserException, AuthSession>> Handle(LoginByCodeQuery request,
         CancellationToken cancellationToken)
     {
         var userOption = await userManager.GetUserByEmail(request.Email);
 
-        return await userOption.MatchAsync<User, Either<UserException, AccessToken>>(
+        return await userOption.MatchAsync<User, Either<UserException, AuthSession>>(
             Some: async u =>
             {
                 if (!u.EmailConfirmed)
@@ -61,7 +62,9 @@ internal class LoginByCodeQueryHandler(
                 // VerifyUserCode rotated the security stamp on the User row; one save commits
                 // the stamp change alongside the success audit row.
                 await unitOfWork.SaveChangesAsync(cancellationToken);
-                return await jwtService.GenerateAsync(u, null, cancellationToken);
+                var issued = await jwtService.GenerateAsync(u, null, cancellationToken);
+                var profile = await profileBuilder.BuildAsync(u, issued.ResolvedEnterpriseId, cancellationToken);
+                return new AuthSession(issued.Token, profile);
             },
             None: async () =>
             {
