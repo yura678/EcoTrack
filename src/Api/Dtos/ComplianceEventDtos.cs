@@ -10,6 +10,7 @@ public record ComplianceEventListQueryDto(
     ComplianceEventType? EventType,
     Guid? EmissionSourceId,
     Guid? DeviceId,
+    ResolutionReason? ResolutionReason,
     DateTime? From,
     DateTime? To,
     int Page = 1,

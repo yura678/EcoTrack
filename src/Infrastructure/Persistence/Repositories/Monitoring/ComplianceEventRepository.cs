@@ -95,6 +95,7 @@ internal class ComplianceEventRepository(ApplicationDbContext context) :
         ComplianceEventType? eventType,
         Guid? emissionSourceId,
         Guid? deviceId,
+        ResolutionReason? resolutionReason,
         Guid? installationId,
         Guid? siteId,
         DateTime? from,
@@ -112,6 +113,7 @@ internal class ComplianceEventRepository(ApplicationDbContext context) :
         if (eventType.HasValue) query = query.Where(x => x.EventType == eventType.Value);
         if (emissionSourceId.HasValue) query = query.Where(x => x.EmissionSourceId == emissionSourceId.Value);
         if (deviceId.HasValue) query = query.Where(x => x.DeviceId == deviceId.Value);
+        if (resolutionReason.HasValue) query = query.Where(x => x.ResolutionReason == resolutionReason.Value);
         if (from.HasValue) query = query.Where(x => x.WindowEnd >= from.Value);
         if (to.HasValue) query = query.Where(x => x.WindowEnd <= to.Value);
 

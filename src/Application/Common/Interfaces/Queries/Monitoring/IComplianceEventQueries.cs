@@ -34,6 +34,7 @@ public interface IComplianceEventQueries
         ComplianceEventType? eventType,
         Guid? emissionSourceId,
         Guid? deviceId,
+        ResolutionReason? resolutionReason,
         Guid? installationId,
         Guid? siteId,
         DateTime? from,

@@ -12,6 +12,7 @@ public class ComplianceEventListQueryDtoValidator : AbstractValidator<Compliance
 
         When(x => x.Status.HasValue, () => RuleFor(x => x.Status!.Value).IsInEnum());
         When(x => x.EventType.HasValue, () => RuleFor(x => x.EventType!.Value).IsInEnum());
+        When(x => x.ResolutionReason.HasValue, () => RuleFor(x => x.ResolutionReason!.Value).IsInEnum());
 
         When(x => x.From.HasValue && x.To.HasValue,
             () => RuleFor(x => x).Must(q => q.From!.Value <= q.To!.Value)

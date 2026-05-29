@@ -113,6 +113,7 @@ public class ComplianceEventController(
         var result = await queries.GetPagedAsync(
             query.Status, query.EventType,
             query.EmissionSourceId, query.DeviceId,
+            query.ResolutionReason,
             installationId, siteId,
             query.From, query.To,
             query.Page, query.PageSize, cancellationToken);
