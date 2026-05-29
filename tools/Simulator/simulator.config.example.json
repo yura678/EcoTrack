@@ -1,7 +1,7 @@
 {
   // Cross-platform sample config. Run `dotnet run --project tools/Simulator -- bootstrap`
   // to generate a real `simulator.config.json` with rotated secrets and seeded ids.
-  "apiBaseUrl": "http://localhost:5269",
+  "apiBaseUrl": "https://localhost:44319",
   "intervalSeconds": 10,
   "includeOfflineDevices": false,
   "devices": [

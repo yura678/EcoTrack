@@ -14,6 +14,7 @@ public static class SimulatorJson
         var options = new JsonSerializerOptions
         {
             PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+            NumberHandling = JsonNumberHandling.AllowReadingFromString,
             PropertyNameCaseInsensitive = true,
             DefaultIgnoreCondition = JsonIgnoreCondition.Never,
             ReadCommentHandling = JsonCommentHandling.Skip,

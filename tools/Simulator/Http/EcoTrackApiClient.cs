@@ -9,6 +9,13 @@ public sealed class EcoTrackApiClient(HttpClient httpClient)
 {
     public string? AccessToken { get; private set; }
 
+    /// <summary>
+    /// Set from the login profile. A superAdmin bypasses tenant query filters and write
+    /// validation server-side, so bootstrap must NOT call switch-enterprise for it — that
+    /// endpoint is membership-gated and 403s for a user with no membership in the target tenant.
+    /// </summary>
+    public bool IsSuperAdmin { get; private set; }
+
     public void SetAccessToken(string token)
     {
         AccessToken = token;
@@ -26,6 +33,7 @@ public sealed class EcoTrackApiClient(HttpClient httpClient)
         var session = await ReadEnvelopeAsync<AuthSessionDto>(response, ct);
         var token = session.Token?.AccessToken
             ?? throw new InvalidOperationException("Login response missing token.access_token.");
+        IsSuperAdmin = session.Profile?.IsSuperAdmin ?? false;
         SetAccessToken(token);
         return token;
     }
@@ -122,6 +130,7 @@ public sealed class EcoTrackApiClient(HttpClient httpClient)
 
     private async Task<IReadOnlyList<T>> GetListAsync<T>(string path, CancellationToken ct)
     {
+        
         var response = await httpClient.GetAsync(path, ct);
         var list = await ReadEnvelopeAsync<List<T>>(response, ct);
         return list;
@@ -161,6 +170,13 @@ public sealed class EcoTrackApiClient(HttpClient httpClient)
 public sealed class AuthSessionDto
 {
     public AccessTokenDto? Token { get; set; }
+    public AuthProfileDto? Profile { get; set; }
+}
+
+public sealed class AuthProfileDto
+{
+    public bool IsSuperAdmin { get; set; }
+    public Guid? ActiveEnterpriseId { get; set; }
 }
 
 public sealed class AccessTokenDto

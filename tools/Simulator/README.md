@@ -42,10 +42,13 @@ run       [--config PATH] [--interval SECONDS] [--once true]
 
 ## How it works
 
-- **Auth:** `bootstrap` logs in via `/api/v1/auth/login/password`. For each
-  enterprise it provisions devices in, it calls
-  `/api/v1/auth/switch-enterprise/{id}` so subsequent calls land in the right
-  tenant scope (`CompanyId` claim).
+- **Auth:** `bootstrap` logs in via `/api/v1/auth/login/password`. A SuperAdmin
+  bypasses tenant query filters and write validation server-side (and new rows
+  get their `EnterpriseId` from the parent FK chain), so it provisions every
+  enterprise on the one login with no switching. A non-SuperAdmin tenant user
+  instead calls `/api/v1/auth/switch-enterprise/{id}` per enterprise to scope the
+  `CompanyId` claim — note that endpoint is membership-gated and 403s for a
+  SuperAdmin, which is why bootstrap skips it in that case.
 - **Secrets:** `/api/v1/monitoring-devices/{id}/rotate-ingestion-secret` is the
   only endpoint that returns the plaintext secret. Bootstrap saves it to
   `simulator.config.json` immediately. Re-running bootstrap rotates secrets
@@ -64,6 +67,11 @@ run       [--config PATH] [--interval SECONDS] [--once true]
   range to avoid `Quality.Invalid` downgrades. 5% of values are flipped to
   `Calibration` or `Maintenance` to exercise non-Valid paths. Process
   parameters use the same Gaussian noise without diurnal modulation.
+- **Process-parameter sender:** process parameters (flow/O₂/moisture) describe an
+  emission source (stack), so bootstrap attaches them to only one device per
+  source — the first device provisioned for that source. Every other device on the
+  same source emits pollutants only. The provisioning log marks the chosen device
+  with `[process-parameter sender]`.
 
 ## Verifying end-to-end
 
