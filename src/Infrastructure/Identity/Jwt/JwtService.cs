@@ -2,6 +2,7 @@ using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Text;
 using Application.Common.Interfaces;
+using Application.Common.Interfaces.Identity;
 using Application.Common.Interfaces.Persistence;
 using Application.Models.Jwt;
 using Domain.Entities.User;
@@ -20,17 +21,20 @@ public class JwtService : IJwtService
     private readonly IdentitySettings _siteSetting;
     private readonly AppUserManager _userManager;
     private readonly AppRoleManager _roleManager;
+    private readonly IRoleManagerService _roleManagerService;
     private IUserClaimsPrincipalFactory<User> _claimsPrincipal;
 
     private readonly IUnitOfWork _unitOfWork;
 
     public JwtService(IOptions<IdentitySettings> siteSetting, AppUserManager userManager,
         AppRoleManager roleManager,
+        IRoleManagerService roleManagerService,
         IUserClaimsPrincipalFactory<User> claimsPrincipal, IUnitOfWork unitOfWork)
     {
         _siteSetting = siteSetting.Value;
         _userManager = userManager;
         _roleManager = roleManager;
+        _roleManagerService = roleManagerService;
         _claimsPrincipal = claimsPrincipal;
         _unitOfWork = unitOfWork;
     }
@@ -80,7 +84,12 @@ public class JwtService : IJwtService
                 // UserClaimsPrincipalFactory pulls these via IUserRoleStore.GetRolesAsync,
                 // but this codebase stores role assignments in UserEnterpriseMembership
                 // instead of the AspNetUserRoles table, so we project them here.
-                var roleClaims = await _roleManager.GetClaimsAsync(membershipEntity.Role);
+                // IgnoreTenant variant: SwitchEnterprise / refresh issue the token under the
+                // OLD JWT context, so the default RoleClaim tenant filter would hide the
+                // target enterprise's claims and emit a permission-less bearer that 403s
+                // every protected request until a second token issuance.
+                var roleClaims = await _roleManagerService
+                    .GetAllClaimsByRoleIdIgnoringTenantAsync(membershipEntity.Role.Id);
                 claims.AddRange(roleClaims);
             }
         }

@@ -312,6 +312,16 @@ internal class RoleManagerService : IRoleManagerService
         return await _roleManger.FindByIdAsync(roleId.ToString());
     }
 
+    public async Task<Option<Role>> GetRoleByIdIgnoringTenantAsync(Guid roleId)
+    {
+        // Bypasses the tenant query filter on Role so anonymous / cross-tenant invitation
+        // flows can resolve a foreign-tenant role by its secret token. See interface docs.
+        var role = await _db.Set<Role>()
+            .IgnoreQueryFilters()
+            .FirstOrDefaultAsync(r => r.Id == roleId);
+        return role is null ? Option<Role>.None : role;
+    }
+
     public async Task<Option<Role>> GetRoleByNameAsync(string name)
     {
         return await _roleManger.FindByNameAsync(name);
@@ -326,5 +336,41 @@ internal class RoleManagerService : IRoleManagerService
             .Select(c => c.ClaimValue!)
             .ToListAsync();
         return claims;
+    }
+
+    public async Task<IReadOnlyList<string>> GetDynamicPermissionClaimsByRoleIdIgnoringTenantAsync(
+        Guid roleId)
+    {
+        // IgnoreQueryFilters: SwitchEnterprise builds the next-session profile while the
+        // request still carries the OLD JWT context, so the Role/RoleClaim tenant filter
+        // would otherwise hide the target enterprise's role and return an empty permissions
+        // list — making the SPA reload navigation with no entitlements until the user
+        // switches a second time under the new bearer.
+        var claims = await _db.Set<RoleClaim>()
+            .IgnoreQueryFilters()
+            .Where(c => c.RoleId == roleId
+                        && c.ClaimType == ConstantPolicies.DynamicPermission
+                        && c.ClaimValue != null)
+            .Select(c => c.ClaimValue!)
+            .ToListAsync();
+        return claims;
+    }
+
+    public async Task<IReadOnlyList<System.Security.Claims.Claim>>
+        GetAllClaimsByRoleIdIgnoringTenantAsync(Guid roleId)
+    {
+        // Same cross-tenant story as GetDynamicPermissionClaimsByRoleIdIgnoringTenantAsync,
+        // but projects every claim (not just DynamicPermission) so JwtService can stamp the
+        // freshly issued JWT with the role's full claim set. Without this the new bearer
+        // ends up missing the permission claims under SwitchEnterprise's old-JWT context
+        // and every protected request 403s ("Authorization Error") until a second switch.
+        var rows = await _db.Set<RoleClaim>()
+            .IgnoreQueryFilters()
+            .Where(c => c.RoleId == roleId && c.ClaimType != null && c.ClaimValue != null)
+            .Select(c => new { c.ClaimType, c.ClaimValue })
+            .ToListAsync();
+        return rows
+            .Select(r => new System.Security.Claims.Claim(r.ClaimType!, r.ClaimValue!))
+            .ToList();
     }
 }

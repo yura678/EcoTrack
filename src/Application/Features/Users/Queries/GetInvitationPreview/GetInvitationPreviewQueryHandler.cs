@@ -32,9 +32,14 @@ internal class GetInvitationPreviewQueryHandler(
                 var enterprise = await enterpriseQueries.GetByIdAsync(i.EnterpriseId, cancellationToken);
                 var enterpriseName = enterprise.Match(e => e.Name, () => string.Empty);
 
-                var role = await roleManagerService.GetRoleByIdAsync(i.RoleId);
+                // Invitation may target a role in a different tenant than the caller's; the
+                // token is the secret. Tenant-filtered role lookup would mis-return None and
+                // hide preview metadata, so use the cross-tenant variant here.
+                // MatchUnsafe bypasses LanguageExt's null-return guard so we can surface a
+                // nullable DisplayName without a ResultIsNullException trip.
+                var role = await roleManagerService.GetRoleByIdIgnoringTenantAsync(i.RoleId);
                 var roleName = role.Match(r => r.Name ?? string.Empty, () => string.Empty);
-                var roleDisplay = role.Match(r => r.DisplayName, () => null);
+                var roleDisplay = role.MatchUnsafe(r => r.DisplayName, () => null);
 
                 return new InvitationPreviewInfo(
                     Email: i.Email,

@@ -44,8 +44,13 @@ internal class UserProfileBuilder(
                     roles.Add(m.Role.Name);
                 if (m.RoleId != Guid.Empty)
                 {
+                    // SwitchEnterprise calls BuildAsync with the new active enterprise while
+                    // the request still carries the OLD JWT (token rotation happens after the
+                    // response). The default lookup would apply the Role/RoleClaim tenant
+                    // filter against the old tenant and return zero permissions — leading to
+                    // empty navigation on the first switch. Cross-tenant lookup avoids this.
                     var rolePermissions = await roleManagerService
-                        .GetDynamicPermissionClaimsByRoleIdAsync(m.RoleId);
+                        .GetDynamicPermissionClaimsByRoleIdIgnoringTenantAsync(m.RoleId);
                     permissions.AddRange(rolePermissions);
                 }
             });

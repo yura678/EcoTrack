@@ -25,6 +25,16 @@ public interface IRoleManagerService
     Task<Option<RolePermissionDto>> GetRolePermissionsAsync(Guid roleId);
     Task<bool> ChangeRolePermissionsAsync(EditRolePermissionsDto model);
     Task<Option<Role>> GetRoleByIdAsync(Guid roleId);
+
+    /// <summary>
+    /// Same as <see cref="GetRoleByIdAsync"/> but bypasses the tenant query filter on
+    /// <see cref="Role"/>. Reserved for cross-tenant flows that legitimately operate on a
+    /// foreign tenant's role with only a secret credential — the invitation preview /
+    /// register-by-invitation / accept-invitation paths, where the token itself is the
+    /// authorisation. Do NOT use from any tenant-context handler.
+    /// </summary>
+    Task<Option<Role>> GetRoleByIdIgnoringTenantAsync(Guid roleId);
+
     Task<Option<Role>> GetRoleByNameAsync(string name);
 
     /// <summary>
@@ -33,4 +43,26 @@ public interface IRoleManagerService
     /// JWE-encrypted and the client cannot read its own claims.
     /// </summary>
     Task<IReadOnlyList<string>> GetDynamicPermissionClaimsByRoleIdAsync(Guid roleId);
+
+    /// <summary>
+    /// Same as <see cref="GetDynamicPermissionClaimsByRoleIdAsync"/> but bypasses the tenant
+    /// query filter on <see cref="Role"/> / <see cref="Domain.Entities.User.RoleClaim"/>.
+    /// Reserved for cross-tenant flows where the caller's JWT tenant is intentionally
+    /// different from the role's tenant — e.g. <c>SwitchEnterprise</c> builds the next
+    /// session profile under the OLD JWT context, before the new token is in flight. Do NOT
+    /// use from tenant-scoped admin paths (Role management screens etc.).
+    /// </summary>
+    Task<IReadOnlyList<string>> GetDynamicPermissionClaimsByRoleIdIgnoringTenantAsync(Guid roleId);
+
+    /// <summary>
+    /// Returns every <see cref="System.Security.Claims.Claim"/> attached to the role,
+    /// bypassing the tenant query filter on <see cref="Domain.Entities.User.RoleClaim"/>.
+    /// Used by <c>JwtService</c> when re-issuing a token for a target enterprise different
+    /// from the JWT context currently in scope (SwitchEnterprise, refresh); the standard
+    /// <c>RoleManager.GetClaimsAsync</c> would otherwise see zero rows and emit a JWT
+    /// without the role's DynamicPermission claims, causing backend 403s on the freshly
+    /// issued token until a second token issuance.
+    /// </summary>
+    Task<IReadOnlyList<System.Security.Claims.Claim>> GetAllClaimsByRoleIdIgnoringTenantAsync(
+        Guid roleId);
 }

@@ -51,7 +51,10 @@ internal class RegisterByInvitationCommandHandler(
                 if (!string.Equals(i.Email, request.Email, StringComparison.OrdinalIgnoreCase))
                     return new InvitationEmailMismatchException();
 
-                var roleOption = await roleManagerService.GetRoleByIdAsync(i.RoleId);
+                // Caller is anonymous (no JWT) — tenant query filter on Role hides the
+                // invitation's target tenant role from the standard lookup. Use the
+                // cross-tenant variant: the invitation token is the authorisation here.
+                var roleOption = await roleManagerService.GetRoleByIdIgnoringTenantAsync(i.RoleId);
                 if (roleOption.IsNone)
                     return new UserRoleNotFoundException(Guid.Empty, i.RoleId);
 
