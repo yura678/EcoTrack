@@ -27,10 +27,35 @@ internal class RawMeasurementQueries(ApplicationDbContext context) : IRawMeasure
         DateTime from,
         DateTime to,
         AggregationFunc aggregation,
-        CancellationToken cancellationToken) =>
+        CancellationToken cancellationToken,
+        BoundingBox? bbox = null) =>
         aggregation == AggregationFunc.P95
-            ? GetHeatmapFromRawAsync(pollutantId, from, to, cancellationToken)
-            : GetHeatmapFromCaAsync(pollutantId, from, to, aggregation, cancellationToken);
+            ? GetHeatmapFromRawAsync(pollutantId, from, to, bbox, cancellationToken)
+            : GetHeatmapFromCaAsync(pollutantId, from, to, aggregation, bbox, cancellationToken);
+
+    public async Task<decimal?> GetHeatmapScaleAsync(
+        Guid pollutantId,
+        DateTime from,
+        DateTime to,
+        AggregationFunc aggregation,
+        CancellationToken cancellationToken)
+    {
+        // Full tenant set (no bbox) so the colour scale doesn't shift as the viewport changes.
+        var points = await GetHeatmapAsync(pollutantId, from, to, aggregation, cancellationToken);
+        if (points.Count == 0) return null;
+        var values = points.Select(p => p.Value).OrderBy(v => v).ToList();
+        return Percentile(values, 0.98);
+    }
+
+    // Mirrors the frontend percentile (shared/lib/heatmap-gradient.ts): nearest-rank with
+    // idx = floor(count * p), clamped to [0, count-1]. `sorted` must be ascending.
+    private static decimal Percentile(IReadOnlyList<decimal> sorted, double p)
+    {
+        if (sorted.Count == 0) return 0m;
+        var idx = (int)Math.Floor(sorted.Count * p);
+        idx = Math.Min(sorted.Count - 1, Math.Max(0, idx));
+        return sorted[idx];
+    }
 
     // ─── Compliance audit (what-if read-only) ────────────────────────────────────
 
@@ -256,9 +281,12 @@ internal class RawMeasurementQueries(ApplicationDbContext context) : IRawMeasure
 
     private async Task<IReadOnlyList<HeatmapPoint>> GetHeatmapFromCaAsync(
         Guid pollutantId, DateTime from, DateTime to,
-        AggregationFunc aggregation, CancellationToken cancellationToken)
+        AggregationFunc aggregation, BoundingBox? bbox, CancellationToken cancellationToken)
     {
         var tenantClause = BuildTenantClause();
+        var bboxClause = bbox is null
+            ? string.Empty
+            : "AND ST_Intersects(es.location, ST_MakeEnvelope(@min_lng, @min_lat, @max_lng, @max_lat, 4326))";
 
         var sql = $@"
             SELECT
@@ -278,6 +306,7 @@ internal class RawMeasurementQueries(ApplicationDbContext context) : IRawMeasure
               AND m.bucket < @to
               AND es.deleted_at IS NULL
               {tenantClause}
+              {bboxClause}
             GROUP BY es.id, es.location, m.unit_id
             ORDER BY es.id, m.unit_id";
 
@@ -286,6 +315,7 @@ internal class RawMeasurementQueries(ApplicationDbContext context) : IRawMeasure
         AddParam(command, "from", NpgsqlDbType.TimestampTz, EnsureUtc(from));
         AddParam(command, "to", NpgsqlDbType.TimestampTz, EnsureUtc(to));
         AddTenantParam(command);
+        AddBboxParams(command, bbox);
 
         var slices = new List<HeatmapSlice>();
         await using (var reader = await command.ExecuteReaderAsync(cancellationToken))
@@ -507,9 +537,12 @@ internal class RawMeasurementQueries(ApplicationDbContext context) : IRawMeasure
     }
 
     private async Task<IReadOnlyList<HeatmapPoint>> GetHeatmapFromRawAsync(
-        Guid pollutantId, DateTime from, DateTime to, CancellationToken cancellationToken)
+        Guid pollutantId, DateTime from, DateTime to, BoundingBox? bbox, CancellationToken cancellationToken)
     {
         var tenantClause = BuildTenantClause();
+        var bboxClause = bbox is null
+            ? string.Empty
+            : "AND ST_Intersects(es.location, ST_MakeEnvelope(@min_lng, @min_lat, @max_lng, @max_lat, 4326))";
 
         var sql = $@"
             SELECT
@@ -527,6 +560,7 @@ internal class RawMeasurementQueries(ApplicationDbContext context) : IRawMeasure
               AND rm.time < @to
               AND es.deleted_at IS NULL
               {tenantClause}
+              {bboxClause}
             GROUP BY es.id, es.location";
 
         await using var command = await CreateCommandAsync(sql, cancellationToken);
@@ -534,8 +568,18 @@ internal class RawMeasurementQueries(ApplicationDbContext context) : IRawMeasure
         AddParam(command, "from", NpgsqlDbType.TimestampTz, EnsureUtc(from));
         AddParam(command, "to", NpgsqlDbType.TimestampTz, EnsureUtc(to));
         AddTenantParam(command);
+        AddBboxParams(command, bbox);
 
         return await ReadHeatmapAsync(command, cancellationToken);
+    }
+
+    private static void AddBboxParams(NpgsqlCommand command, BoundingBox? bbox)
+    {
+        if (bbox is null) return;
+        AddParam(command, "min_lng", NpgsqlDbType.Double, bbox.MinLongitude);
+        AddParam(command, "min_lat", NpgsqlDbType.Double, bbox.MinLatitude);
+        AddParam(command, "max_lng", NpgsqlDbType.Double, bbox.MaxLongitude);
+        AddParam(command, "max_lat", NpgsqlDbType.Double, bbox.MaxLatitude);
     }
 
     // ─── Result readers ────────────────────────────────────────────────────────
@@ -612,11 +656,16 @@ internal class RawMeasurementQueries(ApplicationDbContext context) : IRawMeasure
     {
         BucketWindow.Minute1 => "1 minute",
         BucketWindow.Minute5 => "5 minutes",
+        BucketWindow.Minute10 => "10 minutes",
         BucketWindow.Minute15 => "15 minutes",
         BucketWindow.Minute30 => "30 minutes",
+        BucketWindow.HalfHour => "30 minutes",
         BucketWindow.Hour1 => "1 hour",
         BucketWindow.Hour6 => "6 hours",
+        BucketWindow.Hour24 => "24 hours",
         BucketWindow.Day1 => "1 day",
+        BucketWindow.Month1 => "1 month",
+        BucketWindow.Year1 => "1 year",
         _ => throw new ArgumentOutOfRangeException(nameof(window), window, null)
     };
 

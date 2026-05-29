@@ -17,6 +17,24 @@ public record HeatmapQueryDto(
     DateTime To,
     AggregationFunc Aggregation = AggregationFunc.Average);
 
+public record TenantHeatmapQueryDto(
+    Guid PollutantId,
+    DateTime From,
+    DateTime To,
+    AggregationFunc Aggregation = AggregationFunc.Average,
+    // "minLng,minLat,maxLng,maxLat" — optional viewport filter. When omitted the query
+    // covers the whole tenant; with it, the SQL adds an ST_Intersects clause that hits
+    // the GIST index on emission_source.location.
+    string? Bbox = null);
+
+public record HeatmapScaleQueryDto(
+    Guid PollutantId,
+    DateTime From,
+    DateTime To,
+    AggregationFunc Aggregation = AggregationFunc.Average);
+
+public record HeatmapScaleDto(decimal? ScaleMax);
+
 public record TimeSeriesPointDto(
     DateTime BucketStart,
     decimal Value,
@@ -114,11 +132,44 @@ public record ComplianceHeatmapPointDto(
 }
 
 public record MeasurementQueryDto(
-    Guid InstallationId,
+    Guid? InstallationId,
+    Guid? EmissionSourceId,
+    Guid? PollutantId,
+    AveragingWindow? Window,
+    Quality? Quality,
     DateTime? From,
     DateTime? To,
+    MeasurementSort Sort = MeasurementSort.WindowEnd,
+    SortDirection Direction = SortDirection.Desc,
     int Page = 1,
     int PageSize = 20);
+
+public record MeasurementSummaryQueryDto(
+    Guid? InstallationId,
+    Guid? EmissionSourceId,
+    Guid? PollutantId,
+    AveragingWindow? Window,
+    Quality? Quality,
+    DateTime? From,
+    DateTime? To);
+
+public record MeasurementSummaryDto(
+    int TotalRows,
+    int ValidRows,
+    int NonRepresentativeRows,
+    IReadOnlyDictionary<Quality, int> QualityBreakdown,
+    decimal? MinValue,
+    decimal? AvgValue,
+    decimal? MaxValue,
+    decimal? P95Value,
+    string? UnitSymbol,
+    DateTime? LatestWindowEnd)
+{
+    public static MeasurementSummaryDto FromReadModel(MeasurementSummary s) =>
+        new(s.TotalRows, s.ValidRows, s.NonRepresentativeRows,
+            s.QualityBreakdown, s.MinValue, s.AvgValue, s.MaxValue, s.P95Value,
+            s.UnitSymbol, s.LatestWindowEnd);
+}
 
 public record CreateMeasurementDto(
     DateTime Timestamp,
@@ -154,6 +205,9 @@ public record MeasurementDto(
     bool IsRepresentative,
     Quality Quality,
     string? QualityNote,
+    SubstitutionSource? SubstitutedBy,
+    string? SubstitutionReason,
+    DateTime? SubstitutedAt,
     DateTime CreatedAt,
     DateTime? UpdatedAt)
 {
@@ -187,6 +241,9 @@ public record MeasurementDto(
             measurement.IsRepresentative,
             measurement.Quality,
             measurement.QualityNote,
+            measurement.SubstitutedBy,
+            measurement.SubstitutionReason,
+            measurement.SubstitutedAt,
             measurement.CreatedAt,
             measurement.UpdatedAt
         );

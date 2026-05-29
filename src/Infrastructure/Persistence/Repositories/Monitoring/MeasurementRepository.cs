@@ -645,25 +645,35 @@ internal class MeasurementRepository(
         MeasureUnitDimension UnitDimension);
 
     public async Task<PageResult<Measurement>> GetPagedAsync(
-        Guid installationId, DateTime? from, DateTime? to, int page, int pageSize, CancellationToken cancellationToken)
+        Guid? installationId,
+        Guid? emissionSourceId,
+        Guid? pollutantId,
+        AveragingWindow? window,
+        Quality? quality,
+        DateTime? from,
+        DateTime? to,
+        MeasurementSort sort,
+        SortDirection direction,
+        int page,
+        int pageSize,
+        CancellationToken cancellationToken)
     {
-        var query = base.TableNoTracking
-            .Where(x => x.EmissionSource!.InstallationId == installationId);
-
-        if (from.HasValue)
-        {
-            query = query.Where(x => x.WindowEnd >= from.Value);
-        }
-
-        if (to.HasValue)
-        {
-            query = query.Where(x => x.WindowEnd <= to.Value);
-        }
+        var query = BuildFilteredQuery(
+            installationId, emissionSourceId, pollutantId, window, quality, from, to);
 
         var total = await query.CountAsync(cancellationToken);
 
-        var items = await query
-            .OrderByDescending(x => x.WindowEnd)
+        // Includes only for the page slice — keeps Count query trivial. The DTO needs
+        // EmissionSource.Code, Pollutant.Code, Unit.Symbol to populate top-level convenience
+        // fields without per-row navigation (previously a latent N+1).
+        var withIncludes = query
+            .Include(m => m.EmissionSource)
+            .Include(m => m.Pollutant)
+            .Include(m => m.Unit);
+
+        var sorted = ApplySort(withIncludes, sort, direction);
+
+        var items = await sorted
             .Skip((page - 1) * pageSize)
             .Take(pageSize)
             .ToListAsync(cancellationToken);
@@ -674,6 +684,131 @@ internal class MeasurementRepository(
             TotalCount = total,
             Page = page,
             PageSize = pageSize
+        };
+    }
+
+    public async Task<MeasurementSummary> GetSummaryAsync(
+        Guid? installationId,
+        Guid? emissionSourceId,
+        Guid? pollutantId,
+        AveragingWindow? window,
+        Quality? quality,
+        DateTime? from,
+        DateTime? to,
+        CancellationToken cancellationToken)
+    {
+        var query = BuildFilteredQuery(
+            installationId, emissionSourceId, pollutantId, window, quality, from, to);
+
+        // `IsRepresentative` is a computed property on the entity (DataAvailability >= 0.75)
+        // and cannot be translated to SQL. Use the raw column expression instead — guard
+        // against ExpectedPointsCount == 0 to avoid divide-by-zero on the DB side.
+        var counts = await query
+            .GroupBy(_ => 1)
+            .Select(g => new
+            {
+                Total = g.Count(),
+                Valid = g.Count(m => m.Quality == Quality.Valid),
+                NonRep = g.Count(m =>
+                    m.ExpectedPointsCount == 0
+                    || (double)m.ValidPointsCount / m.ExpectedPointsCount < 0.75),
+                MinValue = (decimal?)g.Min(m => m.Value),
+                MaxValue = (decimal?)g.Max(m => m.Value),
+                AvgValue = (decimal?)g.Average(m => m.Value),
+                LatestWindowEnd = (DateTime?)g.Max(m => m.WindowEnd),
+            })
+            .FirstOrDefaultAsync(cancellationToken);
+
+        if (counts is null)
+        {
+            return new MeasurementSummary(
+                0, 0, 0,
+                new Dictionary<Quality, int>(),
+                null, null, null, null,
+                null, null);
+        }
+
+        var qualityBreakdown = await query
+            .GroupBy(m => m.Quality)
+            .Select(g => new { Quality = g.Key, Count = g.Count() })
+            .ToDictionaryAsync(x => x.Quality, x => x.Count, cancellationToken);
+
+        // Unit symbol is meaningful only when the filter pins a single pollutant — otherwise
+        // mixing dimensions produces a misleading "unitless" aggregate.
+        string? unitSymbol = null;
+        if (pollutantId.HasValue && counts.Total > 0)
+        {
+            unitSymbol = await query
+                .OrderByDescending(m => m.WindowEnd)
+                .Select(m => m.Unit!.Symbol)
+                .FirstOrDefaultAsync(cancellationToken);
+        }
+
+        return new MeasurementSummary(
+            TotalRows: counts.Total,
+            ValidRows: counts.Valid,
+            NonRepresentativeRows: counts.NonRep,
+            QualityBreakdown: qualityBreakdown,
+            MinValue: counts.MinValue,
+            AvgValue: counts.AvgValue.HasValue ? Math.Round(counts.AvgValue.Value, 6) : null,
+            MaxValue: counts.MaxValue,
+            P95Value: null, // P95 not implemented in this pass — needs raw SQL fragment.
+            UnitSymbol: unitSymbol,
+            LatestWindowEnd: counts.LatestWindowEnd);
+    }
+
+    private IQueryable<Measurement> BuildFilteredQuery(
+        Guid? installationId,
+        Guid? emissionSourceId,
+        Guid? pollutantId,
+        AveragingWindow? window,
+        Quality? quality,
+        DateTime? from,
+        DateTime? to)
+    {
+        var query = base.TableNoTracking;
+        if (installationId.HasValue)
+            query = query.Where(m => m.EmissionSource!.InstallationId == installationId.Value);
+        if (emissionSourceId.HasValue)
+            query = query.Where(m => m.EmissionSourceId == emissionSourceId.Value);
+        if (pollutantId.HasValue)
+            query = query.Where(m => m.PollutantId == pollutantId.Value);
+        if (window.HasValue)
+            query = query.Where(m => m.Window == window.Value);
+        if (quality.HasValue)
+            query = query.Where(m => m.Quality == quality.Value);
+        if (from.HasValue)
+            query = query.Where(m => m.WindowEnd >= from.Value);
+        if (to.HasValue)
+            query = query.Where(m => m.WindowEnd <= to.Value);
+        return query;
+    }
+
+    private static IQueryable<Measurement> ApplySort(
+        IQueryable<Measurement> query, MeasurementSort sort, SortDirection direction)
+    {
+        bool desc = direction == SortDirection.Desc;
+        return sort switch
+        {
+            MeasurementSort.Value => desc
+                ? query.OrderByDescending(m => m.Value)
+                : query.OrderBy(m => m.Value),
+            // ValidPointsCount / ExpectedPointsCount is computed (not stored) on the entity,
+            // but the underlying columns are available for SQL-side ratio sorting. Guard
+            // against ExpectedPointsCount == 0 to avoid divide-by-zero in the database.
+            MeasurementSort.DataAvailability => desc
+                ? query.OrderByDescending(m => m.ExpectedPointsCount == 0
+                    ? 0.0
+                    : m.ValidPointsCount * 1.0 / m.ExpectedPointsCount)
+                : query.OrderBy(m => m.ExpectedPointsCount == 0
+                    ? 0.0
+                    : m.ValidPointsCount * 1.0 / m.ExpectedPointsCount),
+            MeasurementSort.Quality => desc
+                ? query.OrderByDescending(m => m.Quality)
+                : query.OrderBy(m => m.Quality),
+            _ => desc
+                ? query.OrderByDescending(m => m.WindowEnd)
+                : query.OrderBy(m => m.WindowEnd),
         };
     }
 }

@@ -1,4 +1,5 @@
-﻿using Api.Attributes;
+﻿using System.Globalization;
+using Api.Attributes;
 using Api.Controllers.Common;
 using Api.Dtos;
 using Api.Modules.Errors;
@@ -28,8 +29,19 @@ public class MeasurementController(
         [FromQuery] MeasurementQueryDto query,
         CancellationToken cancellationToken)
     {
-        var result = await measurementQueries.GetPagedAsync(query.InstallationId,
-            query.From, query.To, query.Page, query.PageSize, cancellationToken);
+        var result = await measurementQueries.GetPagedAsync(
+            query.InstallationId,
+            query.EmissionSourceId,
+            query.PollutantId,
+            query.Window,
+            query.Quality,
+            query.From,
+            query.To,
+            query.Sort,
+            query.Direction,
+            query.Page,
+            query.PageSize,
+            cancellationToken);
 
         return Ok(new PageResult<MeasurementDto>
         {
@@ -38,6 +50,30 @@ public class MeasurementController(
             Page = result.Page,
             PageSize = result.PageSize
         });
+    }
+
+    /// <summary>
+    /// KPI band data over the same filter set as <see cref="GetMeasurements"/>. Returns
+    /// counts (total / valid / non-representative), per-quality breakdown, basic statistics
+    /// (Min/Avg/Max), the latest WindowEnd, and — when pollutant is pinned — the unit symbol.
+    /// </summary>
+    [HttpGet("summary")]
+    [ProducesOkApiResponseType<MeasurementSummaryDto>]
+    public async Task<IActionResult> GetSummary(
+        [FromQuery] MeasurementSummaryQueryDto query,
+        CancellationToken cancellationToken)
+    {
+        var summary = await measurementQueries.GetSummaryAsync(
+            query.InstallationId,
+            query.EmissionSourceId,
+            query.PollutantId,
+            query.Window,
+            query.Quality,
+            query.From,
+            query.To,
+            cancellationToken);
+
+        return Ok(MeasurementSummaryDto.FromReadModel(summary));
     }
 
 
@@ -108,6 +144,77 @@ public class MeasurementController(
             cancellationToken);
 
         return Ok(points.Select(HeatmapPointDto.FromReadModel).ToList());
+    }
+
+    /// <summary>
+    /// Tenant-wide intensity heatmap with optional viewport (bbox) filter. The current
+    /// tenant is resolved from the JWT — no enterprise id in the route — so the SPA can
+    /// drive the map by panning/zooming and trim the result set via ST_Intersects on the
+    /// GIST index. Existing per-installation /measurements/heatmap stays available.
+    /// </summary>
+    [HttpGet("/api/v{version:apiVersion}/emissions-heatmap")]
+    [ProducesOkApiResponseType<IReadOnlyList<HeatmapPointDto>>]
+    public async Task<IActionResult> GetTenantHeatmap(
+        [FromQuery] TenantHeatmapQueryDto query,
+        CancellationToken cancellationToken)
+    {
+        BoundingBox? bbox = null;
+        if (!string.IsNullOrWhiteSpace(query.Bbox))
+        {
+            bbox = ParseBbox(query.Bbox);
+            if (bbox is null)
+            {
+                return BadRequest(new
+                {
+                    Bbox = new[] { "Expected 'minLng,minLat,maxLng,maxLat' with -180≤lng≤180 and -90≤lat≤90." },
+                });
+            }
+        }
+
+        var points = await rawMeasurementQueries.GetHeatmapAsync(
+            query.PollutantId,
+            query.From,
+            query.To,
+            query.Aggregation,
+            cancellationToken,
+            bbox);
+
+        return Ok(points.Select(HeatmapPointDto.FromReadModel).ToList());
+    }
+
+    /// <summary>
+    /// Global colour-scale ceiling for the intensity heatmap — the 98th percentile of
+    /// per-source values across the whole tenant (no bbox). The SPA uses this as a stable
+    /// normalization denominator so map colours don't shift while panning/zooming.
+    /// </summary>
+    [HttpGet("/api/v{version:apiVersion}/emissions-heatmap/scale")]
+    [ProducesOkApiResponseType<HeatmapScaleDto>]
+    public async Task<IActionResult> GetTenantHeatmapScale(
+        [FromQuery] HeatmapScaleQueryDto query,
+        CancellationToken cancellationToken)
+    {
+        var scaleMax = await rawMeasurementQueries.GetHeatmapScaleAsync(
+            query.PollutantId,
+            query.From,
+            query.To,
+            query.Aggregation,
+            cancellationToken);
+
+        return Ok(new HeatmapScaleDto(scaleMax));
+    }
+
+    private static BoundingBox? ParseBbox(string input)
+    {
+        var parts = input.Split(',');
+        if (parts.Length != 4) return null;
+        var ic = CultureInfo.InvariantCulture;
+        if (!double.TryParse(parts[0], NumberStyles.Float, ic, out var minLng)) return null;
+        if (!double.TryParse(parts[1], NumberStyles.Float, ic, out var minLat)) return null;
+        if (!double.TryParse(parts[2], NumberStyles.Float, ic, out var maxLng)) return null;
+        if (!double.TryParse(parts[3], NumberStyles.Float, ic, out var maxLat)) return null;
+        if (minLng >= maxLng || minLat >= maxLat) return null;
+        if (minLng < -180 || maxLng > 180 || minLat < -90 || maxLat > 90) return null;
+        return new BoundingBox(minLng, minLat, maxLng, maxLat);
     }
 
     /// <summary>
