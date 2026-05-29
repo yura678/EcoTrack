@@ -28,6 +28,18 @@ public class ComplianceDetectionSettings
     public int LateArrivingRescanWindows { get; set; } = 6;
 
     /// <summary>
+    /// Settling delay before the materializer is allowed to write a fresh window. A window
+    /// is materialized only once its end is older than (now − this lag), guaranteeing that
+    /// the slow tail of raw_measurement ingest (CEMS buffer + simulator batch publish + DB
+    /// write latency) has landed before we count valid points. Without it, a tick that runs
+    /// 1-3 seconds after window_end can read a half-populated raw stream, write a 4/10
+    /// measurement, and fire a spurious DataAvailabilityLoss event — even when the missing
+    /// rows land seconds later. LateArrivingRescanWindows will still pick up any genuine
+    /// stragglers beyond this grace.
+    /// </summary>
+    public int MaterializerLagMinutes { get; set; } = 2;
+
+    /// <summary>
     /// Suppress DeviceOffline and no-calibration alerts for devices installed within this window.
     /// Gives operators time to commission a device + record initial calibration without false alarms.
     /// </summary>

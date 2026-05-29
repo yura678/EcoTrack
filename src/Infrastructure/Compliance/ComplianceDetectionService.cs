@@ -1006,10 +1006,18 @@ public class ComplianceDetectionService(
 
         var existing = await complianceEventQueries.GetOpenByTypeAsync(
             ComplianceEventType.DataAvailabilityLoss, ct, enterpriseId);
-        var existingSourceIds = existing.Select(e => e.EmissionSourceId).ToHashSet();
+        // Per-measurement dedup: one open event per specific bad window. The previous
+        // per-source dedup hid every later window's violation behind the first open event
+        // for that source, so the probe had to scan "latest" windows to know whether the
+        // source was still bad — which then misled the UI when the event's own window had
+        // self-healed but a later window went bad. With measurement-id dedup each unique
+        // bad window gets its own event and probe can stay window-local.
+        var existingMeasurementIds = existing
+            .Where(e => e.MeasurementId.HasValue)
+            .Select(e => e.MeasurementId!.Value)
+            .ToHashSet();
 
         var newEvents = new List<ComplianceEvent>();
-        var seenSources = new HashSet<Guid>();
 
         foreach (var byPeriod in targets.GroupBy(t => t.Period))
         {
@@ -1024,10 +1032,9 @@ public class ComplianceDetectionService(
 
             foreach (var t in byPeriod)
             {
-                if (!seenSources.Add(t.EmissionSourceId)) continue;
-                if (existingSourceIds.Contains(t.EmissionSourceId)) continue;
                 if (!byKey.TryGetValue((t.EmissionSourceId, t.PollutantId), out var m)) continue;
                 if (m.ExpectedPointsCount == 0) continue;
+                if (existingMeasurementIds.Contains(m.Id)) continue;
 
                 var availability = (decimal)m.ValidPointsCount / m.ExpectedPointsCount;
                 if (availability >= _settings.DataAvailabilityThreshold) continue;

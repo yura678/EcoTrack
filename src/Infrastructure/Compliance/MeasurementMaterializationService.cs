@@ -91,7 +91,13 @@ public class MeasurementMaterializationService(
             var lastEnds = await queries.GetLastWindowEndsAsync(
                 groupSources, groupPollutants, byPeriod.Key, cancellationToken);
 
-            var lastClosedEnd = FloorToPeriod(now, period);
+            // Settling lag: do not materialize a window until enough wall-clock time has
+            // passed since its window_end that the raw_measurement stream is guaranteed to
+            // have flushed. Without this, the tick can race the tail of ingest and write a
+            // partial measurement (e.g. 4/10) that the detector immediately flags as
+            // DataAvailabilityLoss, even though the missing samples land seconds later.
+            var settlingLag = TimeSpan.FromMinutes(Math.Max(0, _settings.MaterializerLagMinutes));
+            var lastClosedEnd = FloorToPeriod(now - settlingLag, period);
             var rescanSpan = TimeSpan.FromTicks(period.Ticks * rescanWindows);
 
             // Per-tuple start: tuples with history are extended backwards by rescanSpan so

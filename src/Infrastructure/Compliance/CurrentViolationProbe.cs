@@ -369,9 +369,13 @@ public class CurrentViolationProbe(
         Dictionary<Guid, bool?> result,
         CancellationToken ct)
     {
-        // Approximation: re-probe via the latest Measurement for the same (source, pollutant,
-        // period) as the original Measurement referenced by the event. If we cannot recover the
-        // tuple, return null. Probe ignores Quality and just checks availability fraction.
+        // Window-local probe: re-read the event's own Measurement. The materializer updates
+        // the measurement row in place, so this gives the current availability for that
+        // exact window. Previously the probe used the latest measurement for the
+        // (source, pollutant, period) tuple, which lit up "Currently violating" on an
+        // event whose own window had self-healed but a later window had gone bad. The
+        // detector now creates a separate event for that later window (per-measurement
+        // dedup), so probing the original window is both accurate and consistent.
         var eventsArr = events.ToArray();
         var measurementIds = eventsArr
             .Where(e => e.MeasurementId.HasValue)
@@ -385,36 +389,19 @@ public class CurrentViolationProbe(
             return;
         }
 
-        var originals = await queries.GetMeasurementsByIdsAsync(measurementIds, ct);
-        var byId = originals.ToDictionary(m => m.Id);
-
-        var pairs = originals
-            .GroupBy(o => o.Window)
-            .ToDictionary(g => g.Key,
-                g => g.Select(o => (o.EmissionSourceId, o.PollutantId)).Distinct().ToList());
-
-        var latestByKey = new Dictionary<(Guid, Guid, AveragingWindow), MeasurementSnapshot>();
-        foreach (var (period, list) in pairs)
-        {
-            var snapshots = await queries.GetLatestMeasurementsAsync(list, period, ct);
-            foreach (var s in snapshots)
-                latestByKey[(s.EmissionSourceId, s.PollutantId, period)] = s;
-        }
+        var measurements = await queries.GetMeasurementsByIdsAsync(measurementIds, ct);
+        var byId = measurements.ToDictionary(m => m.Id);
 
         foreach (var e in eventsArr)
         {
-            if (e.MeasurementId is null || !byId.TryGetValue(e.MeasurementId.Value, out var original))
+            if (e.MeasurementId is null
+                || !byId.TryGetValue(e.MeasurementId.Value, out var m)
+                || m.ExpectedPointsCount == 0)
             {
                 result[e.Id] = null;
                 continue;
             }
-            var key = (original.EmissionSourceId, original.PollutantId, original.Window);
-            if (!latestByKey.TryGetValue(key, out var latest) || latest.ExpectedPointsCount == 0)
-            {
-                result[e.Id] = null;
-                continue;
-            }
-            var availability = (decimal)latest.ValidPointsCount / latest.ExpectedPointsCount;
+            var availability = (decimal)m.ValidPointsCount / m.ExpectedPointsCount;
             result[e.Id] = availability < _settings.DataAvailabilityThreshold;
         }
     }
