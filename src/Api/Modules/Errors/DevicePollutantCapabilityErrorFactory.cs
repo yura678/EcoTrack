@@ -7,20 +7,23 @@ public static class DevicePollutantCapabilityErrorFactory
 {
     public static ObjectResult ToObjectResult(this DevicePollutantCapabilityException error)
     {
-        return new ObjectResult(error.Message)
-        {
-            StatusCode = error switch
-            {
-                CapabilityAlreadyExistsException => StatusCodes.Status409Conflict,
-                CapabilityInvalidRangeException => StatusCodes.Status400BadRequest,
-                DevicePollutantCapabilityNotFoundException
-                    or CapabilityDeviceNotFoundException
-                    or CapabilityPollutantNotFoundException
-                    or CapabilityMeasureUnitNotFoundException => StatusCodes.Status404NotFound,
-                UnhandledDevicePollutantCapabilityException => StatusCodes.Status500InternalServerError,
-                _ => throw new NotImplementedException(
-                    "Device pollutant capability error handler not implemented.")
-            }
-        };
+        var (statusCode, fieldName) = MapError(error);
+        return ErrorBodyBuilder.Build(statusCode, error.Message, fieldName);
     }
+
+    private static (int StatusCode, string? FieldName) MapError(DevicePollutantCapabilityException error) => error switch
+    {
+        // (DeviceId, PollutantId) uniqueness — the form lets the user choose a pollutant for
+        // the device, so surface the conflict under that selector.
+        CapabilityAlreadyExistsException => (StatusCodes.Status409Conflict, "PollutantId"),
+        // Min/Max range — point at the upper bound by convention.
+        CapabilityInvalidRangeException => (StatusCodes.Status400BadRequest, "MaxValue"),
+        DevicePollutantCapabilityNotFoundException
+            or CapabilityDeviceNotFoundException
+            or CapabilityPollutantNotFoundException
+            or CapabilityMeasureUnitNotFoundException => (StatusCodes.Status404NotFound, null),
+        UnhandledDevicePollutantCapabilityException => (StatusCodes.Status500InternalServerError, null),
+        _ => throw new NotImplementedException(
+            $"Device pollutant capability error handler is not implemented for {error.GetType().Name}.")
+    };
 }

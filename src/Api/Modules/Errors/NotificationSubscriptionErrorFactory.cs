@@ -7,16 +7,16 @@ public static class NotificationSubscriptionErrorFactory
 {
     public static ObjectResult ToObjectResult(this NotificationSubscriptionException error)
     {
-        return new ObjectResult(error.Message)
-        {
-            StatusCode = error switch
-            {
-                NotificationSubscriptionNotFoundException => StatusCodes.Status404NotFound,
-                NotificationSubscriptionForbiddenException => StatusCodes.Status403Forbidden,
-                UnhandledNotificationSubscriptionException => StatusCodes.Status500InternalServerError,
-                _ => throw new NotImplementedException(
-                    "NotificationSubscription error handler is not implemented.")
-            }
-        };
+        var (statusCode, fieldName) = MapError(error);
+        return ErrorBodyBuilder.Build(statusCode, error.Message, fieldName);
     }
+
+    private static (int StatusCode, string? FieldName) MapError(NotificationSubscriptionException error) => error switch
+    {
+        NotificationSubscriptionNotFoundException => (StatusCodes.Status404NotFound, null),
+        NotificationSubscriptionForbiddenException => (StatusCodes.Status403Forbidden, null),
+        UnhandledNotificationSubscriptionException => (StatusCodes.Status500InternalServerError, null),
+        _ => throw new NotImplementedException(
+            $"Notification subscription error handler is not implemented for {error.GetType().Name}.")
+    };
 }

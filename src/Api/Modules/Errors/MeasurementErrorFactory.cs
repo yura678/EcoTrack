@@ -7,16 +7,17 @@ public static class MeasurementErrorFactory
 {
     public static ObjectResult ToObjectResult(this MeasurementException error)
     {
-        return new ObjectResult(error.Message)
-        {
-            StatusCode = error switch
-            {
-                MeasurementNotFoundException
-                    or MeasurementRelatedEntityNotFoundException
-                    or DuplicateMeasurementException => StatusCodes.Status404NotFound,
-                UnhandledMeasurementException => StatusCodes.Status500InternalServerError,
-                _ => throw new NotImplementedException("Measurement error handler does not implemented.")
-            }
-        };
+        var (statusCode, fieldName) = MapError(error);
+        return ErrorBodyBuilder.Build(statusCode, error.Message, fieldName);
     }
+
+    private static (int StatusCode, string? FieldName) MapError(MeasurementException error) => error switch
+    {
+        MeasurementNotFoundException
+            or MeasurementRelatedEntityNotFoundException
+            or DuplicateMeasurementException => (StatusCodes.Status404NotFound, null),
+        UnhandledMeasurementException => (StatusCodes.Status500InternalServerError, null),
+        _ => throw new NotImplementedException(
+            $"Measurement error handler is not implemented for {error.GetType().Name}.")
+    };
 }

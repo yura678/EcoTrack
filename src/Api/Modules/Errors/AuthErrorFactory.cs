@@ -7,15 +7,16 @@ public static class AuthErrorFactory
 {
     public static ObjectResult ToObjectResult(this AuthException error)
     {
-        return new ObjectResult(error.Message)
-        {
-            StatusCode = error switch
-            {
-                NotAuthenticatedException => StatusCodes.Status401Unauthorized,
-                MembershipNotFoundException => StatusCodes.Status403Forbidden,
-                UnhandledAuthException => StatusCodes.Status500InternalServerError,
-                _ => throw new NotImplementedException("Auth error handler not implemented.")
-            }
-        };
+        var (statusCode, fieldName) = MapError(error);
+        return ErrorBodyBuilder.Build(statusCode, error.Message, fieldName);
     }
+
+    private static (int StatusCode, string? FieldName) MapError(AuthException error) => error switch
+    {
+        NotAuthenticatedException => (StatusCodes.Status401Unauthorized, null),
+        MembershipNotFoundException => (StatusCodes.Status403Forbidden, null),
+        UnhandledAuthException => (StatusCodes.Status500InternalServerError, null),
+        _ => throw new NotImplementedException(
+            $"Auth error handler is not implemented for {error.GetType().Name}.")
+    };
 }
