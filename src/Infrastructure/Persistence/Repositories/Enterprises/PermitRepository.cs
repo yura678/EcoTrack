@@ -13,11 +13,17 @@ internal class PermitRepository(ApplicationDbContext context)
 {
     public async Task<Option<Permit>> GetByIdAsync(Guid id, CancellationToken cancellationToken)
     {
-        var entity = await base.TableNoTracking
+        // Tracked load — every command handler (Update, Activate, Revoke, Archive, Delete)
+        // mutates this entity and SaveChanges. With AsNoTracking, re-attaching via Update()
+        // triggers EF relationship fixup that can resurrect a stale EmissionLimit FK from
+        // its navigation property (e.g. EmissionSourceId is cleared but EmissionSource was
+        // loaded, so EF reverts the FK). Tracking the graph from the start avoids that.
+        var entity = await base.Table
             .Include(x => x.Installation)
             .Include(x => x.EmissionLimits!).ThenInclude(l => l.Unit)
             .Include(x => x.EmissionLimits!).ThenInclude(l => l.Pollutant)
             .Include(x => x.EmissionLimits!).ThenInclude(l => l.EmissionSource)
+            .Include(x => x.EmissionLimits!).ThenInclude(l => l.Installation)
             .FirstOrDefaultAsync(x => x.Id == id, cancellationToken);
 
         return entity ?? Option<Permit>.None;

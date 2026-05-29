@@ -49,6 +49,10 @@ public class EmissionLimit : BaseEntity, ITenantOwned
         PollutantId = pollutantId;
         EmissionSourceId = emissionSourceId;
         InstallationId = installationId;
+        // Clear the opposite navigation so EF Core does not relationship-fixup the FK back
+        // to a stale value when the entity is re-attached (e.g. after AsNoTracking load).
+        if (emissionSourceId is null) EmissionSource = null;
+        if (installationId is null) Installation = null;
         ValidFrom = validFrom;
         ValidTo = validTo;
     }
@@ -77,6 +81,10 @@ public class EmissionLimit : BaseEntity, ITenantOwned
         PollutantId = pollutantId;
         EmissionSourceId = emissionSourceId;
         InstallationId = installationId;
+        // Clear stale navigations so EF Core does not relationship-fixup the FK back
+        // when an AsNoTracking-loaded entity is re-attached for save.
+        if (emissionSourceId is null) EmissionSource = null;
+        if (installationId is null) Installation = null;
         ValidFrom = validFrom;
         ValidTo = validTo;
     }
