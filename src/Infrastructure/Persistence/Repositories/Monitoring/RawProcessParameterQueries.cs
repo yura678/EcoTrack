@@ -142,11 +142,16 @@ internal class RawProcessParameterQueries(ApplicationDbContext context) : IRawPr
     {
         BucketWindow.Minute1 => "1 minute",
         BucketWindow.Minute5 => "5 minutes",
+        BucketWindow.Minute10 => "10 minutes",
         BucketWindow.Minute15 => "15 minutes",
         BucketWindow.Minute30 => "30 minutes",
+        BucketWindow.HalfHour => "30 minutes",
         BucketWindow.Hour1 => "1 hour",
         BucketWindow.Hour6 => "6 hours",
+        BucketWindow.Hour24 => "24 hours",
         BucketWindow.Day1 => "1 day",
+        BucketWindow.Month1 => "1 month",
+        BucketWindow.Year1 => "1 year",
         _ => throw new ArgumentOutOfRangeException(nameof(window), window, null)
     };
 }
