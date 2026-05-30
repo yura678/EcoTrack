@@ -4,6 +4,7 @@ using Api.Dtos;
 using Api.Modules.Errors;
 using Application.Common.Interfaces.Queries.Monitoring;
 using Application.Common.Models;
+using Application.Features.ComplianceEvents.Commands.BulkCloseComplianceEvents;
 using Application.Features.ComplianceEvents.Commands.CloseComplianceEvent;
 using Application.Features.ComplianceEvents.Commands.InvestigateComplianceEvent;
 using Application.Features.ComplianceEvents.Commands.ReopenComplianceEvent;
@@ -81,6 +82,22 @@ public class ComplianceEventController(
             cancellationToken);
         return result.Match(
             ev => Ok(ComplianceEventDto.FromDomainModel(ev)),
+            e => e.ToObjectResult());
+    }
+
+    [HttpPost("compliance-events/bulk-close")]
+    [ProducesOkApiResponseType<BulkCloseComplianceEventsResultDto>]
+    public async Task<IActionResult> BulkClose(
+        [FromBody] BulkCloseComplianceEventsDto body,
+        CancellationToken cancellationToken)
+    {
+        var result = await sender.Send(
+            new BulkCloseComplianceEventsCommand { Ids = body.Ids, Reason = body.Reason, Note = body.Note },
+            cancellationToken);
+        return result.Match(
+            r => Ok(new BulkCloseComplianceEventsResultDto(
+                r.ClosedIds,
+                r.Failed.Select(f => new BulkCloseFailureDto(f.Id, f.Reason)).ToList())),
             e => e.ToObjectResult());
     }
 

@@ -20,6 +20,17 @@ public record CloseComplianceEventDto(
     ResolutionReason Reason,
     string? Note);
 
+public record BulkCloseComplianceEventsDto(
+    IReadOnlyList<Guid> Ids,
+    ResolutionReason Reason,
+    string? Note);
+
+public record BulkCloseFailureDto(Guid Id, string Reason);
+
+public record BulkCloseComplianceEventsResultDto(
+    IReadOnlyList<Guid> ClosedIds,
+    IReadOnlyList<BulkCloseFailureDto> Failed);
+
 public record ComplianceEventDto(
     Guid Id,
     ComplianceEventType EventType,
