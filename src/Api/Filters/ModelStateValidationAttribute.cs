@@ -48,11 +48,17 @@ public class ModelStateValidationAttribute : ActionFilterAttribute
                     v => v.Value.Errors.Select(e => e.ErrorMessage).ToArray()
                 );
 
+            // `message` carries the first field error (not the generic "Bad Request Error") so a
+            // validation failure toasts something actionable; `data` keeps the full field dict
+            // for per-input rendering — matching the standard error contract.
+            var firstMessage = errors.Values.SelectMany(m => m).FirstOrDefault()
+                ?? ApiResultStatusCode.BadRequest.ToDisplay();
+
             var apiResult = new ApiResult<IDictionary<string, string[]>>(
                 false,
                 ApiResultStatusCode.BadRequest,
                 errors,
-                ApiResultStatusCode.BadRequest.ToDisplay());
+                firstMessage);
 
             context.Result = new JsonResult(apiResult)
             {

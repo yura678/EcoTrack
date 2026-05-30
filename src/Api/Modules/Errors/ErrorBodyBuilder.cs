@@ -5,21 +5,20 @@ namespace Api.Modules.Errors;
 // Shared helper for the *ErrorFactory family. Each factory's switch returns a
 // (StatusCode, FieldName) tuple; this builder turns that into the wire response.
 //
-// When `fieldName` is non-null the body is a Dictionary<string, List<string>> with the
-// property name as the key, which the SPA recognises and renders under the matching form
-// control. When `fieldName` is null the body falls back to the raw message string for
-// global errors that aren't tied to a specific input.
-//
-// `ErrorResultFilterAttribute.ExtractMessage` already recognises
-// `IDictionary<string, List<string>>`, so the toast summary line keeps working unchanged.
+// Every error funnels through an ApiError carrier so the envelope is consistent:
+//   • `message` always holds the human-readable reason.
+//   • `data` holds structured detail only — a `{ field: [message] }` dictionary when the error
+//     is tied to a specific input, or null for a global error. Never a bare-string duplicate of
+//     the message.
+// ErrorResultFilterAttribute unwraps the ApiError into the ApiResult envelope.
 internal static class ErrorBodyBuilder
 {
     public static ObjectResult Build(int statusCode, string message, string? fieldName)
     {
-        object body = fieldName is null
-            ? message
-            : new Dictionary<string, List<string>> { { fieldName, new List<string> { message } } };
+        var data = fieldName is null
+            ? null
+            : new Dictionary<string, string[]> { [fieldName] = [message] };
 
-        return new ObjectResult(body) { StatusCode = statusCode };
+        return new ObjectResult(new ApiError(message, data)) { StatusCode = statusCode };
     }
 }

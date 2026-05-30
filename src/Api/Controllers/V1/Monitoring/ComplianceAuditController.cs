@@ -30,7 +30,8 @@ public class ComplianceAuditController(IRawMeasurementQueries queries) : BaseCon
 
         if (result is null)
         {
-            return BadRequest(new { error = "Limit unit not found or period not supported." });
+            return Error(StatusCodes.Status400BadRequest,
+                "Limit unit not found or incompatible with the pollutant's measurement units.");
         }
 
         return Ok(ComplianceAuditResultDto.FromReadModel(result));

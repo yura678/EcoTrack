@@ -156,7 +156,7 @@ public class AuthController(ISender sender) : BaseController
     {
         var currentTokenValid = await HttpContext.AuthenticateAsync(JwtBearerDefaults.AuthenticationScheme);
         if (currentTokenValid.Succeeded)
-            return BadRequest("Current access token is valid. No need to refresh");
+            return Error(StatusCodes.Status400BadRequest, "Current access token is valid. No need to refresh");
 
         var result = await sender.Send(model);
         return result.Match(

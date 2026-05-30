@@ -1,3 +1,4 @@
+using Api.Modules.Errors;
 using Application.Models.ApiResult;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Filters;
@@ -13,17 +14,16 @@ public class ErrorResultFilterAttribute : ResultFilterAttribute
         {
             var apiStatusCode = MapToApiResultStatusCode(objectResult.StatusCode.Value);
 
-            // Prefer the real exception message that handlers set via `new ObjectResult(error.Message)`
-            // over the generic enum display name, so SPA toasts show "Role is in use" rather than
-            // "Bad Request Error". Falls back to the display name when no message was supplied
-            // (e.g. handler returned only a status code).
-            var realMessage = ExtractMessage(objectResult.Value);
+            // Normalize every error body into (message, data) so the envelope is consistent:
+            // `message` is always the human-readable reason, `data` is structured detail only
+            // (field-error dict, rich domain object) or null. See Normalize below.
+            var (message, data) = Normalize(objectResult.Value);
 
             var apiResult = new ApiResult<object?>(
                 isSuccess: false,
                 statusCode: apiStatusCode,
-                data: objectResult.Value,
-                message: !string.IsNullOrWhiteSpace(realMessage) ? realMessage : apiStatusCode.ToDisplay()
+                data: data,
+                message: !string.IsNullOrWhiteSpace(message) ? message : apiStatusCode.ToDisplay()
             );
 
             context.Result = new JsonResult(apiResult) { StatusCode = objectResult.StatusCode };
@@ -42,14 +42,23 @@ public class ErrorResultFilterAttribute : ResultFilterAttribute
         }
     }
 
-    private static string? ExtractMessage(object? value) => value switch
+    // Collapses the various error body shapes into the standard (message, data) pair:
+    //   • ApiError              → its own Message + Data (the canonical path)
+    //   • plain string          → the message; no structured data
+    //   • field-error dict      → first message for the toast; the dict as data
+    //   • anything else         → no message (caller falls back to the status display); no data,
+    //                             so arbitrary/anonymous objects never leak into the envelope.
+    private static (string? Message, object? Data) Normalize(object? value) => value switch
     {
-        string s => s,
-        // FluentValidation hooks throw a Dictionary<string, List<string>> via ModelStateValidationAttribute
-        // — picking the first message keeps the toast non-empty until field-level mapping kicks in.
-        IDictionary<string, List<string>> errors => errors.Values.SelectMany(v => v).FirstOrDefault(),
-        _ => null
+        ApiError e => (e.Message, e.Data),
+        string s => (s, null),
+        IDictionary<string, string[]> errors => (FirstMessage(errors.Values), errors),
+        IDictionary<string, List<string>> errors => (FirstMessage(errors.Values), errors),
+        _ => (null, null)
     };
+
+    private static string? FirstMessage(IEnumerable<IEnumerable<string>> messageGroups) =>
+        messageGroups.SelectMany(g => g).FirstOrDefault();
 
     private ApiResultStatusCode MapToApiResultStatusCode(int httpStatusCode)
     {
@@ -60,6 +69,7 @@ public class ErrorResultFilterAttribute : ResultFilterAttribute
             StatusCodes.Status403Forbidden => ApiResultStatusCode.Forbidden,
             StatusCodes.Status404NotFound => ApiResultStatusCode.NotFound,
             StatusCodes.Status409Conflict => ApiResultStatusCode.Conflict,
+            StatusCodes.Status422UnprocessableEntity => ApiResultStatusCode.EntityProcessError,
             StatusCodes.Status500InternalServerError => ApiResultStatusCode.ServerError,
             _ => ApiResultStatusCode.BadRequest
         };

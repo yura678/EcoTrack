@@ -19,17 +19,18 @@ public static class RawIngestErrorFactory
         };
     }
 
-    private static object BuildBody(RawIngestException error) => error switch
+    // Each body is an ApiError: Message carries the reason (so it lands in the envelope's
+    // `message`), Data keeps the structured context the SPA needs — without the redundant
+    // `error` text that used to duplicate the message.
+    private static ApiError BuildBody(RawIngestException error) => error switch
     {
-        UnconfiguredDevicePollutantsException u => new
+        UnconfiguredDevicePollutantsException u => new ApiError(u.Message, new
         {
-            error = u.Message,
             deviceId = u.DeviceId,
             unconfiguredPollutantIds = u.UnconfiguredPollutantIds
-        },
-        UnconvertibleUnitsException c => new
+        }),
+        UnconvertibleUnitsException c => new ApiError(c.Message, new
         {
-            error = c.Message,
             deviceId = c.DeviceId,
             failures = c.Failures.Select(f => new
             {
@@ -41,7 +42,7 @@ public static class RawIngestErrorFactory
                 canonicalUnitSymbol = f.CanonicalUnitSymbol,
                 reason = f.Reason
             })
-        },
-        _ => new { error = error.Message }
+        }),
+        _ => new ApiError(error.Message)
     };
 }
