@@ -25,13 +25,19 @@ public record TenantHeatmapQueryDto(
     // "minLng,minLat,maxLng,maxLat" — optional viewport filter. When omitted the query
     // covers the whole tenant; with it, the SQL adds an ST_Intersects clause that hits
     // the GIST index on emission_source.location.
-    string? Bbox = null);
+    string? Bbox = null,
+    // Optional scope narrowing. Installation wins over Site; both omitted = whole tenant.
+    Guid? InstallationId = null,
+    Guid? SiteId = null);
 
 public record HeatmapScaleQueryDto(
     Guid PollutantId,
     DateTime From,
     DateTime To,
-    AggregationFunc Aggregation = AggregationFunc.Average);
+    AggregationFunc Aggregation = AggregationFunc.Average,
+    // Same scope narrowing as the heatmap so the colour ceiling matches the visible set.
+    Guid? InstallationId = null,
+    Guid? SiteId = null);
 
 public record HeatmapScaleDto(decimal? ScaleMax);
 
@@ -74,7 +80,11 @@ public record ComplianceAggregatePointDto(
     int DerivedSourcesCount,
     int ExcludedSourcesCount,
     int OpenEventCount,
-    DateTime? MeasuredAt)
+    DateTime? MeasuredAt,
+    // Representative coordinate (centroid of the installation's geolocated sources) so the map
+    // can place one marker per installation. Null when no source carries a location.
+    double? Latitude,
+    double? Longitude)
 {
     public static ComplianceAggregatePointDto FromReadModel(ComplianceAggregatePoint p) =>
         new(p.LimitId, p.InstallationId, p.InstallationName,
@@ -82,7 +92,7 @@ public record ComplianceAggregatePointDto(
             p.AggregateValue, p.Severity,
             BuildSeverityLevel(p.Severity, p.OpenEventCount),
             p.ContributingSourcesCount, p.DerivedSourcesCount, p.ExcludedSourcesCount,
-            p.OpenEventCount, p.MeasuredAt);
+            p.OpenEventCount, p.MeasuredAt, p.Latitude, p.Longitude);
 
     private static string BuildSeverityLevel(decimal? severity, int openEvents)
     {

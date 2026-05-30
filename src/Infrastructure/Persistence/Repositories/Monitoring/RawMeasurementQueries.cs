@@ -28,20 +28,25 @@ internal class RawMeasurementQueries(ApplicationDbContext context) : IRawMeasure
         DateTime to,
         AggregationFunc aggregation,
         CancellationToken cancellationToken,
+        Guid? installationId = null,
+        Guid? siteId = null,
         BoundingBox? bbox = null) =>
         aggregation == AggregationFunc.P95
-            ? GetHeatmapFromRawAsync(pollutantId, from, to, bbox, cancellationToken)
-            : GetHeatmapFromCaAsync(pollutantId, from, to, aggregation, bbox, cancellationToken);
+            ? GetHeatmapFromRawAsync(pollutantId, from, to, installationId, siteId, bbox, cancellationToken)
+            : GetHeatmapFromCaAsync(pollutantId, from, to, aggregation, installationId, siteId, bbox, cancellationToken);
 
     public async Task<decimal?> GetHeatmapScaleAsync(
         Guid pollutantId,
         DateTime from,
         DateTime to,
         AggregationFunc aggregation,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        Guid? installationId = null,
+        Guid? siteId = null)
     {
-        // Full tenant set (no bbox) so the colour scale doesn't shift as the viewport changes.
-        var points = await GetHeatmapAsync(pollutantId, from, to, aggregation, cancellationToken);
+        // Full scoped set (no bbox) so the colour scale doesn't shift as the viewport changes.
+        var points = await GetHeatmapAsync(
+            pollutantId, from, to, aggregation, cancellationToken, installationId, siteId);
         if (points.Count == 0) return null;
         var values = points.Select(p => p.Value).OrderBy(v => v).ToList();
         return Percentile(values, 0.98);
@@ -281,9 +286,11 @@ internal class RawMeasurementQueries(ApplicationDbContext context) : IRawMeasure
 
     private async Task<IReadOnlyList<HeatmapPoint>> GetHeatmapFromCaAsync(
         Guid pollutantId, DateTime from, DateTime to,
-        AggregationFunc aggregation, BoundingBox? bbox, CancellationToken cancellationToken)
+        AggregationFunc aggregation, Guid? installationId, Guid? siteId,
+        BoundingBox? bbox, CancellationToken cancellationToken)
     {
         var tenantClause = BuildTenantClause();
+        var scopeClause = BuildScopeClause(installationId, siteId);
         var bboxClause = bbox is null
             ? string.Empty
             : "AND ST_Intersects(es.location, ST_MakeEnvelope(@min_lng, @min_lat, @max_lng, @max_lat, 4326))";
@@ -306,6 +313,7 @@ internal class RawMeasurementQueries(ApplicationDbContext context) : IRawMeasure
               AND m.bucket < @to
               AND es.deleted_at IS NULL
               {tenantClause}
+              {scopeClause}
               {bboxClause}
             GROUP BY es.id, es.location, m.unit_id
             ORDER BY es.id, m.unit_id";
@@ -315,6 +323,7 @@ internal class RawMeasurementQueries(ApplicationDbContext context) : IRawMeasure
         AddParam(command, "from", NpgsqlDbType.TimestampTz, EnsureUtc(from));
         AddParam(command, "to", NpgsqlDbType.TimestampTz, EnsureUtc(to));
         AddTenantParam(command);
+        AddScopeParams(command, installationId, siteId);
         AddBboxParams(command, bbox);
 
         var slices = new List<HeatmapSlice>();
@@ -537,9 +546,11 @@ internal class RawMeasurementQueries(ApplicationDbContext context) : IRawMeasure
     }
 
     private async Task<IReadOnlyList<HeatmapPoint>> GetHeatmapFromRawAsync(
-        Guid pollutantId, DateTime from, DateTime to, BoundingBox? bbox, CancellationToken cancellationToken)
+        Guid pollutantId, DateTime from, DateTime to,
+        Guid? installationId, Guid? siteId, BoundingBox? bbox, CancellationToken cancellationToken)
     {
         var tenantClause = BuildTenantClause();
+        var scopeClause = BuildScopeClause(installationId, siteId);
         var bboxClause = bbox is null
             ? string.Empty
             : "AND ST_Intersects(es.location, ST_MakeEnvelope(@min_lng, @min_lat, @max_lng, @max_lat, 4326))";
@@ -560,6 +571,7 @@ internal class RawMeasurementQueries(ApplicationDbContext context) : IRawMeasure
               AND rm.time < @to
               AND es.deleted_at IS NULL
               {tenantClause}
+              {scopeClause}
               {bboxClause}
             GROUP BY es.id, es.location";
 
@@ -568,6 +580,7 @@ internal class RawMeasurementQueries(ApplicationDbContext context) : IRawMeasure
         AddParam(command, "from", NpgsqlDbType.TimestampTz, EnsureUtc(from));
         AddParam(command, "to", NpgsqlDbType.TimestampTz, EnsureUtc(to));
         AddTenantParam(command);
+        AddScopeParams(command, installationId, siteId);
         AddBboxParams(command, bbox);
 
         return await ReadHeatmapAsync(command, cancellationToken);
@@ -580,6 +593,25 @@ internal class RawMeasurementQueries(ApplicationDbContext context) : IRawMeasure
         AddParam(command, "min_lat", NpgsqlDbType.Double, bbox.MinLatitude);
         AddParam(command, "max_lng", NpgsqlDbType.Double, bbox.MaxLongitude);
         AddParam(command, "max_lat", NpgsqlDbType.Double, bbox.MaxLatitude);
+    }
+
+    // Narrows the heatmap to one installation, or to every installation of one site. Installation
+    // wins when both are supplied; neither = whole tenant. The tenant clause on es already gates
+    // cross-tenant ids to an empty result, so no extra tenant check is needed in the subquery.
+    private static string BuildScopeClause(Guid? installationId, Guid? siteId)
+    {
+        if (installationId.HasValue) return "AND es.installation_id = @installation_id";
+        if (siteId.HasValue)
+            return "AND es.installation_id IN (SELECT id FROM installation WHERE site_id = @site_id)";
+        return string.Empty;
+    }
+
+    private static void AddScopeParams(NpgsqlCommand command, Guid? installationId, Guid? siteId)
+    {
+        if (installationId.HasValue)
+            AddParam(command, "installation_id", NpgsqlDbType.Uuid, installationId.Value);
+        else if (siteId.HasValue)
+            AddParam(command, "site_id", NpgsqlDbType.Uuid, siteId.Value);
     }
 
     // ─── Result readers ────────────────────────────────────────────────────────

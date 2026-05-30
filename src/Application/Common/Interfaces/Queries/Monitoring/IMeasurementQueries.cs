@@ -73,7 +73,11 @@ public record ComplianceAggregatePoint(
     int DerivedSourcesCount,
     int ExcludedSourcesCount,
     int OpenEventCount,
-    DateTime? MeasuredAt);
+    DateTime? MeasuredAt,
+    // Centroid of the installation's geolocated sources so the map can place one marker per
+    // installation. Null when the installation has no source with a location.
+    double? Latitude,
+    double? Longitude);
 
 public interface IMeasurementQueries
 {
@@ -128,6 +132,14 @@ public interface IMeasurementQueries
         Guid siteId, Guid pollutantId, CancellationToken cancellationToken);
 
     /// <summary>
+    /// Enterprise-wide variant — every emission source of the current tenant (the EF tenant
+    /// query filter scopes the set; no enterprise id is passed). Same per-source shape and the
+    /// same per-installation expansion of installation-level Concentration limits.
+    /// </summary>
+    Task<IReadOnlyList<ComplianceHeatmapPoint>> GetComplianceHeatmapByEnterpriseAsync(
+        Guid pollutantId, CancellationToken cancellationToken);
+
+    /// <summary>
     /// Installation-level "Type II" limits (MassFlow + AnnualLoad) summed across the
     /// installation's sources. Mirrors the detector's ProcessInstallationAggregates /
     /// ProcessAnnualLoadAggregates logic — including derived mass flow when a source reports
@@ -146,4 +158,12 @@ public interface IMeasurementQueries
     /// </summary>
     Task<IReadOnlyList<ComplianceAggregatePoint>> GetComplianceAggregatesBySiteAsync(
         Guid siteId, Guid pollutantId, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Enterprise-wide variant of <see cref="GetComplianceAggregatesBySiteAsync"/> — one row per
+    /// installation-level MassFlow/AnnualLoad limit across every installation of the current
+    /// tenant (the EF tenant query filter scopes the set). Sums stay scoped per-installation.
+    /// </summary>
+    Task<IReadOnlyList<ComplianceAggregatePoint>> GetComplianceAggregatesByEnterpriseAsync(
+        Guid pollutantId, CancellationToken cancellationToken);
 }

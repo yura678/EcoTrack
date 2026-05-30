@@ -164,10 +164,9 @@ public class MeasurementController(
             bbox = ParseBbox(query.Bbox);
             if (bbox is null)
             {
-                return BadRequest(new
-                {
-                    Bbox = new[] { "Expected 'minLng,minLat,maxLng,maxLat' with -180≤lng≤180 and -90≤lat≤90." },
-                });
+                return Error(StatusCodes.Status400BadRequest,
+                    "Expected 'minLng,minLat,maxLng,maxLat' with -180≤lng≤180 and -90≤lat≤90.",
+                    "Bbox");
             }
         }
 
@@ -177,15 +176,18 @@ public class MeasurementController(
             query.To,
             query.Aggregation,
             cancellationToken,
+            query.InstallationId,
+            query.SiteId,
             bbox);
 
         return Ok(points.Select(HeatmapPointDto.FromReadModel).ToList());
     }
 
     /// <summary>
-    /// Global colour-scale ceiling for the intensity heatmap — the 98th percentile of
-    /// per-source values across the whole tenant (no bbox). The SPA uses this as a stable
-    /// normalization denominator so map colours don't shift while panning/zooming.
+    /// Colour-scale ceiling for the intensity heatmap — the 98th percentile of per-source values
+    /// across the requested scope (no bbox). The SPA uses this as a stable normalization
+    /// denominator so map colours don't shift while panning/zooming. The scope filter matches
+    /// the heatmap so the ceiling reflects exactly the visible set.
     /// </summary>
     [HttpGet("/api/v{version:apiVersion}/emissions-heatmap/scale")]
     [ProducesOkApiResponseType<HeatmapScaleDto>]
@@ -198,7 +200,9 @@ public class MeasurementController(
             query.From,
             query.To,
             query.Aggregation,
-            cancellationToken);
+            cancellationToken,
+            query.InstallationId,
+            query.SiteId);
 
         return Ok(new HeatmapScaleDto(scaleMax));
     }
@@ -254,6 +258,22 @@ public class MeasurementController(
     }
 
     /// <summary>
+    /// Enterprise-wide variant of the per-source compliance heatmap — every emission source of the
+    /// current tenant (resolved from the JWT, no id in the route). Same per-source severity shape;
+    /// installation-level Concentration limits still apply only to their own installation's sources.
+    /// </summary>
+    [HttpGet("/api/v{version:apiVersion}/compliance-heatmap")]
+    [ProducesOkApiResponseType<IReadOnlyList<ComplianceHeatmapPointDto>>]
+    public async Task<IActionResult> GetEnterpriseComplianceHeatmap(
+        [FromQuery] Guid pollutantId,
+        CancellationToken cancellationToken)
+    {
+        var points = await measurementQueries.GetComplianceHeatmapByEnterpriseAsync(
+            pollutantId, cancellationToken);
+        return Ok(points.Select(ComplianceHeatmapPointDto.FromReadModel).ToList());
+    }
+
+    /// <summary>
     /// Installation-level "Type II" aggregates: MassFlow and AnnualLoad limits where the
     /// regulator caps the sum across all sources of the installation. One row per active
     /// limit with the summed value, severity, and how many sources were excluded or
@@ -286,6 +306,23 @@ public class MeasurementController(
     {
         var points = await measurementQueries.GetComplianceAggregatesBySiteAsync(
             siteId, pollutantId, cancellationToken);
+        return Ok(points.Select(ComplianceAggregatePointDto.FromReadModel).ToList());
+    }
+
+    /// <summary>
+    /// Enterprise-wide variant of <see cref="GetSiteComplianceAggregates"/> — one row per
+    /// installation-level MassFlow/AnnualLoad limit across every installation of the current
+    /// tenant. Sums stay scoped per-installation; each row carries its InstallationId/Name and a
+    /// centroid so the UI can place one marker per installation.
+    /// </summary>
+    [HttpGet("/api/v{version:apiVersion}/compliance-aggregates")]
+    [ProducesOkApiResponseType<IReadOnlyList<ComplianceAggregatePointDto>>]
+    public async Task<IActionResult> GetEnterpriseComplianceAggregates(
+        [FromQuery] Guid pollutantId,
+        CancellationToken cancellationToken)
+    {
+        var points = await measurementQueries.GetComplianceAggregatesByEnterpriseAsync(
+            pollutantId, cancellationToken);
         return Ok(points.Select(ComplianceAggregatePointDto.FromReadModel).ToList());
     }
 

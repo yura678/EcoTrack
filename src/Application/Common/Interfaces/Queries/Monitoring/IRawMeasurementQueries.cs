@@ -93,20 +93,24 @@ public interface IRawMeasurementQueries
         DateTime to,
         AggregationFunc aggregation,
         CancellationToken cancellationToken,
+        Guid? installationId = null,
+        Guid? siteId = null,
         BoundingBox? bbox = null);
 
     /// <summary>
-    /// Global colour-scale ceiling (98th percentile of per-source values) for the whole
-    /// tenant set on (pollutant, from, to, aggregation) — deliberately ignores any viewport
-    /// bbox so the heatmap colour scale stays stable while the user pans/zooms. Returns null
-    /// when there are no points. Uses the same canonical-unit fold as GetHeatmapAsync.
+    /// Global colour-scale ceiling (98th percentile of per-source values) for the requested
+    /// scope on (pollutant, from, to, aggregation) — deliberately ignores any viewport bbox so
+    /// the heatmap colour scale stays stable while the user pans/zooms. Returns null when there
+    /// are no points. Uses the same canonical-unit fold and scope filter as GetHeatmapAsync.
     /// </summary>
     Task<decimal?> GetHeatmapScaleAsync(
         Guid pollutantId,
         DateTime from,
         DateTime to,
         AggregationFunc aggregation,
-        CancellationToken cancellationToken);
+        CancellationToken cancellationToken,
+        Guid? installationId = null,
+        Guid? siteId = null);
 
     /// <summary>
     /// Read-only "what-if" audit: simulate compliance for a hypothetical limit over a past period

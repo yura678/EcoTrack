@@ -89,6 +89,21 @@ internal class MeasurementRepository(
         return await BuildHeatmapPointsAsync(sources, pollutantId, ct);
     }
 
+    public async Task<IReadOnlyList<ComplianceHeatmapPoint>> GetComplianceHeatmapByEnterpriseAsync(
+        Guid pollutantId, CancellationToken ct)
+    {
+        // No installation/site predicate — the EF tenant query filter on EmissionSource already
+        // restricts the set to the current enterprise.
+        var sources = await context.Set<EmissionSource>()
+            .Select(s => new HeatmapSourceRow(
+                s.Id, s.Code, s.InstallationId, s.Installation!.Name,
+                s.Location.Y, s.Location.X))
+            .ToListAsync(ct);
+        if (sources.Count == 0) return [];
+
+        return await BuildHeatmapPointsAsync(sources, pollutantId, ct);
+    }
+
     private async Task<IReadOnlyList<ComplianceHeatmapPoint>> BuildHeatmapPointsAsync(
         IReadOnlyList<HeatmapSourceRow> sources, Guid pollutantId, CancellationToken ct)
     {
@@ -304,6 +319,20 @@ internal class MeasurementRepository(
             installations.Select(i => (i.Id, i.Name)).ToArray(), pollutantId, ct);
     }
 
+    public async Task<IReadOnlyList<ComplianceAggregatePoint>> GetComplianceAggregatesByEnterpriseAsync(
+        Guid pollutantId, CancellationToken ct)
+    {
+        // No site predicate — the EF tenant query filter on Installation already restricts the
+        // set to the current enterprise.
+        var installations = await context.Set<Installation>()
+            .Select(i => new { i.Id, i.Name })
+            .ToListAsync(ct);
+        if (installations.Count == 0) return [];
+
+        return await BuildAggregatePointsAsync(
+            installations.Select(i => (i.Id, i.Name)).ToArray(), pollutantId, ct);
+    }
+
     private async Task<IReadOnlyList<ComplianceAggregatePoint>> BuildAggregatePointsAsync(
         IReadOnlyCollection<(Guid Id, string Name)> installations,
         Guid pollutantId,
@@ -337,14 +366,33 @@ internal class MeasurementRepository(
             .ToListAsync(ct);
         if (limits.Count == 0) return [];
 
-        // Per-installation source lists. Sums never cross installation boundaries — a limit on
-        // installation A only sees sources of installation A even when we run site-wide.
-        var sourcesByInstallation = (await context.Set<EmissionSource>()
-                .Where(s => installationIds.Contains(s.InstallationId))
-                .Select(s => new { s.Id, s.InstallationId })
-                .ToListAsync(ct))
+        // Per-installation source lists + a representative centroid for map placement. Sums never
+        // cross installation boundaries — a limit on installation A only sees sources of
+        // installation A even when we run site- or enterprise-wide. Location is required on
+        // EmissionSource, so the same Y/X projection the per-source heatmap uses is null-free here.
+        var sourceRows = await context.Set<EmissionSource>()
+            .Where(s => installationIds.Contains(s.InstallationId))
+            .Select(s => new
+            {
+                s.Id,
+                s.InstallationId,
+                Latitude = s.Location.Y,
+                Longitude = s.Location.X
+            })
+            .ToListAsync(ct);
+        var sourcesByInstallation = sourceRows
             .GroupBy(s => s.InstallationId)
             .ToDictionary(g => g.Key, g => g.Select(x => x.Id).ToArray());
+
+        // Centroid of point geometries = arithmetic mean of coordinates (equivalent to
+        // ST_Centroid(ST_Collect(...)) for points). Widen to double? so an installation with no
+        // sources at all simply yields (null, null) via GetValueOrDefault below.
+        var centroidByInstallation = sourceRows
+            .GroupBy(s => s.InstallationId)
+            .ToDictionary(
+                g => g.Key,
+                g => (Latitude: (double?)g.Average(x => x.Latitude),
+                      Longitude: (double?)g.Average(x => x.Longitude)));
 
         var allLimitIds = limits.Select(x => x.Row.Id).ToList();
         var openByLimit = await context.Set<ComplianceEvent>()
@@ -379,6 +427,8 @@ internal class MeasurementRepository(
                 ? (decimal?)Math.Round(b / lim.UnitToBaseFactor, 6)
                 : null;
 
+            var centroid = centroidByInstallation.GetValueOrDefault(entry.InstallationId);
+
             result.Add(new ComplianceAggregatePoint(
                 LimitId: lim.Id,
                 InstallationId: entry.InstallationId,
@@ -393,7 +443,9 @@ internal class MeasurementRepository(
                 DerivedSourcesCount: aggregate.Derived,
                 ExcludedSourcesCount: aggregate.Excluded,
                 OpenEventCount: openCount,
-                MeasuredAt: aggregate.MeasuredAt));
+                MeasuredAt: aggregate.MeasuredAt,
+                Latitude: centroid.Latitude,
+                Longitude: centroid.Longitude));
         }
 
         return result;
