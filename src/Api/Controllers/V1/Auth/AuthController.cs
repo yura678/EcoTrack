@@ -239,11 +239,13 @@ public class AuthController(
     [HttpGet("csrf")]
     [AllowAnonymous]
     [EnableRateLimiting("auth")]
-    [ProducesOkApiResponseType]
+    [ProducesOkApiResponseType<CsrfTokenResponse>]
     public IActionResult Csrf()
     {
-        SeedAntiforgery();
-        return Ok();
+        // Return the request token in the body too: on a cross-origin SPA the JS-readable
+        // XSRF-TOKEN cookie isn't visible to the SPA's domain, so the body is the reliable channel.
+        var requestToken = SeedAntiforgery();
+        return Ok(new CsrfTokenResponse(requestToken));
     }
 
     private IActionResult OkWithRefreshCookie(AuthSession session)
@@ -255,7 +257,7 @@ public class AuthController(
         return Ok(session);
     }
 
-    private void SeedAntiforgery()
+    private string SeedAntiforgery()
     {
         var tokens = antiforgery.GetAndStoreTokens(HttpContext);
         Response.Cookies.Append("XSRF-TOKEN", tokens.RequestToken!, new CookieOptions
@@ -266,5 +268,6 @@ public class AuthController(
             Path = "/",
             IsEssential = true,
         });
+        return tokens.RequestToken!;
     }
 }
