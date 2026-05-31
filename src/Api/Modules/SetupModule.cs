@@ -3,6 +3,7 @@ using Api.Filters;
 using Application.Common.Settings;
 using Application.Models.ApiResult;
 using FluentValidation;
+using Microsoft.AspNetCore.Antiforgery;
 using Microsoft.AspNetCore.Mvc;
 
 namespace Api.Modules;
@@ -41,11 +42,32 @@ public static class SetupModule
             options.SuppressMapClientErrors = true;
         });
         services.AddCors(configuration);
+        services.AddRefreshCookieSettings(configuration);
+
+        // CSRF protection for the cookie-authenticated refresh endpoint. The request token is
+        // echoed back by the SPA in the X-XSRF-TOKEN header; the secret lives in an httpOnly
+        // cookie. Same-site (Lax) so it rides along on the refresh POST from the SPA origin.
+        services.AddAntiforgery(options =>
+        {
+            options.HeaderName = "X-XSRF-TOKEN";
+            options.Cookie.Name = "ecotrack_xsrf";
+            options.Cookie.SameSite = SameSiteMode.Lax;
+            options.Cookie.HttpOnly = true;
+            options.Cookie.SecurePolicy = CookieSecurePolicy.SameAsRequest;
+        });
+
         services.AddApplicationSettings(configuration);
         services.AddAdminSettings(configuration);
         services.AddFrontendSettings(configuration);
 
         return services;
+    }
+
+    private static void AddRefreshCookieSettings(this IServiceCollection services, IConfiguration configuration)
+    {
+        var settings = configuration.GetSection("RefreshCookie").Get<RefreshCookieSettings>()
+                       ?? new RefreshCookieSettings();
+        services.AddSingleton(settings);
     }
 
     private static void AddAdminSettings(this IServiceCollection services, IConfiguration configuration)
