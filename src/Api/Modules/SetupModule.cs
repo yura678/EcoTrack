@@ -46,14 +46,14 @@ public static class SetupModule
 
         // CSRF protection for the cookie-authenticated refresh endpoint. The request token is
         // echoed back by the SPA in the X-XSRF-TOKEN header; the secret lives in an httpOnly
-        // cookie. Same-site (Lax) so it rides along on the refresh POST from the SPA origin.
+        // cookie. SameSite=None + Secure so it rides along on the cross-origin refresh POST.
         services.AddAntiforgery(options =>
         {
             options.HeaderName = "X-XSRF-TOKEN";
             options.Cookie.Name = "ecotrack_xsrf";
-            options.Cookie.SameSite = SameSiteMode.Lax;
+            options.Cookie.SameSite = SameSiteMode.None;
             options.Cookie.HttpOnly = true;
-            options.Cookie.SecurePolicy = CookieSecurePolicy.SameAsRequest;
+            options.Cookie.SecurePolicy = CookieSecurePolicy.Always;
         });
 
         services.AddApplicationSettings(configuration);
