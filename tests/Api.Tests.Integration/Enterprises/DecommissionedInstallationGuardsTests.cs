@@ -48,7 +48,7 @@ public class DecommissionedInstallationGuardsTests : BaseIntegrationTest, IAsync
 
         response.StatusCode.Should().Be(HttpStatusCode.Conflict);
         var body = await response.Content.ReadAsStringAsync();
-        body.Should().Contain("Decommissioned");
+        body.Should().Contain("shut down");
 
         var device = await Context.Set<MonitoringDevice>().AsNoTracking()
             .FirstAsync(d => d.Id == _device.Id);
@@ -102,7 +102,7 @@ public class DecommissionedInstallationGuardsTests : BaseIntegrationTest, IAsync
 
         response.StatusCode.Should().Be(HttpStatusCode.Conflict);
         var body = await response.Content.ReadAsStringAsync();
-        body.Should().Contain("Decommissioned");
+        body.Should().Contain("shut down");
 
         var permit = await Context.Set<Permit>().AsNoTracking()
             .FirstAsync(p => p.Id == draftPermit.Id);

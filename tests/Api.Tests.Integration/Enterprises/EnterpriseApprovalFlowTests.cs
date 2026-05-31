@@ -101,7 +101,7 @@ public class EnterpriseApprovalFlowTests : BaseIntegrationTest, IAsyncLifetime
     }
 
     [Fact]
-    public async Task ShouldReturnConflictWhenApprovingAlreadyActiveEnterprise()
+    public async Task ApprovingAlreadyActiveEnterpriseIsIdempotent()
     {
         var enterprise = EnterprisesData.FirstTestEquipment(_sector.Id); // NewActive
         await Context.Set<Enterprise>().AddAsync(enterprise);
@@ -109,7 +109,12 @@ public class EnterpriseApprovalFlowTests : BaseIntegrationTest, IAsyncLifetime
 
         var response = await Client.PostAsync($"{BaseRoute}/{enterprise.Id}/approve", content: null);
 
-        response.StatusCode.Should().Be(HttpStatusCode.Conflict);
+        // Approve is idempotent by design (ApproveEnterpriseCommandHandler returns early for an
+        // already-Active enterprise, no audit row / email) so the SPA's optimistic mutation stays
+        // happy. Re-approving is therefore a no-op success, not a conflict.
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var dto = await response.ToResponseModel<EnterpriseDto>();
+        dto.Status.Should().Be(EnterpriseStatus.Active);
     }
 
     [Fact]

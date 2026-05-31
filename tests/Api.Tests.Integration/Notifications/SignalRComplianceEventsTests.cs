@@ -129,6 +129,14 @@ public class SignalRComplianceEventsTests : BaseIntegrationTest, IAsyncLifetime
                     options.Headers[TestAuthHandler.RoleOverrideHeader] = roleOverride;
                 }
             })
+            // Match the server's hub JSON protocol (Program.cs adds JsonStringEnumConverter):
+            // the API serializes enums as strings, so without this converter the .NET client
+            // throws on deserialization and the On<> callback silently never fires.
+            .AddJsonProtocol(options =>
+            {
+                options.PayloadSerializerOptions.Converters.Add(new System.Text.Json.Serialization.JsonStringEnumConverter());
+                options.PayloadSerializerOptions.PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase;
+            })
             .Build();
         return connection;
     }

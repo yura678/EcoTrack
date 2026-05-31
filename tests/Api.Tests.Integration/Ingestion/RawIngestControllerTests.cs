@@ -113,7 +113,7 @@ public class RawIngestControllerTests : BaseIntegrationTest, IAsyncLifetime
         response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
         var responseBody = await response.Content.ReadAsStringAsync();
         responseBody.Should().Contain(_unconfiguredPollutant.Id.ToString());
-        responseBody.Should().Contain("DevicePollutantCapability");
+        responseBody.Should().Contain("not configured to measure");
 
         var rawCount = await Context.Set<RawMeasurement>()
             .Where(r => r.DeviceId == _device.Id)

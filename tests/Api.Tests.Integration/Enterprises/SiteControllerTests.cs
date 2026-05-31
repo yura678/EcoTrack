@@ -294,7 +294,7 @@ public class SiteControllerTests : BaseIntegrationTest, IAsyncLifetime
 
         response.StatusCode.Should().Be(HttpStatusCode.Conflict);
         var body = await response.Content.ReadAsStringAsync();
-        body.Should().Contain("Operating");
+        body.Should().Contain("in operation");
 
         // Site must remain visible after the refusal.
         var stillThere = await Context.Set<Site>()
